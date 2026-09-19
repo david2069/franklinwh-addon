@@ -1,0 +1,751 @@
+<!-- power v2 — Grid / Hardware profile -->
+<div x-data="powerTab()" x-init="init()" class="max-w-7xl space-y-6 pb-20">
+
+  <!-- Header & Status Badges -->
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg>
+        Power / Hardware
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Grid connection, physical relays, compliance profiles, and telemetry</p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <template x-if="profile?.has_grid !== undefined">
+          <span class="chip text-[9px] font-bold px-2.5 py-0.5 tracking-wider uppercase border"
+                :class="profile?.has_grid ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-red-500/10 text-[var(--danger)] border-red-500/20'">
+            <svg class="icon w-3 h-3 mr-1" aria-hidden="true" viewBox="0 0 24 24"><use :href="profile?.has_grid ? '#zap' : '#zap-off'"/></svg>
+            <span x-text="profile?.has_grid ? 'Grid Hardware Present' : 'No Grid Hardware'"></span>
+          </span>
+        </template>
+        <template x-if="profile?.has_solar !== undefined">
+          <span class="chip text-[9px] font-bold px-2.5 py-0.5 tracking-wider uppercase border"
+                :class="profile?.has_solar ? 'bg-orange-500/10 text-[var(--warn)] border-orange-500/20' : 'bg-gray-500/10 text-[var(--text-muted)] border-[var(--border)]'">
+            <svg class="icon w-3 h-3 mr-1" aria-hidden="true" viewBox="0 0 24 24"><use :href="profile?.has_solar ? '#sun' : '#cloud-off'"/></svg>
+            <span x-text="profile?.has_solar ? 'Solar Present' : 'No Solar'"></span>
+          </span>
+        </template>
+        <!-- Pure Backup warning -->
+        <template x-if="profile?.has_solar === false && profile?.has_grid === false">
+           <span class="chip bg-red-500/10 text-[var(--danger)] border border-red-500/20 text-[9px] font-bold px-2 py-0.5 uppercase tracking-wider">
+             Only Emergency Backup Supported
+           </span>
+        </template>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <template x-if="data?.mode?.runtime_mode">
+        <span class="chip bg-[var(--surface-1)] text-[var(--accent)] font-bold text-xs uppercase tracking-wider px-3 py-1.5" x-text="data.mode.runtime_mode"></span>
+      </template>
+      <template x-if="data?.status?.run_status">
+        <span class="chip text-xs font-bold px-3 py-1.5"
+              :class="{
+                'ok': data.status.run_status === 'Discharging',
+                'warn': data.status.run_status === 'Charging',
+                'muted': data.status.run_status === 'Standby'
+              }"
+              x-text="data.status.run_status"></span>
+      </template>
+      <span class="chip text-xs font-bold px-3 py-1.5"
+            :class="{
+              'ok':      data?.grid_status === 'Connected',
+              'warn':    data?.grid_status === 'Outage' || data?.grid_status === 'SimulatedOffGrid',
+              'muted':   data?.grid_status === 'NotGridTied'
+            }"
+            x-text="data?.grid_status === 'Connected'        ? 'Grid Connected'
+                  : data?.grid_status === 'Outage'           ? 'Grid Outage'
+                  : data?.grid_status === 'SimulatedOffGrid' ? 'Simulated Off-Grid'
+                  : data?.grid_status === 'NotGridTied'      ? 'Off-Grid Site'
+                  : 'Grid Connected'">
+      </span>
+      <button class="btn btn-secondary h-8 w-8 !p-0 flex items-center justify-center rounded-full ml-2"
+              @click="load(); $store.app.addToast('\u21bb Refreshing data…', 'info')"
+              :class="loading ? 'opacity-50' : ''"
+              title="Refresh gateway data">
+        <svg class="icon w-4 h-4" :class="loading ? 'fa-spin' : ''" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="mb-4 text-[10px] flex items-center justify-between gap-4 py-2 px-3 rounded bg-[var(--surface-1)] border border-[var(--border)]">
+    <div class="flex items-center gap-2">
+      <svg class="icon w-4 h-4" :class="livePollActive ? 'text-[var(--warn)] fa-spin' : 'text-[var(--text-muted)]'" aria-hidden="true" viewBox="0 0 24 24"><use href="#activity"/></svg>
+      <span class="font-bold text-[var(--text-primary)]">Real-Time Electrical Telemetry</span>
+      <span class="text-[var(--text-secondary)]">
+        <span x-show="livePollActive">Sample <strong x-text="liveSampleCount"></strong> of <strong x-text="liveMaxSamples"></strong> (Updating in <span x-text="liveNextFetchCountdown"></span>s)</span>
+        <span x-show="!livePollActive">Stopped. Press Start to stream live metrics.</span>
+      </span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="btn btn-secondary h-6 text-[10px] px-2" x-show="!livePollActive" @click="startLivePoll()">
+        <svg class="icon w-3 h-3 text-[var(--ok)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#play"/></svg> Start
+      </button>
+      <button class="btn btn-secondary h-6 text-[10px] px-2" x-show="livePollActive" @click="stopLivePoll()">
+        <svg class="icon w-3 h-3 text-[var(--danger)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#square"/></svg> Stop
+      </button>
+      <button class="btn btn-secondary h-6 text-[10px] px-2" @click="fetchLivePower()">
+        <svg class="icon w-3 h-3 text-[var(--info)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg> Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- Empty / Loading States -->
+  <template x-if="!$store.app.selectedGateway">
+    <div class="card flex flex-col items-center justify-center gap-3 py-16 text-center text-[var(--text-muted)]">
+      <div class="text-4xl opacity-50">⚡</div>
+      <span class="text-sm">Select a gateway from the global dropdown to view its power profile.</span>
+    </div>
+  </template>
+  <template x-if="$store.app.selectedGateway && loading && !data">
+    <div class="card flex items-center justify-center gap-3 py-12 text-[var(--text-muted)]">
+      <svg class="icon fa-spin" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg> Loading metrics…
+    </div>
+  </template>
+
+  <!-- Main Content Payload -->
+  <template x-if="data">
+    <div class="space-y-6">
+
+      <!-- 1. HERO METRICS GRID (4-box layout) -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        
+        <!-- SOLAR -->
+        <div class="card p-5 relative overflow-hidden group">
+          <template x-if="profile?.has_solar === false">
+            <div class="absolute inset-0 bg-[var(--bg-base)]/80 backdrop-blur-[1px] flex flex-col items-center justify-center z-10 border border-dashed border-[var(--border)]/50">
+               <svg class="icon w-6 h-6 text-[var(--text-muted)] mb-1" aria-hidden="true" viewBox="0 0 24 24"><use href="#sun"/></svg>
+               <span class="text-[9px] font-black text-[var(--text-muted)] tracking-widest uppercase">Not Installed</span>
+            </div>
+          </template>
+          
+          <div class="absolute -right-4 -top-4 text-[var(--text-muted)] opacity-10 group-hover:opacity-20 transition-opacity">
+            <svg class="w-24 h-24" aria-hidden="true" viewBox="0 0 24 24"><use href="#sun"/></svg>
+          </div>
+          <div class="text-[10px] font-bold text-[var(--warn)] uppercase tracking-wider mb-1">Solar</div>
+          <div class="flex items-end gap-1 mb-1">
+            <span class="text-3xl font-black text-[var(--text-primary)] tracking-tight" x-text="data.solar_kw != null ? parseFloat(data.solar_kw).toFixed(2) : '0.00'"></span>
+            <span class="text-sm font-bold text-[var(--text-muted)] pb-1">kW</span>
+          </div>
+          <div class="text-xs text-[var(--text-secondary)] font-medium" x-text="(data.solar != null ? parseFloat(data.solar).toFixed(1) : '—') + ' kWh today'"></div>
+        </div>
+
+        <!-- BATTERY -->
+        <div class="card p-5 relative overflow-hidden group">
+          <div class="absolute -right-4 -top-4 text-[var(--text-muted)] opacity-10 group-hover:opacity-20 transition-opacity">
+            <svg class="w-24 h-24" aria-hidden="true" viewBox="0 0 24 24"><use href="#battery"/></svg>
+          </div>
+          <div class="flex justify-between items-center mb-1">
+            <div class="text-[10px] font-bold text-[var(--ok)] uppercase tracking-wider">Battery <span x-show="data.battery_soc" x-text="'• ' + parseFloat(data.battery_soc).toFixed(0) + '%'"></span></div>
+          </div>
+          <div class="flex items-end gap-1 mb-1">
+            <span class="text-3xl font-black text-[var(--text-primary)] tracking-tight" x-text="data.battery_kw != null ? parseFloat(data.battery_kw).toFixed(2) : '0.00'"></span>
+            <span class="text-sm font-bold text-[var(--text-muted)] pb-1">kW</span>
+          </div>
+          <div class="flex items-center gap-2 text-[10px] uppercase text-[var(--text-secondary)] font-bold tracking-wider">
+            <span title="Discharged today" class="flex items-center gap-1 text-[var(--ok)]"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#arrow-up"/></svg> <span x-text="data.battery_discharge != null ? parseFloat(data.battery_discharge).toFixed(1) : '—'"></span> kWh</span>
+            <span title="Charged today" class="flex items-center gap-1 text-[var(--accent)]"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#arrow-down"/></svg> <span x-text="data.battery_charge != null ? parseFloat(data.battery_charge).toFixed(1) : '—'"></span> kWh</span>
+          </div>
+        </div>
+
+        <!-- GRID -->
+        <div class="card p-5 relative overflow-hidden group">
+          <template x-if="profile?.has_grid === false">
+            <div class="absolute inset-0 bg-[var(--bg-base)]/80 backdrop-blur-[1px] flex flex-col items-center justify-center z-10 border border-dashed border-[var(--border)]/50">
+               <svg class="icon w-6 h-6 text-[var(--danger)]/50 mb-1" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg>
+               <span class="text-[9px] font-black text-[var(--danger)]/80 tracking-widest uppercase select-none">Grid Disconnected</span>
+            </div>
+          </template>
+        
+          <div class="absolute -right-4 -top-4 text-[var(--text-muted)] opacity-10 group-hover:opacity-20 transition-opacity">
+            <svg class="w-24 h-24" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg>
+          </div>
+          <div class="flex justify-between items-center mb-1">
+            <div class="text-[10px] font-bold text-[var(--accent)] uppercase tracking-wider">Grid</div>
+            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded" :class="data.grid_kw > 0 ? 'bg-[var(--danger)] text-white' : 'bg-[var(--surface-1)] text-[var(--text-muted)]'" x-text="data.grid_kw > 0 ? 'Importing' : 'Idle / Export'"></span>
+          </div>
+          <div class="flex items-end gap-1 mb-1">
+            <span class="text-3xl font-black text-[var(--text-primary)] tracking-tight" x-text="data.grid_kw != null ? parseFloat(data.grid_kw).toFixed(2) : '0.00'"></span>
+            <span class="text-sm font-bold text-[var(--text-muted)] pb-1">kW</span>
+          </div>
+          <div class="flex items-center gap-2 text-[10px] uppercase text-[var(--text-secondary)] font-bold tracking-wider">
+             <span title="Imported today" class="flex items-center gap-1 text-[var(--danger)]"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#arrow-down"/></svg> <span x-text="data.grid_import != null ? parseFloat(data.grid_import).toFixed(1) : '—'"></span> kWh</span>
+             <span title="Exported today" class="flex items-center gap-1 text-[var(--accent)]"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#arrow-up"/></svg> <span x-text="data.grid_export != null ? parseFloat(data.grid_export).toFixed(1) : '—'"></span> kWh</span>
+          </div>
+        </div>
+
+        <!-- HOME LOAD -->
+        <div class="card p-5 relative overflow-hidden group">
+          <div class="absolute -right-4 -top-4 text-[var(--text-muted)] opacity-10 group-hover:opacity-20 transition-opacity">
+            <svg class="w-24 h-24" aria-hidden="true" viewBox="0 0 24 24"><use href="#home"/></svg>
+          </div>
+          <div class="text-[10px] font-bold text-[var(--danger)] uppercase tracking-wider mb-1">Home Load</div>
+          <div class="flex items-end gap-1 mb-1">
+            <span class="text-3xl font-black text-[var(--text-primary)] tracking-tight" x-text="data.home_kw != null ? parseFloat(data.home_kw).toFixed(2) : '0.00'"></span>
+            <span class="text-sm font-bold text-[var(--text-muted)] pb-1">kW</span>
+          </div>
+          <div class="text-xs text-[var(--text-secondary)] font-medium" x-text="(data.home_use != null ? parseFloat(data.home_use).toFixed(1) : '—') + ' kWh today'"></div>
+        </div>
+
+      </div>
+
+      <!-- Optional Generator Block -->
+      <template x-if="data?.generator_enabled">
+        <div class="card p-4 flex items-center justify-between border border-[var(--border)] border-l-4 border-l-[var(--warn)] bg-gradient-to-r from-[var(--surface-1)] to-transparent">
+          <div class="flex items-center gap-3">
+             <div class="w-10 h-10 rounded-full bg-[var(--surface-0)] border border-[var(--border)] flex items-center justify-center text-[var(--warn)]">
+               <svg class="h-5 w-5" aria-hidden="true" viewBox="0 0 24 24"><use href="#power"/></svg>
+             </div>
+             <div>
+               <div class="text-xs font-bold text-[var(--text-primary)]">Generator Power</div>
+               <div class="text-[10px] text-[var(--text-secondary)] uppercase tracking-wider mt-0.5" x-text="(data.generator_mode || 'Auto') + ' Mode'"></div>
+             </div>
+          </div>
+          <div class="text-right">
+             <div class="text-xl font-black text-[var(--text-primary)] tracking-tight">
+               <span x-text="data.generator_power != null ? parseFloat(data.generator_power).toFixed(2) : '0.00'"></span>
+               <span class="text-sm font-bold text-[var(--text-muted)] ml-1">kW</span>
+             </div>
+             <div class="text-[10px] text-[var(--text-muted)] font-bold mt-1 uppercase" x-text="(data.generator != null ? parseFloat(data.generator).toFixed(1) : '—') + ' kWh today'"></div>
+          </div>
+        </div>
+      </template>
+
+      <!-- 2. POWER BALANCE + RESERVE SOC CARDS -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        
+        <!-- Power Balance Scale -->
+        <div class="card p-5">
+           <div class="flex items-center justify-between mb-4">
+             <div class="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2">
+               <svg class="icon text-[var(--accent)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#align-left"/></svg> Power Balance
+             </div>
+           </div>
+           
+           <div class="space-y-4">
+             <!-- Hardcoded placeholders for capacity limits -> To be moved to Global Integrator Config -->
+             <div x-data="{
+               solarMaxKw: 10.0,
+               batteryMaxKw: 5.0,
+               gridMaxKw: 15.0,
+               homeMaxKw: 15.0
+             }">
+               <!-- Solar Balance -->
+               <div class="space-y-1">
+                 <div class="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider">
+                   <span class="text-[var(--warn)] flex items-center gap-1.5"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#sun"/></svg> Solar</span>
+                   <span class="text-[var(--text-primary)]" x-text="parseFloat(data.solar_kw||0).toFixed(2) + ' kW'"></span>
+                 </div>
+                 <div class="w-full bg-[var(--surface-1)] rounded-full h-1.5 overflow-hidden relative">
+                   <div class="bg-[var(--warn)] h-1.5 rounded-full transition-all duration-500" :style="'width: ' + ((Math.abs(parseFloat(data.solar_kw||0)) / solarMaxKw) * 100) + '%'"></div>
+                 </div>
+               </div>
+               
+               <!-- Battery Balance -->
+               <div class="space-y-1 mt-4">
+                 <div class="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider">
+                   <span class="text-[var(--ok)] flex items-center gap-1.5"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#battery"/></svg> Battery</span>
+                   <span class="text-[var(--text-primary)]" x-text="parseFloat(data.battery_kw||0).toFixed(2) + ' kW'"></span>
+                 </div>
+                 <div class="w-full bg-[var(--surface-1)] rounded-full h-1.5 overflow-hidden relative">
+                   <div class="bg-[var(--ok)] h-1.5 rounded-full transition-all duration-500" :style="'width: ' + ((Math.abs(parseFloat(data.battery_kw||0)) / batteryMaxKw) * 100) + '%'"></div>
+                 </div>
+               </div>
+
+               <!-- Grid Balance -->
+               <div class="space-y-1 mt-4">
+                 <div class="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider">
+                   <span class="text-[var(--accent)] flex items-center gap-1.5"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#zap"/></svg> Grid</span>
+                   <span class="text-[var(--text-primary)]" x-text="parseFloat(data.grid_kw||0).toFixed(2) + ' kW'"></span>
+                 </div>
+                 <div class="w-full bg-[var(--surface-1)] rounded-full h-1.5 overflow-hidden relative">
+                   <div class="bg-[var(--accent)] h-1.5 rounded-full transition-all duration-500" :style="'width: ' + ((Math.abs(parseFloat(data.grid_kw||0)) / gridMaxKw) * 100) + '%'"></div>
+                 </div>
+               </div>
+
+               <!-- Home Balance -->
+               <div class="space-y-1 mt-4">
+                 <div class="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider">
+                   <span class="text-[var(--danger)] flex items-center gap-1.5"><svg class="icon w-3 h-3" viewBox="0 0 24 24"><use href="#home"/></svg> Home</span>
+                   <span class="text-[var(--text-primary)]" x-text="parseFloat(data.home_kw||0).toFixed(2) + ' kW'"></span>
+                 </div>
+                 <div class="w-full bg-[var(--surface-1)] rounded-full h-1.5 overflow-hidden relative">
+                   <div class="bg-[var(--danger)] h-1.5 rounded-full transition-all duration-500" :style="'width: ' + ((Math.abs(parseFloat(data.home_kw||0)) / homeMaxKw) * 100) + '%'"></div>
+                 </div>
+               </div>
+             </div>
+           </div>
+        </div>
+
+        <!-- SOC Reserve Trackers -->
+        <div class="card p-5">
+           <div class="flex items-center justify-between mb-6">
+             <div class="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2">
+               <svg class="icon text-[var(--ok)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#battery-charging"/></svg> Battery Limits & Reserves
+             </div>
+             <div class="text-xs font-bold text-[var(--text-muted)]" x-text="(data.capacity?.total || 0).toFixed(1) + ' kWh Target'"></div>
+           </div>
+
+           <!-- Compound Layered Bar -->
+           <div class="mb-4">
+             <div class="flex justify-between text-[11px] font-bold text-[var(--text-secondary)] mb-2 uppercase tracking-wider">
+               <span>Reserve Allocation</span>
+               <span class="text-[var(--ok)]" x-text="parseFloat(data.battery_soc||0).toFixed(1) + '% SOC'"></span>
+             </div>
+             
+             <!-- Multi-layered CSS Bar -->
+             <div class="relative w-full h-4 bg-[var(--surface-1)] rounded-full overflow-hidden border border-[var(--border)]">
+               <!-- Self-Consumption Reserve (Green) Base Layer -->
+               <div class="absolute left-0 top-0 h-full bg-[var(--ok)] opacity-50 z-10" :style="'width: ' + (data.self_reserve_soc || 0) + '%'"></div>
+               
+               <!-- Backup / TOU Reserve (Purple/Accent) Overlay Layer starts where Self ends or starts from 0 -->
+               <div class="absolute top-0 h-full bg-[#8b5cf6] opacity-70 z-20" :style="'left: 0%; width: ' + (data.backup_reserve_soc || data.tou_reserve_soc || 0) + '%'"></div>
+
+               <!-- Live Current Tracker Line (Marker) -->
+               <div class="absolute top-0 w-1 h-full bg-white z-50 rounded shadow shadow-xl" :style="'left: ' + (data.battery_soc || 0) + '%'"></div>
+               
+               <!-- Min Discharge Limit / Max Charge Limit semantic markers -->
+               <div class="absolute right-0 top-0 h-full bg-[var(--danger)] opacity-30 z-30" style="width: 5%"></div> <!-- Example Max Charge 95% -->
+             </div>
+             
+             <!-- Legend -->
+             <div class="flex items-center gap-4 mt-3 text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+               <div><span class="w-2.5 h-2.5 rounded-full bg-[var(--ok)] inline-block mr-1"></span> SELF <span x-text="data?.self_reserve_soc"></span>%</div>
+               <div><span class="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block mr-1"></span> TOU <span x-text="data?.backup_reserve_soc"></span>%</div>
+             </div>
+           </div>
+           
+           <div class="mt-6 pt-4 border-t border-[var(--border)] flex justify-between items-center text-xs">
+              <span class="text-[var(--text-muted)] font-bold uppercase">Battery Power</span>
+              <div class="flex items-center gap-3">
+                 <span class="chip bg-blue-500/10 text-blue-400 font-bold px-2 py-1 text-[10px] uppercase" x-show="data.battery_kw > 0">Discharging</span>
+                 <span class="chip bg-green-500/10 text-green-400 font-bold px-2 py-1 text-[10px] uppercase" x-show="data.battery_kw < 0">Charging</span>
+                 <span class="font-black text-lg text-[var(--text-primary)]" x-text="Math.abs(data.battery_kw||0).toFixed(2) + ' kW'"></span>
+              </div>
+           </div>
+        </div>
+
+      </div>
+
+      <!-- 3. GRID METRICS & HARDWARE RELAYS -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        
+        <!-- Grid Voltages & Freq -->
+        <div class="card p-0 flex flex-col h-full overflow-hidden">
+          <div class="p-4 border-b border-[var(--border)] bg-[var(--surface-0)] flex items-center gap-2">
+            <svg class="icon text-[var(--accent)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#activity"/></svg>
+            <h3 class="text-sm font-bold text-[var(--text-primary)]">Grid Electrical Properties</h3>
+          </div>
+          <div class="p-4 flex-1">
+            <div class="grid grid-cols-1 gap-2 text-sm">
+              <div class="flex justify-between items-center py-2 border-b border-[var(--border)]">
+                <span class="text-[var(--text-secondary)]">Frequency</span>
+                <span class="font-mono font-bold text-[var(--text-primary)]" x-text="(livePower?.gridFreq?.toFixed(2) || '0.00') + ' Hz'"></span>
+              </div>
+              <div class="flex justify-between items-center py-2 border-b border-[var(--border)]">
+                <span class="text-[var(--text-secondary)]">Voltage L1 / L2</span>
+                <span class="font-mono font-bold text-[var(--text-primary)]" x-text="(livePower?.grid_voltage1?.toFixed(1) || '0.0') + 'V / ' + (livePower?.grid_voltage2?.toFixed(1) || '0.0') + 'V'"></span>
+              </div>
+              <div class="flex justify-between items-center py-2 border-b border-[var(--border)]">
+                <span class="text-[var(--text-secondary)]">Line Voltage</span>
+                <span class="font-mono font-bold text-[var(--text-primary)]" x-text="(livePower?.grid_line_voltage?.toFixed(1) || '0.0') + 'V'"></span>
+              </div>
+              <div class="flex justify-between items-center py-2">
+                <span class="text-[var(--text-secondary)]">Current L1 / L2</span>
+                <span class="font-mono font-bold text-[var(--text-primary)]" x-text="(livePower?.grid_current1?.toFixed(1) || '0.0') + 'A / ' + (livePower?.grid_current2?.toFixed(1) || '0.0') + 'A'"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hardware Relays -->
+        <div class="card p-0 flex flex-col h-full overflow-hidden">
+          <div class="p-4 border-b border-[var(--border)] bg-[var(--surface-0)] flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <svg class="icon text-[var(--warn)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#cpu"/></svg>
+              <h3 class="text-sm font-bold text-[var(--text-primary)]">Contactors & Smart Relays</h3>
+            </div>
+          </div>
+          <div class="p-4 flex-1 bg-[var(--surface-1)]">
+            <div class="grid grid-cols-2 gap-3 text-xs">
+              
+              <!-- Core / Mandatory Relays -->
+              <template x-if="livePower?.relays?.grid1 !== undefined">
+                <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)]">
+                  <span class="text-[var(--text-secondary)] font-medium">Grid R1</span>
+                  <span class="font-bold tracking-wider text-[10px]" :class="livePower?.relays?.grid1 == 0 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="livePower?.relays?.grid1 == 0 ? 'CLOSED' : 'OPEN'"></span>
+                </div>
+              </template>
+              <template x-if="livePower?.relays?.grid2 !== undefined">
+                <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)]">
+                  <span class="text-[var(--text-secondary)] font-medium">Grid R2</span>
+                  <span class="font-bold tracking-wider text-[10px]" :class="livePower?.relays?.grid2 == 0 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="livePower?.relays?.grid2 == 0 ? 'CLOSED' : 'OPEN'"></span>
+                </div>
+              </template>
+              <template x-if="livePower?.relays?.solar1 !== undefined">
+                <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)]">
+                  <span class="text-[var(--text-secondary)] font-medium">Solar R1</span>
+                  <span class="font-bold tracking-wider text-[10px]" :class="livePower?.relays?.solar1 == 0 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="livePower?.relays?.solar1 == 0 ? 'CLOSED' : 'OPEN'"></span>
+                </div>
+              </template>
+              <template x-if="livePower?.relays?.blackStart !== undefined">
+                <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)]">
+                  <span class="text-[var(--text-secondary)] font-medium">Black Start</span>
+                  <span class="font-bold tracking-wider text-[10px]" :class="livePower?.relays?.blackStart == 0 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="livePower?.relays?.blackStart == 0 ? 'CLOSED' : 'OPEN'"></span>
+                </div>
+              </template>
+
+              <!-- Conditional Hardware -->
+              <template x-if="data?.generator_enabled != null && livePower?.relays?.generator !== undefined">
+                <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)]">
+                  <span class="text-[var(--text-secondary)] font-medium">Generator</span>
+                  <span class="font-bold tracking-wider text-[10px]" :class="livePower?.relays?.generator == 0 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="livePower?.relays?.generator == 0 ? 'CLOSED' : 'OPEN'"></span>
+                </div>
+              </template>
+              
+              <template x-if="livePower?.relays?.pv2 !== undefined">
+                <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)]">
+                  <span class="text-[var(--text-secondary)] font-medium">Remote PV2</span>
+                  <span class="font-bold tracking-wider text-[10px]" :class="livePower?.relays?.pv2 == 0 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="livePower?.relays?.pv2 == 0 ? 'CLOSED' : 'OPEN'"></span>
+                </div>
+              </template>
+              
+              <template x-if="livePower?.relays?.apbox !== undefined">
+                <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)]">
+                  <span class="text-[var(--text-secondary)] font-medium">aPBox Relay</span>
+                  <span class="font-bold tracking-wider text-[10px]" :class="livePower?.relays?.apbox == 0 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="livePower?.relays?.apbox == 0 ? 'CLOSED' : 'OPEN'"></span>
+                </div>
+              </template>
+
+              <!-- Conditionally append Smart Circuits if present -->
+              <template x-for="i in [1, 2, 3]">
+                <template x-if="data['smart_circuit_' + i + '_state'] != null">
+                   <div class="flex items-center justify-between bg-[var(--surface-0)] p-2 rounded border border-[var(--border)] border-l-2 border-l-[var(--info)]">
+                     <span class="text-[var(--text-secondary)] font-medium" x-text="data['smart_circuit_' + i + '_name'] || 'Circuit ' + i"></span>
+                     <span class="font-bold tracking-wider text-[10px]" :class="data['smart_circuit_' + i + '_state'] === 'OFF' ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="data['smart_circuit_' + i + '_state'] === 'OFF' ? 'CLOSED' : 'OPEN'"></span>
+                   </div>
+                </template>
+              </template>
+
+            </div>
+          </div>
+        </div>
+
+      </div> <!-- End Row 3 -->
+
+      <!-- 4. GRID COMPLIANCE -->
+      <div class="card p-6">
+        <div class="flex justify-between items-center mb-6">
+          <div class="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2 border-l-2 border-[var(--accent)] pl-3">
+             Grid Compliance Profile
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between gap-3 mb-6 bg-[var(--surface-1)] p-4 rounded-lg border border-[var(--border)]">
+          <div class="flex items-center gap-3">
+            <span class="chip bg-green-500/10 text-[var(--ok)] px-3 py-1 font-bold text-xs flex items-center gap-1.5 uppercase tracking-wider">
+              <svg class="icon w-3 h-3" aria-hidden="true" viewBox="0 0 24 24"><use href="#check-circle"/></svg> Active Standard
+            </span>
+            <span class="text-lg font-black text-[var(--text-primary)]">
+              <span x-text="activeProfileName || 'User Defined'"></span>
+              <template x-if="!activeProfileName || activeProfileName === 'User Defined'">
+                <span class="text-xs font-medium text-[var(--text-secondary)] ml-2">(Set by FranklinWH Support - contact them for further info)</span>
+              </template>
+            </span>
+          </div>
+          <button class="btn hover-opacity text-xs h-9 bg-[var(--surface-0)] border border-[var(--border)] text-[var(--text-primary)] whitespace-nowrap px-4" x-show="complianceDetails.length > 0" @click="showTechnical = true">
+            <svg class="icon text-[var(--info)] w-4 h-4 mr-1.5" aria-hidden="true" viewBox="0 0 24 24"><use href="#database"/></svg>
+            View Grid Profile
+          </button>
+        </div>
+
+        <div class="text-[10px] text-[var(--text-muted)] mb-3 font-bold uppercase tracking-widest">Available Device Profiles</div>
+        
+        <div x-show="loadingCompliance" class="text-xs text-[var(--text-secondary)] flex items-center gap-2 mb-4 py-4"><svg class="icon fa-spin w-4 h-4" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg> Verifying profiles over Cloud network...</div>
+        
+        <div x-show="!loadingCompliance && complianceList.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+          <template x-for="prof in complianceList" :key="prof">
+            <div class="flex border border-[var(--border)] items-center justify-between rounded-lg p-3 transition-colors cursor-default"
+                 :class="prof === activeProfileName ? 'bg-green-500/5 border-[var(--ok)] shadow-sm' : 'bg-[var(--surface-0)]'">
+              <div class="flex items-center gap-2.5">
+                <svg class="icon" :class="prof === activeProfileName ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" aria-hidden="true" viewBox="0 0 24 24"><use href="#shield"/></svg>
+                <span class="text-xs font-bold" :class="prof === activeProfileName ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'" x-text="prof"></span>
+              </div>
+              <span x-show="prof === activeProfileName" class="text-[9px] font-black tracking-widest text-[var(--ok)] uppercase">Enforced</span>
+            </div>
+          </template>
+        </div>
+
+      </div>
+
+        <!-- 5. GO OFF-GRID CONTROL
+             GridConnectionState values (franklinwh-cloud DEF-GRID-STATE-ENUM):
+               'Connected'        = normal grid-tied operation  → button enabled "Disconnect and Go Off-Grid"
+               'SimulatedOffGrid' = user-initiated SW islanding → button enabled "Reconnect to Utility Grid"
+               'Outage'           = hardware islanded by grid fault → button disabled
+               'NotGridTied'      = no utility contactor at this site → button disabled
+             Button is ALWAYS visible — never hidden. Colour and line-2 text communicate availability.
+        -->
+        <div class="card p-6 border-l-4 transition-colors"
+             :class="{
+               'border-l-[var(--ok)]':      data?.grid_status === 'Connected',
+               'border-l-amber-500':        data?.grid_status === 'SimulatedOffGrid',
+               'border-l-[var(--danger)]':  data?.grid_status === 'Outage',
+               'border-l-[var(--border)]':  data?.grid_status === 'NotGridTied'
+             }">
+
+          <!-- Boundary box header: "Go Off-Grid" + status badge -->
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <svg class="icon transition-colors"
+                   :class="{
+                     'text-[var(--ok)]':      data?.grid_status === 'Connected',
+                     'text-amber-500':        data?.grid_status === 'SimulatedOffGrid',
+                     'text-[var(--danger)]':  data?.grid_status === 'Outage',
+                     'text-[var(--text-muted)]': data?.grid_status === 'NotGridTied'
+                   }" aria-hidden="true" viewBox="0 0 24 24">
+                <use href="#zap-off"/>
+              </svg>
+              Go Off-Grid
+            </div>
+            <!-- Status badge -->
+            <span class="chip text-[10px] font-black tracking-wider uppercase px-2 py-1"
+                  :class="{
+                    'ok':     data?.grid_status === 'Connected',
+                    'warn':   data?.grid_status === 'Outage' || data?.grid_status === 'SimulatedOffGrid',
+                    'muted':  data?.grid_status === 'NotGridTied'
+                  }"
+                  x-text="data?.grid_status === 'Connected'        ? 'Inactive'
+                        : data?.grid_status === 'SimulatedOffGrid' ? 'Active'
+                        : 'Unavailable'">
+            </span>
+          </div>
+
+          <!-- Line 2: contextual description -->
+          <p class="text-xs text-[var(--text-secondary)] mb-5 max-w-3xl leading-relaxed mt-2"
+             x-text="gridPending                                                        ? 'Transition in progress \u2014 waiting for gateway confirmation\u2026'
+                   : data?.grid_status === 'Connected'        ? 'Simulate off-grid \u2014 available'
+                   : data?.grid_status === 'SimulatedOffGrid' ? 'Simulate off-grid \u2014 active'
+                   : data?.grid_status === 'Outage'           ? (outageIsConfirmed ? 'Blocked: Grid relay is closed' : 'Grid outage detected \u2014 transition in progress')
+                   : 'Blocked: No grid service available'">
+          </p>
+
+          <!-- Extended info for blocked states -->
+          <!-- Outage confirmed (>2 min dwell): promote to 'check panel' prompt -->
+          <div class="mb-4 px-3 py-2 rounded text-[10px] font-bold uppercase tracking-wider border"
+               x-show="data?.grid_status === 'Outage' && outageIsConfirmed"
+               x-cloak
+               style="background:rgba(239,68,68,0.10);border-color:rgba(239,68,68,0.35);color:var(--danger)">
+            ⚠ Please check utility service and/or your main electrical panel.
+          </div>
+          <!-- Outage dwell (<2 min): aGate still running internal safety checks — do not alarm user prematurely -->
+          <div class="mb-4 px-3 py-2 rounded text-[10px] font-bold uppercase tracking-wider border"
+               x-show="data?.grid_status === 'Outage' && !outageIsConfirmed"
+               x-cloak
+               style="background:var(--warn-bg);border-color:rgba(245,158,11,0.35);color:var(--warn-text)">
+            ⏳ Grid outage detected — aGate completing safety sequence. Allow up to 2 minutes before taking action.
+          </div>
+          <div class="mb-4 px-3 py-2 rounded text-[10px] font-bold uppercase tracking-wider border"
+               x-show="data?.grid_status === 'NotGridTied'"
+               x-cloak
+               style="background:var(--surface-1);border-color:var(--border);color:var(--text-muted)">
+            ℹ This gateway is not configured by installer as having any grid service.
+          </div>
+
+          <!-- Always-visible colour-coded button — also locked while gridPending -->
+          <button class="btn justify-center h-10 px-8 transition-all"
+                  :class="{
+                    'bg-[var(--ok)] text-white hover:bg-green-600':         !gridPending && data?.grid_status === 'Connected',
+                    'bg-amber-500 text-white hover:bg-amber-600':           !gridPending && data?.grid_status === 'SimulatedOffGrid',
+                    'bg-[var(--danger)]/30 text-[var(--danger)]/60 cursor-not-allowed': data?.grid_status === 'Outage',
+                    'bg-[var(--surface-1)] text-[var(--text-muted)] cursor-not-allowed border border-[var(--border)]': data?.grid_status === 'NotGridTied',
+                    'bg-amber-500/20 dark:bg-amber-400/30 cursor-wait': gridPending
+                  }"
+                  :style="gridPending ? 'color:var(--warn-text)' : ''"
+                  :disabled="gridPending || data?.grid_status === 'Outage' || data?.grid_status === 'NotGridTied'"
+                  @click="!gridPending && data?.grid_status !== 'Outage' && data?.grid_status !== 'NotGridTied' && toggleGrid()">
+            <svg class="icon w-4 h-4" aria-hidden="true" viewBox="0 0 24 24">
+              <use :href="data?.grid_status === 'SimulatedOffGrid' ? '#zap' : '#zap-off'"/>
+            </svg>
+            <span class="font-bold"
+                  x-text="gridPending                                   ? '\u23f3 Transition in progress\u2026'
+                        : data?.grid_status === 'Connected'        ? 'Disconnect and Go Off-Grid'
+                        : data?.grid_status === 'SimulatedOffGrid' ? 'Reconnect to Utility Grid'
+                        : 'Unavailable'">
+            </span>
+          </button>
+
+        </div>
+
+    </div> <!-- End Main Content space-y -->
+  </template>
+
+  <!-- Technical Details Modal -->
+  <div class="modal-backdrop" x-show="showTechnical" x-cloak x-transition>
+    <div class="modal-panel max-w-2xl p-0 overflow-hidden bg-[var(--surface-0)] border border-[var(--border)] rounded-xl shadow-2xl">
+      <div class="px-6 py-4 border-b border-[var(--border)] flex justify-between items-center bg-[var(--surface-1)]">
+        <h3 class="font-bold text-[var(--text-primary)] flex items-center gap-2">
+          <svg class="icon text-[var(--accent)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#shield"/></svg> Compliance Parameters
+        </h3>
+        <div class="flex items-center gap-2">
+          <button class="btn btn-secondary h-8 text-xs font-bold" @click="exportComplianceCSV()">
+            <svg class="icon w-3 h-3" aria-hidden="true" viewBox="0 0 24 24"><use href="#download"/></svg> Export CSV
+          </button>
+          <button class="btn btn-secondary h-8 w-8 !p-0 flex items-center justify-center rounded-full ml-1" @click="showTechnical = false">
+            <svg class="icon w-4 h-4" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg>
+          </button>
+        </div>
+      </div>
+      
+      <div class="p-6 max-h-[70vh] overflow-y-auto space-y-4 bg-[var(--surface-0)]">
+         <template x-for="group in complianceDetails" :key="group.groupName">
+           <div class="border border-[var(--border)] rounded-lg p-4 bg-[var(--surface-1)] hover:border-[var(--border-hover)] transition-colors">
+             <div class="font-bold text-[var(--text-primary)] mb-3 text-xs uppercase tracking-wider pl-2 border-l-2 border-[var(--accent)]" x-text="group.groupName"></div>
+             <div class="space-y-2">
+               <template x-for="item in group.itemList" :key="item.name">
+                 <div class="flex justify-between items-center text-xs py-1.5 border-b border-[var(--surface-2)] last:border-0 hover:bg-[var(--surface-2)] px-2 -mx-2 rounded transition-colors">
+                   <span class="text-[var(--text-secondary)] font-medium" x-text="item.name"></span>
+                   <div class="font-mono text-right">
+                     <span class="text-[var(--text-primary)] font-bold" x-text="item.value"></span>
+                     <span class="text-[var(--text-muted)] font-medium ml-1" x-text="item.unit || ''"></span>
+                   </div>
+                 </div>
+               </template>
+             </div>
+           </div>
+         </template>
+         <div x-show="complianceDetails.length === 0" class="text-center py-10 text-[var(--text-muted)] text-sm font-medium">
+           No technical details fetched or parsed.
+         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Off-Grid / Grid Connection Control Modal -->
+  <!-- Opened for ALL 4 GridConnectionState values — Outage/NotGridTied show disabled Execute + reason -->
+  <div class="modal-backdrop z-50 fixed inset-0 flex items-center justify-center bg-black/60" x-show="showOffGridModal" x-cloak x-transition.opacity>
+    <div class="modal-panel max-w-lg p-0 overflow-hidden rounded-xl shadow-2xl border-2 bg-[var(--surface-0)]"
+         :class="{
+           'border-[var(--danger)]': pendingGridState === 'Connected',
+           'border-amber-500':       pendingGridState === 'SimulatedOffGrid',
+           'border-[var(--warn)]':   pendingGridState === 'Outage',
+           'border-[var(--border)]': pendingGridState === 'NotGridTied'
+         }">
+
+      <!-- Dynamic Header -->
+      <div class="px-6 py-4 flex items-center gap-3 text-white"
+           :class="{
+             'bg-[var(--danger)]': pendingGridState === 'Connected',
+             'bg-amber-500':       pendingGridState === 'SimulatedOffGrid',
+             'bg-[var(--warn)]':   pendingGridState === 'Outage',
+             'bg-[var(--text-muted)]': pendingGridState === 'NotGridTied'
+           }">
+        <svg class="icon w-5 h-5" aria-hidden="true" viewBox="0 0 24 24">
+          <use :href="pendingGridState === 'Connected' ? '#alert-triangle' : pendingGridState === 'SimulatedOffGrid' ? '#zap' : '#info'"/>
+        </svg>
+        <h3 class="font-black text-lg m-0"
+            x-text="pendingGridState === 'Connected'        ? 'Grid Islanding \u2014 DANGER'
+                  : pendingGridState === 'SimulatedOffGrid' ? 'Reconnect to Utility Grid'
+                  : pendingGridState === 'Outage'           ? 'Grid Connection Control'
+                  : 'Grid Connection Control'">
+        </h3>
+      </div>
+
+      <!-- CURRENT STATE display box -->
+      <div class="mx-6 mt-6 mb-4 bg-[var(--surface-1)] rounded-xl border border-[var(--border)] p-4 text-center">
+        <div class="text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] mb-1">Current State</div>
+        <div class="text-2xl font-black tracking-tight"
+             :class="{
+               'text-[var(--ok)]':       pendingGridState === 'Connected',
+               'text-amber-500':         pendingGridState === 'SimulatedOffGrid',
+               'text-[var(--danger)]':   pendingGridState === 'Outage',
+               'text-[var(--text-muted)]': pendingGridState === 'NotGridTied'
+             }"
+             x-text="pendingGridState === 'Connected'        ? 'CONNECTED'
+                   : pendingGridState === 'SimulatedOffGrid' ? 'SIMULATED OFF-GRID'
+                   : pendingGridState === 'Outage'           ? 'OUTAGE'
+                   : 'NOT GRID-TIED'">
+        </div>
+      </div>
+
+      <div class="px-6 pb-2">
+        <!-- Connected → going off-grid (danger path) -->
+        <template x-if="pendingGridState === 'Connected'">
+          <div>
+            <p class="text-[var(--text-primary)] font-bold mb-3">The utility grid and main electrical panels <span class="text-[var(--danger)]">remain physically live and dangerous.</span></p>
+            <ul class="text-sm text-[var(--text-secondary)] list-disc pl-5 space-y-2 mb-6 font-medium">
+              <li>Do not perform electrical work assuming the grid is dead.</li>
+              <li>The aGate is <strong>not an UPS</strong>. A brief cutover delay may reboot sensitive electronics.</li>
+              <li>Loads upstream of the aGate will immediately lose power.</li>
+            </ul>
+            <!-- Auto Re-connection SOC -->
+            <div class="bg-[var(--surface-1)] p-5 rounded-xl border border-[var(--border)] mb-6">
+              <div class="flex justify-between items-center mb-2">
+                <h4 class="text-xs font-black uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
+                  <svg class="icon text-[var(--accent)]" viewBox="0 0 24 24"><use href="#battery"/></svg> Auto Re-connection SOC
+                </h4>
+                <span class="text-[10px] uppercase font-bold text-[var(--text-muted)]">Live SOC: <strong class="text-[var(--text-primary)] ml-1 text-xs" x-text="parseFloat(data?.battery_soc || 0).toFixed(0) + '%'"></strong></span>
+              </div>
+              <p class="text-[10px] font-bold text-[var(--text-secondary)] mb-5">When Off-Grid, the aGate automatically reconnects to the utility once the battery reaches this threshold.</p>
+              <div class="flex items-center gap-4">
+                <input type="range" min="5" max="100" class="flex-1 accent-[var(--accent)] h-2 bg-[var(--surface-2)] rounded-lg appearance-none cursor-pointer" x-model.number="reconnectSoc">
+                <span class="text-lg font-black text-[var(--accent)] w-12 text-right" x-text="reconnectSoc + '%'"></span>
+              </div>
+            </div>
+            <label class="flex items-center gap-3 cursor-pointer bg-[var(--danger)]/10 hover:bg-[var(--danger)]/20 transition-colors rounded-xl p-4 border border-[var(--danger)]/30">
+              <input type="checkbox" x-model="ackOffGridRisk" class="w-4 h-4 accent-[var(--danger)] cursor-pointer">
+              <span class="text-sm font-bold text-[var(--danger)]">I acknowledge the physical risks of forced islanding.</span>
+            </label>
+          </div>
+        </template>
+
+        <!-- SimulatedOffGrid → reconnecting (safe path) -->
+        <template x-if="pendingGridState === 'SimulatedOffGrid'">
+          <div>
+            <p class="text-[var(--text-primary)] font-bold mb-4">The aGate will reconnect to the utility grid and resume normal grid-tied operation. Auto re-connection SOC bounds remain preserved.</p>
+            <label class="flex items-center gap-3 cursor-pointer bg-[var(--ok)]/10 hover:bg-[var(--ok)]/20 transition-colors rounded-xl p-4 border border-[var(--ok)]/30">
+              <input type="checkbox" x-model="ackOffGridRisk" class="w-4 h-4 accent-[var(--ok)] cursor-pointer">
+              <span class="text-sm font-bold text-[var(--ok)]">I confirm I want to reconnect to the utility grid.</span>
+            </label>
+          </div>
+        </template>
+
+        <!-- Outage → information only, no action -->
+        <template x-if="pendingGridState === 'Outage'">
+          <div>
+            <p class="text-[var(--text-primary)] font-bold mb-4">The grid contactor has been opened by a hardware fault. Software islanding is not available during a utility outage.</p>
+            <div class="bg-[var(--danger)]/5 border border-[var(--danger)]/30 rounded-xl p-4 text-sm font-bold text-[var(--danger)]">
+              Grid relay is closed — hardware has islanded.<br>
+              <span class="font-medium text-[var(--text-secondary)] text-xs">Please check utility service and/or your main electrical panel.</span>
+            </div>
+          </div>
+        </template>
+
+        <!-- NotGridTied → information only, no action -->
+        <template x-if="pendingGridState === 'NotGridTied'">
+          <div>
+            <p class="text-[var(--text-primary)] font-bold mb-4">This gateway has no utility grid connection.</p>
+            <div class="bg-[var(--surface-1)] border border-[var(--border)] rounded-xl p-4 text-sm font-bold text-[var(--text-muted)]">
+              No grid service available at this site.<br>
+              <span class="font-medium text-[var(--text-secondary)] text-xs">This gateway is not configured by installer as having any grid service.</span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div class="px-6 py-4 mt-4 flex justify-end gap-3 bg-[var(--surface-1)] border-t border-[var(--border)]">
+        <button class="btn btn-secondary border border-[var(--border)]" @click="showOffGridModal = false; ackOffGridRisk = false">Close</button>
+        <template x-if="pendingGridState === 'Connected' || pendingGridState === 'SimulatedOffGrid'">
+          <button class="btn min-w-[140px] justify-center transition-colors shadow-sm"
+                  :class="pendingGridState === 'Connected' ? 'bg-[var(--danger)] hover:bg-red-600 text-white' : 'bg-[var(--ok)] hover:bg-green-600 text-white'"
+                  :disabled="!ackOffGridRisk || busy"
+                  @click="executeToggleGrid()">
+            <svg class="icon fa-spin w-4 h-4 mr-2" x-show="busy" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+            <span class="font-bold" x-show="!busy" x-text="pendingGridState === 'Connected' ? 'Execute Off-Grid' : 'Execute Reconnect'"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+  </div>
+
+</div>
+

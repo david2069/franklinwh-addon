@@ -1,0 +1,1131 @@
+<!-- home_automation v2 — Sub-tabs: Status & Browser | Configuration -->
+<div x-data="homeAutomationTab()" x-init="init()" class="max-w-7xl">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-4 pt-1">
+    <div>
+      <h1 class="text-xl font-black flex items-center gap-2" style="color:var(--text-primary)">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#house"/></svg>
+        Home Automation
+      </h1>
+      <p class="text-xs mt-0.5" style="color:var(--text-muted)">Home Assistant connection status, entity browser, and configuration</p>
+    </div>
+  </div>
+
+  <!-- Sub-tab navigation -->
+  <div class="flex gap-1 border-b mb-5" style="border-color:var(--border)">
+    <button @click="activeView = 'status'"
+            class="px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-all border-t border-x border-transparent -mb-px flex items-center gap-1.5"
+            :class="activeView === 'status' ? 'border-[var(--border)] shadow-[0_-10px_20px_rgba(0,0,0,0.15)]' : 'hover:bg-white/5'"
+            :style="activeView === 'status' ? 'background:var(--surface-1); color:var(--text-primary)' : 'color:var(--text-muted)'">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      Status &amp; Browser
+    </button>
+    <button @click="activeView = 'config'; loadConfig()"
+            class="px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-all border-t border-x border-transparent -mb-px flex items-center gap-1.5"
+            :class="activeView === 'config' ? 'border-[var(--border)] shadow-[0_-10px_20px_rgba(0,0,0,0.15)]' : 'hover:bg-white/5'"
+            :style="activeView === 'config' ? 'background:var(--surface-1); color:var(--text-primary)' : 'color:var(--text-muted)'">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+      Configuration
+    </button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- STATUS & BROWSER TAB                                                   -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <div x-show="activeView === 'status'" x-cloak>
+
+    <!-- Connection Status Header -->
+    <div class="rounded-xl border p-4 mb-4 shadow-sm" style="background:var(--surface-1); border-color:var(--border)">
+      <template x-if="statusLoading">
+        <div class="flex items-center gap-3 text-gray-500 text-sm animate-pulse">
+          <div class="w-3 h-3 rounded-full bg-gray-600"></div>
+          <span>Checking Home Assistant…</span>
+        </div>
+      </template>
+      <template x-if="!statusLoading && status">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <!-- Status pill -->
+              <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border"
+                    :class="serviceStateBadgeClass">
+                <span class="w-2 h-2 rounded-full" :class="isStarted ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'"></span>
+                <span x-text="serviceStateLabel"></span>
+              </span>
+              <!-- Uptime -->
+              <span x-show="isStarted && uptimeStr" class="text-xs font-mono" style="color:var(--text-muted)" x-text="'↑ ' + uptimeStr"></span>
+              <!-- Env badge -->
+              <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"
+                    :class="status.env === 'ha_addon'
+                      ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                      : status.env === 'docker'
+                      ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                      : ''"
+                    :style="status.env !== 'ha_addon' && status.env !== 'docker'
+                      ? 'background:var(--surface-2); color:var(--text-secondary); border:1px solid var(--border)'
+                      : ''"
+                    x-text="status.env === 'ha_addon' ? 'HA Add-on' : status.env === 'docker' ? 'Docker Dev' : 'Not Configured'"></span>
+            </div>
+            <div class="flex items-center gap-3">
+              <!-- Configure link -->
+              <button @click="activeView = 'config'; loadConfig()"
+                      class="text-xs text-primary/70 hover:text-primary flex items-center gap-1 transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+                Configure
+              </button>
+              <button @click="loadStatus(); loadEntities(1)"
+                      class="text-xs hover:opacity-80 flex items-center gap-1 transition-colors"
+                      style="color:var(--text-muted)">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Refresh
+              </button>
+            </div>
+          </div>
+          <!-- Stat cards (only when connected) -->
+          <template x-if="isConnected">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="rounded-lg p-3 border" style="background:var(--surface-2); border-color:var(--border)">
+                <div class="text-[10px] uppercase tracking-wider mb-1" style="color:var(--text-muted)">Total Entities</div>
+                <div class="text-xl font-black" style="color:var(--text-primary)" x-text="status.entity_count ?? '—'"></div>
+              </div>
+              <div class="rounded-lg p-3 border" style="background:var(--surface-2); border-color:var(--border)">
+                <div class="text-[10px] uppercase tracking-wider mb-1" style="color:var(--text-muted)">FHAI Published</div>
+                <div class="text-xl font-black text-emerald-400" x-text="status.fhai_entity_count ?? '—'"></div>
+              </div>
+              <div class="rounded-lg p-3 border" style="background:var(--surface-2); border-color:var(--border)">
+                <div class="text-[10px] uppercase tracking-wider mb-1" style="color:var(--text-muted)">HA Instance</div>
+                <div class="text-sm font-bold truncate" style="color:var(--text-primary)" x-text="status.ha_name ?? '—'"></div>
+              </div>
+              <div class="rounded-lg p-3 border" style="background:var(--surface-2); border-color:var(--border)">
+                <div class="text-[10px] uppercase tracking-wider mb-1" style="color:var(--text-muted)">Version</div>
+                <div class="text-sm font-mono font-bold text-blue-300" x-text="status.ha_version ?? '—'"></div>
+              </div>
+            </div>
+          </template>
+          <!-- Credentials saved but service disabled — actionable amber banner -->
+          <template x-if="status.ha_token_set && status.service_state === 'stopped'">
+            <div class="mt-3 p-3 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-start gap-3">
+              <i class="fas fa-exclamation-triangle text-amber-600 mt-0.5 flex-shrink-0"></i>
+              <div class="flex-1 min-w-0">
+                <p class="text-amber-800 dark:text-amber-300 text-xs font-semibold">Home Assistant not enabled</p>
+                <p class="text-amber-700 dark:text-amber-400 text-xs mt-0.5">Credentials are saved but the HA service is disabled. Enable it to start publishing entities.</p>
+              </div>
+              <button @click="activeView = 'config'; loadConfig()"
+                      class="flex-shrink-0 px-3 py-1 text-xs font-semibold rounded-md bg-amber-500/20 hover:bg-amber-500/40 text-amber-800 dark:text-amber-300 border border-amber-500/40 transition">
+                Enable →
+              </button>
+            </div>
+          </template>
+          <!-- Not configured at all -->
+          <template x-if="status.service_state === 'not_configured'">
+            <div class="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
+              <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              Home Assistant not configured.
+              <button @click="activeView = 'config'; loadConfig()" class="underline hover:no-underline">Open Configuration →</button>
+            </div>
+          </template>
+
+        </div>
+      </template>
+    </div>
+
+    <!-- Data Flow Diagram — compact pipeline strip -->
+    <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 mb-4">
+      <p class="text-[10px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-3">Data Flow</p>
+      <div class="flex items-center gap-1 flex-wrap">
+
+        <!-- aGate -->
+        <div class="flex-1 min-w-[100px] rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-center">
+          <div class="flex items-center justify-center gap-1.5 mb-1">
+            <i class="fas fa-bolt text-yellow-500 text-[10px]"></i>
+            <span class="text-xs font-bold text-[var(--text)]">aGate</span>
+          </div>
+          <div class="text-[9px] text-[var(--text-muted)]">Modbus · Cloud API</div>
+          <div class="mt-1.5 flex items-center justify-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0"></span>
+            <span class="text-[9px] font-bold text-emerald-600">Active</span>
+          </div>
+        </div>
+
+        <span class="text-[var(--text-muted)] text-xs flex-shrink-0">→</span>
+
+        <!-- FHAI -->
+        <div class="flex-1 min-w-[100px] rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-center">
+          <div class="flex items-center justify-center gap-1.5 mb-1">
+            <i class="fas fa-plug text-primary-light text-[10px]"></i>
+            <span class="text-xs font-bold text-[var(--text)]">FHAI</span>
+          </div>
+          <div class="text-[9px] text-[var(--text-muted)]" x-text="(status?.fhai_entity_count ?? '—') + ' entities'"></div>
+          <div class="mt-1.5 flex items-center justify-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-primary-light animate-pulse flex-shrink-0"></span>
+            <span class="text-[9px] font-bold text-[var(--text-muted)]">Running</span>
+          </div>
+        </div>
+
+        <span class="text-[var(--text-muted)] text-xs flex-shrink-0">→</span>
+
+        <!-- MQTT -->
+        <div class="flex-1 min-w-[100px] rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-center">
+          <div class="flex items-center justify-center gap-1.5 mb-1">
+            <i class="fas fa-satellite-dish text-[var(--text-muted)] text-[10px]"></i>
+            <span class="text-xs font-bold text-[var(--text)]">MQTT Broker</span>
+          </div>
+          <div class="text-[9px] text-[var(--text-muted)]">Mosquitto</div>
+          <div class="mt-1.5">
+            <button @click="$store.app.activeTab = 'mqtt_admin'"
+                    class="text-[9px] text-primary-light hover:underline">⚙ Configure →</button>
+          </div>
+        </div>
+
+        <span class="text-[var(--text-muted)] text-xs flex-shrink-0">→</span>
+
+        <!-- Home Assistant -->
+        <div class="flex-1 min-w-[100px] rounded-lg border px-3 py-2 text-center"
+             :class="isConnected
+               ? 'border-emerald-500/40 bg-emerald-500/5'
+               : 'border-[var(--border)] bg-[var(--surface-2)]'">
+          <div class="flex items-center justify-center gap-1.5 mb-1">
+            <i class="fas fa-home text-[10px]"
+               :class="isConnected ? 'text-emerald-500' : 'text-[var(--text-muted)]'"></i>
+            <span class="text-xs font-bold text-[var(--text)]">Home Assistant</span>
+          </div>
+          <div class="text-[9px] text-[var(--text-muted)]"
+               x-text="isConnected ? 'Connected · ' + (status?.entity_count ?? '—') + ' entities' : (status?.service_state === 'not_configured' ? 'Not Configured' : 'Disconnected')"></div>
+          <div class="mt-1.5 flex items-center justify-center gap-2">
+            <span class="inline-flex items-center gap-1 text-[9px] font-bold"
+                  :class="isStarted ? 'text-emerald-600' : status?.service_state === 'stopped' ? 'text-amber-600' : 'text-[var(--text-muted)]'">
+              <span class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    :class="isStarted ? 'bg-emerald-500 animate-pulse' : status?.service_state === 'stopped' ? 'bg-amber-500' : 'bg-gray-400'"></span>
+              <span x-text="serviceStateLabel"></span>
+            </span>
+            <button @click="activeView = 'config'; loadConfig()"
+                    class="text-[9px] text-primary-light hover:underline">⚙ Configure →</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
+
+
+    <!-- Entity Browser -->
+    <div class="rounded-xl border shadow-sm" style="background:var(--surface-1); border-color:var(--border)">
+      <div class="flex flex-wrap items-center gap-2 p-3 border-b" style="border-color:var(--border)">
+        <h2 class="text-[10px] font-bold uppercase tracking-widest mr-2" style="color:var(--text-muted)">Entity Browser</h2>
+        <input type="text" placeholder="Search entities…"
+               x-model.debounce.400ms="filterSearch"
+               @input="onFilterChange()"
+               class="flex-1 min-w-[160px] border rounded-lg px-3 py-1.5 text-xs outline-none transition focus:border-primary/50"
+               style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)"/>
+        <select x-model="filterDomain" @change="onFilterChange()"
+                class="border rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-primary/50"
+                style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)">
+          <option value="">All Domains</option>
+          <template x-for="d in availableDomains" :key="d">
+            <option :value="d" x-text="d" style="background:var(--surface-2); color:var(--text-primary)"></option>
+          </template>
+        </select>
+        <span class="ml-auto text-[10px]"
+              style="color:var(--text-muted)"
+              x-text="totalEntities ? `${pageStart}–${pageEnd} of ${totalEntities} entities` : ''"></span>
+      </div>
+      <div class="max-h-[48vh] overflow-y-auto">
+        <table class="w-full text-xs">
+          <thead class="sticky top-0 z-10 border-b" style="background:var(--surface-2); border-color:var(--border)">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider w-8" style="color:var(--text-muted)">#</th>
+              <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider" style="color:var(--text-muted)">Entity ID</th>
+              <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider" style="color:var(--text-muted)">Domain</th>
+              <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider" style="color:var(--text-muted)">State</th>
+              <th class="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider" style="color:var(--text-muted)">Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-if="entitiesLoading">
+              <tr><td colspan="5" class="px-4 py-8 text-center animate-pulse" style="color:var(--text-muted)">Loading entities…</td></tr>
+            </template>
+            <template x-if="!entitiesLoading && entitiesError">
+              <tr><td colspan="5" class="px-4 py-8 text-center text-red-400 text-xs" x-text="entitiesError"></td></tr>
+            </template>
+            <template x-if="!entitiesLoading && !entitiesError && entities.length === 0">
+              <tr><td colspan="5" class="px-4 py-8 text-center italic" style="color:var(--text-muted)">No entities match filter</td></tr>
+            </template>
+            <template x-if="!entitiesLoading && !entitiesError">
+              <template x-for="(e, i) in entities" :key="e.entity_id">
+                <tr class="border-b hover:bg-white/5 transition-colors"
+                    :style="i % 2 === 1 ? 'background:var(--surface-0); border-color:var(--border);' : 'border-color:var(--border);'">
+                  <td class="px-4 py-2 text-[10px]" style="color:var(--text-muted)" x-text="pageStart + i"></td>
+                  <td class="px-4 py-2">
+                    <div class="font-mono text-[10px]" style="color:var(--text-primary)" x-text="e.entity_id"></div>
+                    <div x-show="e.name && e.name !== e.entity_id" class="text-[9px] mt-0.5" style="color:var(--text-muted)" x-text="e.name"></div>
+                  </td>
+                  <td class="px-4 py-2"><span class="px-1.5 py-0.5 rounded-sm text-[9px] font-mono" style="background:var(--surface-2); color:var(--text-secondary)" x-text="e.domain"></span></td>
+                  <td class="px-4 py-2 font-mono text-[10px]" :class="stateClass(e)" x-text="formatState(e)"></td>
+                  <td class="px-4 py-2">
+                    <template x-if="e.is_fhai_published">
+                      <span class="px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold">FHAI</span>
+                    </template>
+                    <template x-if="!e.is_fhai_published">
+                      <span class="text-[9px]" style="color:var(--text-muted)">HA</span>
+                    </template>
+                  </td>
+                </tr>
+              </template>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="totalPages > 1" class="flex items-center justify-between px-4 py-2.5 border-t text-xs" style="border-color:var(--border)">
+        <button @click="prevPage()" :disabled="currentPage <= 1"
+                class="px-3 py-1 rounded text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                style="background:var(--surface-2); border:1px solid var(--border)">← Prev</button>
+        <span style="color:var(--text-muted)">Page <span class="font-bold" style="color:var(--text-primary)" x-text="currentPage"></span> of <span style="color:var(--text-primary)" x-text="totalPages"></span></span>
+        <button @click="nextPage()" :disabled="currentPage >= totalPages"
+                class="px-3 py-1 rounded text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                style="background:var(--surface-2); border:1px solid var(--border)">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- CONFIGURATION TAB                                                      -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <div x-show="activeView === 'config'" x-cloak class="space-y-6">
+
+    <!-- Service State Banner -->
+    <div class="rounded-xl border p-4 shadow-sm flex items-center justify-between gap-4 flex-wrap" style="background:var(--surface-1); border-color:var(--border)">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2">
+          <span class="w-3.5 h-3.5 rounded-full"
+                :class="isStarted ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></span>
+          <span class="font-bold text-sm" style="color:var(--text-primary)" x-text="'HA Integration ' + serviceStateLabel"></span>
+        </div>
+        <span x-show="isStarted && uptimeStr" class="text-xs font-mono" style="color:var(--text-muted)" x-text="'↑ ' + uptimeStr"></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button x-show="isStarted" @click="openPinModal('disable')"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+          Disable HA
+        </button>
+        <button x-show="!isStarted" @click="openPinModal('enable')"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3"/></svg>
+          Enable HA
+        </button>
+      </div>
+    </div>
+
+    <!-- Global Routing & Webhook Configuration -->
+    <div class="rounded-xl border p-5 shadow-sm" style="background:var(--surface-1); border-color:var(--border)">
+      <div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+        <div>
+          <h2 class="text-sm font-bold" style="color:var(--text-primary)">Global Routing & Webhook Configuration</h2>
+          <p class="text-xs mt-0.5" style="color:var(--text-muted)">Configure the base callback URL for actionable push notifications (e.g. holding rule decisions).</p>
+        </div>
+      </div>
+      <div class="max-w-xl space-y-3">
+        <div class="relative group">
+          <span class="absolute left-3 top-2.5 text-[8px] font-black uppercase group-focus-within:text-primary transition" style="color:var(--text-muted)">Callback Webhook URL</span>
+          <input type="text" x-model="configForm.fhai_host" placeholder="http://192.168.0.x:8099" 
+                 class="w-full text-xs font-mono rounded-lg pl-3 pr-3 pt-5 pb-2 border outline-none transition shadow-inner"
+                 style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)">
+        </div>
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div class="text-[10px]" style="color:var(--text-secondary)">
+            <span class="font-bold text-orange-400">HA Callback Target:</span> 
+            <code class="font-mono" style="color:var(--text-muted)" x-text="configForm.fhai_host ? configForm.fhai_host.replace(/\/$/, '') + '/api/automation/notifications/override' : 'Not Set'"></code>
+          </div>
+          <button @click="saveConfig()" :disabled="savingConfig"
+                  class="px-4 py-2 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-dark text-white border border-primary/30 transition-colors disabled:opacity-50 flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" :class="savingConfig ? 'animate-spin' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+            </svg>
+            <span x-text="savingConfig ? 'Saving…' : 'Save Global Webhook'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Multi-HA Instances Dashboard -->
+    <div class="rounded-xl border p-5 shadow-sm" style="background:var(--surface-1); border-color:var(--border)">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <h2 class="text-sm font-bold" style="color:var(--text-primary)">Home Assistant Instances</h2>
+          <p class="text-xs mt-0.5" style="color:var(--text-muted)">Register local or remote Home Assistant servers to generate alerts.</p>
+        </div>
+        <button @click="openInstanceModal()"
+                class="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+          Add Instance
+        </button>
+      </div>
+
+      <!-- Instances Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="inst in haInstances" :key="inst.id">
+          <div class="relative border rounded-xl p-4 flex flex-col justify-between transition-colors hover:opacity-95"
+               style="background:var(--surface-2)"
+               :class="inst.is_default ? 'border-primary/50 ring-1 ring-primary/20' : ''"
+               :style="inst.is_default ? 'border-color:var(--accent)' : 'border-color:var(--border)'">
+            <div>
+              <div class="flex items-start justify-between gap-2">
+                <span class="font-bold text-sm truncate" style="color:var(--text-primary)" x-text="inst.alias"></span>
+                <div class="flex gap-1.5 flex-shrink-0">
+                  <template x-if="inst.is_default">
+                    <span class="px-2 py-0.5 text-[9px] font-bold bg-primary/20 text-primary border border-primary/30 rounded-full">Default</span>
+                  </template>
+                  <span class="px-2 py-0.5 text-[9px] font-bold rounded-full border"
+                        :class="inst.enabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : ''"
+                        :style="!inst.enabled ? 'background:var(--surface-1); color:var(--text-muted); border-color:var(--border)' : ''">
+                    <span x-text="inst.enabled ? 'Active' : 'Disabled'"></span>
+                  </span>
+                </div>
+              </div>
+              <div class="mt-2 text-xs font-mono truncate" style="color:var(--text-muted)" x-text="inst.host"></div>
+            </div>
+
+            <div class="flex justify-between items-center mt-5 pt-3 border-t" style="border-color:var(--border)">
+              <span class="text-[10px]" style="color:var(--text-muted)" x-text="'Created: ' + new Date(inst.created_at).toLocaleDateString()"></span>
+              <div class="flex gap-2">
+                <button @click="openInstanceModal(inst)"
+                        class="p-1.5 rounded-md hover:bg-white/5 transition-colors"
+                        style="color:var(--text-muted)"
+                        title="Edit Connection">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/></svg>
+                </button>
+                <button @click="deleteHAInstance(inst.id)"
+                        class="p-1.5 rounded-md hover:bg-red-500/10 text-gray-400 hover:text-red-400 transition-colors"
+                        title="Delete">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Add Placeholder Card -->
+        <div @click="openInstanceModal()"
+             class="border border-dashed hover:border-gray-400 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all min-h-[120px]"
+             style="background:var(--surface-2); border-color:var(--border)">
+          <svg class="w-6 h-6 text-gray-500 mb-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+          <span class="text-xs font-semibold" style="color:var(--text-muted)">Add Home Assistant Instance</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mapped Companion Devices Registry -->
+    <div class="rounded-xl border p-5 shadow-sm" style="background:var(--surface-1); border-color:var(--border)">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <h2 class="text-sm font-bold" style="color:var(--text-primary)">Companion Devices & Notification Channels</h2>
+          <p class="text-xs mt-0.5" style="color:var(--text-muted)">Route notifications to specific smartphone apps, tablets, or service integrations.</p>
+        </div>
+        <button @click="openDeviceModal()"
+                :disabled="haInstances.length === 0"
+                class="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+          Add Device Route
+        </button>
+      </div>
+
+      <!-- Devices List -->
+      <div class="overflow-x-auto rounded-lg border" style="background:var(--surface-2); border-color:var(--border)">
+        <table class="w-full text-xs text-left">
+          <thead class="border-b" style="background:var(--surface-1); border-color:var(--border)">
+            <tr class="text-[10px] uppercase tracking-wider" style="color:var(--text-muted)">
+              <th class="px-4 py-3">Device Alias</th>
+              <th class="px-4 py-3">HA Instance</th>
+              <th class="px-4 py-3">Device Owner</th>
+              <th class="px-4 py-3">Service Endpoint</th>
+              <th class="px-4 py-3">Status</th>
+              <th class="px-4 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-if="notificationDevices.length === 0">
+              <tr>
+                <td colspan="6" class="px-4 py-8 text-center italic" style="color:var(--text-muted)">
+                  No companion devices configured. Notifications will fallback to legacy credentials.
+                </td>
+              </tr>
+            </template>
+            <template x-for="dev in notificationDevices" :key="dev.id">
+              <tr class="border-b hover:bg-white/5 transition-colors" style="border-color:var(--border)">
+                <td class="px-4 py-3 font-semibold" style="color:var(--text-primary)" x-text="dev.alias"></td>
+                <td class="px-4 py-3">
+                  <div class="font-medium" style="color:var(--text-primary)" x-text="dev.ha_instance_alias || 'Unknown Instance'"></div>
+                  <div class="text-[10px] font-mono mt-0.5" style="color:var(--text-muted)" x-text="dev.ha_instance_host"></div>
+                </td>
+                <td class="px-4 py-3 text-gray-300 font-semibold" x-text="dev.owner_username || 'All Users / Broadcast'"></td>
+                <td class="px-4 py-3 font-mono" style="color:var(--text-secondary)" x-text="'notify.' + dev.service_target"></td>
+                <td class="px-4 py-3">
+                  <span class="px-2 py-0.5 rounded-full text-[9px] font-bold border"
+                        :class="dev.enabled ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : ''"
+                        :style="!dev.enabled ? 'background:var(--surface-2); color:var(--text-muted); border-color:var(--border)' : ''">
+                    <span x-text="dev.enabled ? 'Enabled' : 'Muted'"></span>
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <div class="flex justify-end gap-1.5">
+                    <button @click="openDeviceModal(dev)"
+                            class="p-1 rounded-md hover:bg-white/5 transition-colors"
+                            style="color:var(--text-muted)">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/></svg>
+                    </button>
+                    <button @click="deleteNotificationDevice(dev.id)"
+                            class="p-1 rounded-md hover:bg-red-500/10 text-gray-400 hover:text-red-400 transition-colors">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Unified Test Center & Verification Console -->
+    <div class="rounded-xl border p-5 shadow-sm" style="background:var(--surface-1); border-color:var(--border)">
+      <div class="mb-4">
+        <h2 class="text-sm font-bold" style="color:var(--text-primary)">Unified E2E Push Verification</h2>
+        <p class="text-xs mt-0.5" style="color:var(--text-muted)">Send test dispatches concurrently to verify active connections across your devices.</p>
+      </div>
+
+      <!-- Testing Area Layout -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Controls -->
+        <div class="lg:col-span-1 space-y-4">
+          <div class="rounded-xl border p-4 space-y-3" style="background:var(--surface-2); border-color:var(--border)">
+            <h3 class="text-xs font-semibold" style="color:var(--text-primary)">Trigger Mock Dispatch</h3>
+            <p class="text-[11px] leading-relaxed" style="color:var(--text-muted)">Ensure notifications are enabled globally. These tests verify the parallel router dispatch cycle.</p>
+            
+            <div class="flex flex-col gap-2 pt-1">
+              <button @click="triggerUnifiedTest('test')"
+                      :disabled="unifiedTestLoading"
+                      class="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50">
+                <svg class="w-3.5 h-3.5" :class="unifiedTestLoading ? 'animate-pulse' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
+                Send Standard Test
+              </button>
+              <button @click="triggerUnifiedTest('hold_approval')"
+                      :disabled="unifiedTestLoading"
+                      class="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white transition-colors disabled:opacity-50">
+                <svg class="w-3.5 h-3.5" :class="unifiedTestLoading ? 'animate-pulse' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                Send Actionable Approval Test
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Testing Console output -->
+        <div class="lg:col-span-2 space-y-3">
+          <!-- Warnings Block -->
+          <div class="rounded-xl p-4 border" style="background:var(--warn-bg); border-color:var(--warn)">
+            <div class="flex gap-2.5 items-start">
+              <svg class="w-5 h-5 mt-0.5" style="color:var(--warn)" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              <div>
+                <h4 class="text-xs font-bold" style="color:var(--warn-text)">Device Alignment Notice</h4>
+                <p class="text-[11px] leading-relaxed mt-0.5" style="color:var(--text-secondary)">
+                  Confirm your smartphone companion app is actively logged into the **correct Home Assistant server** generating the pushes. If the physical app is pointing to a different Home Assistant URL than specified in the device map, notifications will not deliver.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Console log output -->
+          <div class="terminal-console overflow-hidden">
+            <div class="terminal-console-header">
+              <span class="text-[10px] font-bold uppercase tracking-wider" style="color:var(--text-muted)">Dispatch Log Console</span>
+              <span class="w-2 h-2 rounded-full" :class="unifiedTestLoading ? 'animate-ping' : ''" :style="unifiedTestLoading ? 'background:var(--accent)' : 'background:var(--text-muted)'"></span>
+            </div>
+            
+            <div class="terminal-console-body min-h-[100px] max-h-[220px] overflow-y-auto space-y-1.5">
+              <template x-if="!unifiedTestResult && !unifiedTestLoading">
+                <span class="italic" style="color:var(--text-muted)">No mock dispatches sent. Click one of the buttons on the left to verify active routing.</span>
+              </template>
+              
+              <template x-if="unifiedTestLoading">
+                <span class="animate-pulse" style="color:var(--accent)">Running concurrent push dispatches to enabled devices…</span>
+              </template>
+              
+              <template x-if="unifiedTestResult">
+                <div>
+                  <template x-if="!unifiedTestResult.ok">
+                    <span class="font-bold" style="color:var(--danger)" x-text="'[ERROR] Failed to run test: ' + unifiedTestResult.error"></span>
+                  </template>
+                  
+                  <template x-if="unifiedTestResult.ok">
+                    <div class="space-y-2">
+                      <span class="font-bold" style="color:var(--ok)">[SYSTEM] Unified dispatch routing complete.</span>
+                      
+                      <!-- Dispatch Loop Results -->
+                      <div class="pl-3 space-y-1" style="color:var(--text-secondary)">
+                        <template x-for="r in unifiedTestResult.data.results" :key="r.alias">
+                          <div class="flex items-center gap-2">
+                            <span x-text="r.ok ? '✓' : '✗'" :style="r.ok ? 'color:var(--ok)' : 'color:var(--danger)'"></span>
+                            <span class="font-bold" style="color:var(--text-primary)" x-text="r.alias"></span>
+                            <span style="color:var(--text-muted)" x-text="r.ok ? '(Status ' + r.status_code + ')' : '(Error: ' + r.error + ')'"></span>
+                          </div>
+                        </template>
+                        <template x-if="!unifiedTestResult.data.results || unifiedTestResult.data.results.length === 0">
+                          <div>
+                            <span class="italic" style="color:var(--warn-text)">No per-device results were returned. The server's raw reply is below &mdash; it says what actually happened.</span>
+                            <pre class="mt-2 p-2 rounded text-[10px] leading-relaxed overflow-x-auto"
+                                 style="background:var(--surface-1); color:var(--text-muted); max-height:16rem"
+                                 x-text="JSON.stringify(unifiedTestResult.data, null, 2)"></pre>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+    <!-- OVERLAY DIALOGS & MODALS                                               -->
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+
+    <!-- Add/Edit HA Instance Modal -->
+    <div x-show="showInstanceModal" x-cloak class="modal-backdrop" x-transition.opacity>
+      <div class="modal-panel max-w-lg border-2" style="border-color:var(--accent)">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b flex justify-between items-center" style="background:var(--surface-2); border-color:var(--border)">
+          <h3 class="font-black text-primary text-sm flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span x-text="instanceModalMode === 'add' ? 'Register Home Assistant Instance' : 'Edit Connection Parameters'"></span>
+          </h3>
+          <button @click="closeInstanceModal()" class="text-gray-500 hover:text-gray-300">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- Body -->
+        <div class="p-6 space-y-4">
+          <!-- Alias -->
+          <div>
+            <label class="block text-xs font-semibold mb-1.5" style="color:var(--text-muted)">Instance Alias / Name</label>
+            <input type="text" x-model="instanceForm.alias"
+                   placeholder="e.g. David's Prod HA, Mary's Lab HA"
+                   class="w-full border rounded-lg px-3 py-2 text-xs outline-none transition shadow-inner"
+                   style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)"/>
+          </div>
+
+          <!-- Host URL -->
+          <div>
+            <label class="block text-xs font-semibold mb-1.5" style="color:var(--text-muted)">Home Assistant Host URL</label>
+            <input type="url" x-model="instanceForm.host"
+                   placeholder="http://192.168.0.109:8123"
+                   class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none transition shadow-inner"
+                   style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)"/>
+            <p class="mt-1 text-[10px]" style="color:var(--text-muted)">Provide the exact local IP or secure HTTPS domain URL.</p>
+          </div>
+
+          <!-- Long-Lived Access Token -->
+          <div>
+            <label class="block text-xs font-semibold mb-1.5" style="color:var(--text-muted)">Long-Lived Access Token</label>
+            <input type="password" x-model="instanceForm.token"
+                   placeholder="Paste token from HA → Profile → Long-Lived Access Tokens"
+                   class="w-full border rounded-lg px-3 py-2 text-xs font-mono outline-none transition shadow-inner"
+                   style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)"/>
+            <p class="mt-1 text-[10px]" style="color:var(--text-muted)">Leave as '********' to keep the existing saved token.</p>
+          </div>
+
+          <!-- Options Grid -->
+          <div class="grid grid-cols-2 gap-4 pt-1.5">
+            <!-- Enabled -->
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" x-model="instanceForm.enabled"
+                     class="rounded text-primary focus:ring-0 focus:ring-offset-0"
+                     style="background:var(--surface-2); border-color:var(--border)"/>
+              <span class="text-xs font-semibold" style="color:var(--text-secondary)">Active Connection</span>
+            </label>
+            <!-- Is Default -->
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" x-model="instanceForm.is_default"
+                     class="rounded text-primary focus:ring-0 focus:ring-offset-0"
+                     style="background:var(--surface-2); border-color:var(--border)"/>
+              <span class="text-xs font-semibold" style="color:var(--text-secondary)">Set as Primary Default</span>
+            </label>
+          </div>
+
+          <!-- Messages -->
+          <template x-if="instanceError">
+            <div class="p-3 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-semibold" x-text="instanceError"></div>
+          </template>
+          <template x-if="instanceSuccess">
+            <div class="p-3 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold" x-text="instanceSuccess"></div>
+          </template>
+
+          <!-- Ping Test Result -->
+          <template x-if="instanceTestResult">
+            <div class="p-3 rounded-lg text-xs font-semibold"
+                 :class="instanceTestResult.ok ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'">
+              <span x-text="instanceTestResult.ok ? '✅ Ping Success: ' + instanceTestResult.message : '❌ Connection failed: ' + instanceTestResult.error"></span>
+            </div>
+          </template>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-6 py-4 border-t flex justify-between items-center" style="background:var(--surface-2); border-color:var(--border)">
+          <button @click="testInstanceForm()"
+                  :disabled="instanceTesting || !instanceForm.host.trim()"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/30 transition disabled:opacity-40">
+            <svg class="w-3.5 h-3.5" :class="instanceTesting ? 'animate-pulse' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            Test Connection
+          </button>
+          
+          <div class="flex gap-2">
+            <button @click="closeInstanceModal()" class="px-4 py-2 rounded-lg text-xs font-semibold border text-gray-300 transition" style="background:var(--surface-1); border-color:var(--border); hover:background:var(--surface-0)">Cancel</button>
+            <button @click="saveHAInstance()"
+                    :disabled="savingInstance || !instanceForm.alias.trim() || !instanceForm.host.trim()"
+                    class="px-4 py-2 rounded-lg text-xs font-semibold bg-primary text-white hover:bg-primary/95 transition disabled:opacity-40"
+                    x-text="savingInstance ? 'Saving…' : 'Save Connection'"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add/Edit Device Modal -->
+    <div x-show="showDeviceModal" x-cloak class="modal-backdrop" x-transition.opacity>
+      <div class="modal-panel max-w-md border-2 rounded-xl overflow-hidden shadow-2xl" style="border-color:var(--accent)">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b flex justify-between items-center" style="background:var(--surface-2); border-color:var(--border)">
+          <h3 class="font-black text-sm flex items-center gap-2" style="color:var(--accent)">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-6 15h9"/></svg>
+            <span x-text="deviceModalMode === 'add' ? 'Add Notification Device Route' : 'Edit Device Mapping'"></span>
+          </h3>
+          <button @click="closeDeviceModal()" class="hover:opacity-80 transition" style="color:var(--text-muted)">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <!-- Body -->
+        <div class="p-6 space-y-4">
+          <!-- Device Name Alias -->
+          <div>
+            <label class="block text-xs font-semibold mb-1.5" style="color:var(--text-muted)">Device Alias / Name</label>
+            <input type="text" x-model="deviceForm.alias"
+                   placeholder="e.g. David's Phone, Mary's iPhone"
+                   class="w-full border rounded-lg px-3 py-2 text-xs outline-none transition shadow-inner"
+                   style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)"/>
+          </div>
+
+          <!-- Parent HA Instance Select -->
+          <div>
+            <label class="block text-xs font-semibold mb-1.5" style="color:var(--text-muted)">Parent HA Server</label>
+            <select x-model="deviceForm.ha_instance_id" @change="onDeviceInstanceChange()"
+                    class="w-full border rounded-lg px-3 py-2 text-xs outline-none transition"
+                    style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)">
+              <template x-for="inst in haInstances" :key="inst.id">
+                <option :value="inst.id" x-text="inst.alias" style="background:var(--surface-2); color:var(--text-primary)"></option>
+              </template>
+            </select>
+          </div>
+
+          <!-- Device Owner Select (Optional) -->
+          <div>
+            <label class="block text-xs font-semibold mb-1.5" style="color:var(--text-muted)">Device Owner (Optional)</label>
+            <select x-model="deviceForm.owner_username"
+                    class="w-full border rounded-lg px-3 py-2 text-xs outline-none transition"
+                    style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)">
+              <option value="" style="background:var(--surface-2); color:var(--text-primary)">-- All Users / Broadcast --</option>
+              <template x-for="usr in usersList" :key="usr.username">
+                <option :value="usr.username" x-text="usr.username + (usr.email ? ' (' + usr.email + ')' : '')" style="background:var(--surface-2); color:var(--text-primary)"></option>
+              </template>
+            </select>
+          </div>
+
+          <!-- Notification Target (Discovered dropdown) -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-semibold" style="color:var(--text-muted)">Notify Target Service</label>
+              <!-- Discovery runs when the dialog opens, but a failure used to be
+                   terminal: the only way to retry was to close and reopen. -->
+              <button type="button"
+                      @click="loadDiscoveredTargets(deviceForm.ha_instance_id)"
+                      :disabled="discoveryLoading || !deviceForm.ha_instance_id"
+                      class="flex items-center gap-1 px-2 py-1 rounded border text-[10px] font-semibold transition disabled:opacity-40"
+                      style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)">
+                <svg class="w-3 h-3" :class="discoveryLoading ? 'animate-spin' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"/></svg>
+                <span x-text="discoveryLoading ? 'Discovering...' : 'Discover'"></span>
+              </button>
+            </div>
+            
+            <div class="relative">
+              <!-- Loading discovery indicator -->
+              <template x-if="discoveryLoading">
+                <div class="w-full border rounded-lg px-3 py-2 text-xs flex items-center gap-2"
+                     style="background:var(--surface-2); color:var(--text-muted); border-color:var(--border)">
+                  <svg class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9"/></svg>
+                  Discovering notify endpoints...
+                </div>
+              </template>
+
+              <!-- Discovered targets loaded successfully -->
+              <template x-if="!discoveryLoading && !discoveryError">
+                <select x-model="deviceForm.service_target"
+                        class="w-full border rounded-lg px-3 py-2 text-xs outline-none transition"
+                        style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)">
+                  <option value="" style="background:var(--surface-2); color:var(--text-primary)">-- Select Companion Device --</option>
+                  <template x-for="t in discoveredTargets" :key="t.service">
+                    <option :value="t.service" x-text="t.label + ' (notify.' + t.service + ')'" style="background:var(--surface-2); color:var(--text-primary)"></option>
+                  </template>
+                </select>
+              </template>
+            </div>
+            
+            <!-- Discovery connection errors -->
+            <template x-if="discoveryError">
+              <div class="mt-1.5 p-2 rounded border text-[10px] leading-relaxed flex items-start gap-1"
+                   style="background:var(--warn-bg); color:var(--warn-text); border-color:var(--warn)">
+                <svg class="w-3.5 h-3.5 flex-shrink-0 mt-0.5" :style="'color:var(--warn-text)'" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                <div class="flex-1">
+                  <span>Discovery failed: </span>
+                  <span x-text="discoveryError"></span>
+                  <p class="mt-1 text-[9px]" style="color:var(--warn-text); opacity:0.8">Provide endpoint manually below or fix the parent HA host server config.</p>
+                </div>
+              </div>
+            </template>
+
+            <!-- Manual input fallback when discovery fails or is unavailable -->
+            <div class="mt-2" x-show="discoveryError || (!discoveryLoading && discoveredTargets.length === 0)">
+              <label class="block text-[10px] font-semibold mb-1" style="color:var(--text-muted)">Manual Endpoint Endpoint Name</label>
+              <input type="text" x-model="deviceForm.service_target"
+                     placeholder="e.g. mobile_app_davids_iphone_15_pro"
+                     class="w-full border rounded-lg px-3 py-1.5 text-xs font-mono outline-none transition shadow-inner"
+                     style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)"/>
+            </div>
+          </div>
+
+          <!-- Options -->
+          <div class="pt-1.5">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" x-model="deviceForm.enabled"
+                     class="rounded text-primary focus:ring-0 focus:ring-offset-0"
+                     style="background:var(--surface-2); border-color:var(--border)"/>
+              <span class="text-xs font-semibold" style="color:var(--text-secondary)">Route active pushes to this device</span>
+            </label>
+          </div>
+
+          <!-- Messages -->
+          <template x-if="deviceError">
+            <div class="p-3 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-semibold" x-text="deviceError"></div>
+          </template>
+          <template x-if="deviceSuccess">
+            <div class="p-3 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold" x-text="deviceSuccess"></div>
+          </template>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-6 py-4 border-t flex justify-end gap-2" style="background:var(--surface-2); border-color:var(--border)">
+          <button @click="closeDeviceModal()" class="px-4 py-2 rounded-lg text-xs font-semibold border text-gray-300 transition" style="background:var(--surface-1); border-color:var(--border); hover:background:var(--surface-0)">Cancel</button>
+          <button @click="saveNotificationDevice()"
+                  :disabled="savingDevice || !deviceForm.alias.trim() || !deviceForm.service_target.trim() || !deviceForm.ha_instance_id"
+                  class="px-4 py-2 rounded-lg text-xs font-semibold bg-primary text-white hover:bg-primary/95 transition disabled:opacity-40"
+                  x-text="savingDevice ? 'Saving…' : 'Save Device Mapping'"></button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+
+  <!-- ══ ENTITY TOOLS ══════════════════════════════════════════════════════ -->
+  <template x-if="activeView === 'status'">
+  <div x-data="{
+    etRunning: false,
+    etResults: null,
+    etError: null,
+    etRepairRunning: false,
+    etRepairResults: null,
+    etSelectedOrphans: [],
+
+    async runAnalyse() {
+      this.etRunning = true;
+      this.etResults = null;
+      this.etError = null;
+      try {
+        const r = await fetchJSON('api/ha/analyse');
+        if (r.ok === false) { this.etError = r.error || 'Analysis failed'; return; }
+        this.etResults = r;
+      } catch(e) { this.etError = e.message; }
+      finally { this.etRunning = false; }
+    },
+
+    async runRepair(dryRun) {
+      if (!this.etResults) return;
+      const orphans = this.etResults.issues.filter(i => i.type === 'orphan');
+      if (!orphans.length) { $store.app.addToast('No orphans to repair', 'info', { autoDismiss: true }); return; }
+      this.etRepairRunning = true;
+      this.etRepairResults = null;
+      try {
+        const actions = orphans.map(o => ({
+          type: 'tombstone',
+          entity_id: o.entity_id,
+          ha_type: o.entity_id.split('.')[0],
+          unique_id: o.unique_id,
+        }));
+        const r = await fetchJSON('api/ha/repair', {
+          method: 'POST',
+          body: JSON.stringify({ dry_run: dryRun, actions }),
+        });
+        this.etRepairResults = r;
+        if (!dryRun && r.fixed > 0) {
+          $store.app.addToast(
+            'Entity Repair → ' + r.fixed + ' orphan(s) tombstoned',
+            'warn',
+            { detail: 'HA will remove these entities from its registry within ~30s.' }
+          );
+        }
+      } catch(e) { $store.app.addToast('Repair failed: ' + e.message, 'error'); }
+      finally { this.etRepairRunning = false; }
+    }
+  }" class="mt-6 space-y-4">
+
+    <!-- Section header -->
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-sm font-bold text-[var(--text)] flex items-center gap-2">
+          <i class="fas fa-stethoscope text-primary-light text-xs"></i>
+          Entity Tools
+        </h2>
+        <p class="text-[10px] text-[var(--text-muted)] mt-0.5">Inspect, repair, and manage FHAI entities in Home Assistant's registry.</p>
+      </div>
+    </div>
+
+    <!-- Tool cards: Analyse / Repair / Migrate -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+      <!-- ANALYSE card -->
+      <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 flex flex-col gap-3">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-search text-blue-500 text-xs"></i>
+          <p class="text-xs font-bold text-[var(--text)]">Analyse</p>
+        </div>
+        <p class="text-[10px] text-[var(--text-muted)] leading-relaxed">Compare FHAI entity definitions against the Home Assistant state registry. Detects orphans and naming drift.</p>
+        <button @click="runAnalyse()"
+                :disabled="etRunning"
+                class="mt-auto px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+          <i class="fas" :class="etRunning ? 'fa-sync-alt animate-spin' : 'fa-play'"></i>
+          <span x-text="etRunning ? 'Analysing…' : 'Run Analysis'"></span>
+        </button>
+      </div>
+
+      <!-- REPAIR card -->
+      <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 flex flex-col gap-3"
+           :class="{'border-amber-500': etResults && etResults.orphan_count > 0}">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-wrench text-amber-600 text-xs"></i>
+          <p class="text-xs font-bold text-[var(--text)]">Repair</p>
+        </div>
+        <p class="text-[10px] text-[var(--text-muted)] leading-relaxed">Tombstone orphaned entities via MQTT null payloads. Run Analyse first to identify issues.</p>
+        <template x-if="etResults && etResults.orphan_count > 0">
+          <p class="text-[10px] font-bold text-amber-600"><i class="fas fa-exclamation-triangle mr-1"></i><span x-text="etResults.orphan_count"></span> orphan(s) found</p>
+        </template>
+        <div class="mt-auto flex gap-2">
+          <button @click="runRepair(true)"
+                  :disabled="!etResults || etRepairRunning"
+                  class="flex-1 px-2 py-1.5 text-[10px] font-semibold rounded-lg border border-[var(--border)] text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--surface-0)] transition disabled:opacity-40">
+            Dry Run
+          </button>
+          <button @click="runRepair(false)"
+                  :disabled="!etResults || etRepairRunning || !etResults.orphan_count"
+                  class="flex-1 px-2 py-1.5 text-[10px] font-semibold rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition disabled:opacity-40 flex items-center justify-center gap-1">
+            <i class="fas" :class="etRepairRunning ? 'fa-sync-alt animate-spin' : 'fa-hammer'"></i>
+            <span x-text="etRepairRunning ? 'Repairing…' : 'Repair'"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- MIGRATE card — disabled placeholder (awaiting MQTT Prefix plan) -->
+      <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 flex flex-col gap-3 opacity-40 cursor-not-allowed select-none">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-exchange-alt text-[var(--text-muted)] text-xs"></i>
+          <p class="text-xs font-bold text-[var(--text)]">Migrate</p>
+          <span class="ml-auto text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] border border-[var(--border)] px-1.5 py-0.5 rounded">Pending</span>
+        </div>
+        <p class="text-[10px] text-[var(--text-muted)] leading-relaxed">Bulk rename HA entity IDs when the MQTT entity prefix changes. Available after the MQTT Prefix Migration is configured in MQTT Admin.</p>
+        <button disabled
+                class="mt-auto px-3 py-1.5 text-xs font-semibold rounded-lg border border-[var(--border)] text-[var(--text-muted)] cursor-not-allowed">
+          <i class="fas fa-lock mr-1"></i>Awaiting Prefix Plan
+        </button>
+      </div>
+
+    </div><!-- end tool cards -->
+
+
+    <!-- Error state -->
+    <template x-if="etError">
+      <div class="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 flex items-start gap-3">
+        <i class="fas fa-times-circle text-red-400 mt-0.5 flex-shrink-0"></i>
+        <p class="text-xs text-red-300" x-text="etError"></p>
+      </div>
+    </template>
+
+    <!-- Analysis results table -->
+    <template x-if="etResults">
+      <div class="rounded-xl border overflow-hidden" style="background:var(--surface-1); border-color:var(--border)">
+        <div class="px-4 py-3 border-b flex items-center justify-between" style="background:var(--surface-2); border-color:var(--border)">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-list-check text-primary-light text-xs"></i>
+            <p class="text-xs font-bold" style="color:var(--text-primary)">Analysis Results</p>
+          </div>
+          <div class="flex gap-3 text-[10px]">
+            <span style="color:var(--text-muted)">Total HA entities: <span class="font-bold" style="color:var(--text-primary)" x-text="etResults.total_entities"></span></span>
+            <span style="color:var(--text-muted)">FHAI owned: <span class="font-bold" style="color:var(--text-primary)" x-text="etResults.franklinwh_count"></span></span>
+            <span :class="etResults.issue_count > 0 ? 'text-amber-300' : 'text-green-400'">
+              Issues: <span class="font-bold" x-text="etResults.issue_count"></span>
+            </span>
+          </div>
+        </div>
+        <template x-if="etResults.issue_count === 0">
+          <div class="px-4 py-8 text-center">
+            <i class="fas fa-check-circle text-green-400 text-2xl mb-2"></i>
+            <p class="text-sm text-green-300 font-semibold">All FHAI entities look healthy</p>
+            <p class="text-xs mt-1" style="color:var(--text-muted)">No orphans or naming issues detected.</p>
+          </div>
+        </template>
+        <template x-if="etResults.issue_count > 0">
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="border-b text-[10px] uppercase tracking-wider" style="border-color:var(--border); color:var(--text-muted)">
+                  <th class="px-4 py-2 text-left">Type</th>
+                  <th class="px-4 py-2 text-left">Entity ID</th>
+                  <th class="px-4 py-2 text-left">Message</th>
+                  <th class="px-4 py-2 text-left">Suggested</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="issue in etResults.issues" :key="issue.entity_id">
+                  <tr class="border-b hover:bg-white/5" style="border-color:var(--border)">
+                    <td class="px-4 py-2">
+                      <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase"
+                            :class="{
+                              'bg-amber-500/20 text-amber-300 border border-amber-500/30': issue.type === 'orphan',
+                              'bg-blue-500/20 text-blue-300 border border-blue-500/30': issue.type === 'naming',
+                              'bg-red-500/20 text-red-300 border border-red-500/30': issue.type === 'duplicate',
+                            }"
+                            x-text="issue.type"></span>
+                    </td>
+                    <td class="px-4 py-2 font-mono text-[10px]" style="color:var(--text-secondary)" x-text="issue.entity_id"></td>
+                    <td class="px-4 py-2 max-w-xs" style="color:var(--text-muted)" x-text="issue.message"></td>
+                    <td class="px-4 py-2 font-mono text-[10px]" style="color:var(--text-faint)" x-text="issue.suggested || '—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <!-- Repair results -->
+    <template x-if="etRepairResults">
+      <div class="rounded-xl border overflow-hidden" style="background:var(--surface-1); border-color:var(--border)">
+        <div class="px-4 py-3 border-b flex items-center gap-3" style="background:var(--surface-2); border-color:var(--border)">
+          <i class="fas fa-hammer text-amber-400 text-xs"></i>
+          <p class="text-xs font-bold" style="color:var(--text-primary)">Repair Results</p>
+          <span x-show="etRepairResults.dry_run" class="text-[9px] font-bold uppercase text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded">DRY RUN</span>
+          <span class="ml-auto text-[10px]" style="color:var(--text-muted)">Fixed: <span class="text-green-300 font-bold" x-text="etRepairResults.fixed"></span> · Errors: <span class="text-red-300 font-bold" x-text="etRepairResults.errors"></span></span>
+        </div>
+        <div class="p-3 space-y-1">
+          <template x-for="r in etRepairResults.results" :key="r.entity_id">
+            <div class="flex items-center gap-3 text-[10px] py-1">
+              <i class="fas fa-xs"
+                 :class="{
+                   'fa-check-circle text-green-400': r.status === 'sent' || r.status === 'triggered',
+                   'fa-eye text-amber-400': r.status === 'dry_run',
+                   'fa-times-circle text-red-400': r.status === 'error',
+                 }"></i>
+              <span class="font-mono flex-1" style="color:var(--text-secondary)" x-text="r.entity_id"></span>
+              <span style="color:var(--text-muted)" x-text="r.status"></span>
+              <span x-show="r.topic" class="font-mono truncate max-w-48" style="color:var(--text-faint)" x-text="r.topic"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+  </div><!-- end entity tools x-data -->
+  </template><!-- end activeView === status -->
+
+
+  <!-- ══ HA PIN MODAL — Automations style ══ -->
+
+  <div x-show="showPinModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-md border-2 border-[rgba(168,85,247,.5)]">
+      <!-- Header -->
+      <div class="bg-[rgba(168,85,247,.15)] px-6 py-4 border-b border-[var(--border)]">
+        <h3 class="font-bold flex items-center gap-2 text-[color:#a855f7]">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#lock"/></svg>
+          <span x-text="pinAction === 'enable' ? 'Home Automation Access Control' : 'Home Automation Access Control'"></span>
+        </h3>
+      </div>
+
+      <div class="p-3">
+        <!-- Subtext -->
+        <p class="text-[var(--text-secondary)] text-sm mb-4"
+           x-text="pinAction === 'enable'
+             ? 'This will enable live HA entity publishing. Enter the shown PIN to confirm.'
+             : 'This will disconnect FHAI from Home Assistant. Enter the shown PIN to confirm.'"></p>
+
+        <!-- Generating spinner -->
+        <template x-if="pinLoading && !pinValue">
+          <div class="bg-[var(--surface-1)] border border-[var(--border)] rounded-xl text-center py-8 mb-4 flex items-center justify-center gap-3 text-[var(--text-muted)]">
+            <svg class="icon fa-spin" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+            Generating PIN…
+          </div>
+        </template>
+
+        <!-- PIN display card -->
+        <template x-if="pinValue">
+          <div class="bg-[var(--surface-1)] border border-[var(--border)] rounded-xl text-center py-8 mb-4">
+            <div class="text-xs text-[var(--text-muted)] uppercase tracking-widest mb-2">Enter This PIN</div>
+            <div class="text-5xl font-extrabold tracking-[0.2em]" style="color:#a855f7; letter-spacing:0.25em" x-text="pinValue"></div>
+            <div class="text-xs font-mono mt-3"
+                 :style="pinSecondsLeft < 60 ? 'color:var(--danger)' : 'color:var(--warn)'"
+                 x-text="pinTimeLabel"></div>
+          </div>
+        </template>
+
+        <!-- Single text input -->
+        <template x-if="pinValue">
+          <div class="form-group mb-4">
+            <label>Confirm PIN</label>
+            <input id="ha-pin-input" class="form-control text-center text-xl tracking-widest font-bold"
+                   type="text" inputmode="numeric" maxlength="6"
+                   x-model="pinInput"
+                   @keyup.enter="submitPin()"
+                   placeholder="_ _ _ _ _ _">
+          </div>
+        </template>
+
+        <!-- Error -->
+        <template x-if="pinError">
+          <div class="text-sm text-[var(--danger)] font-semibold mb-3 text-center" x-text="pinError"></div>
+        </template>
+
+        <div class="text-xs text-[var(--text-muted)]">PIN is single-use and expires in 10 minutes. Confirming grants a 24-hour session — you won't be re-prompted until tomorrow.</div>
+      </div>
+
+      <div class="p-3 flex justify-end gap-2 bg-[var(--surface-1)] border-t border-[var(--border)]">
+        <button class="btn btn-secondary" @click="closePinModal()">Cancel</button>
+        <button class="btn btn-primary" @click="submitPin()"
+                :disabled="pinInput.trim().length < 6 || pinLoading || !pinValue"
+                x-text="pinLoading ? 'Confirming…' : (pinAction === 'enable' ? 'Enable Home Assistant' : 'Disable Home Assistant')">
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>

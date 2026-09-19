@@ -1,0 +1,1045 @@
+<!-- mqtt_admin v2 — Tailwind/Alpine MQTT broker management -->
+<div x-data="mqttAdminTab()" x-init="init()" class="max-w-7xl">
+
+  <!-- Header -->
+  <div class="mb-3">
+    <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#network"/></svg>
+      MQTT Administration
+    </h1>
+    <p class="text-sm text-gray-300 mt-0.5 font-medium">Home Assistant Integration</p>
+  </div>
+
+  <!-- FEM-style status summary bar -->
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm mb-4 px-1">
+    <span class="font-semibold text-[var(--text-primary)]">
+      <span x-text="entities.length"></span> entities
+    </span>
+    <span class="text-[var(--text-muted)]">·</span>
+    <span x-show="status.connected" class="flex items-center gap-1.5 text-[var(--ok)] font-semibold">
+      <span class="inline-block w-2 h-2 rounded-full bg-[var(--ok)]"></span> Online
+    </span>
+    <span x-show="!status.connected" class="flex items-center gap-1.5 text-[var(--danger)] font-semibold">
+      <span class="inline-block w-2 h-2 rounded-full bg-[var(--danger)]"></span> Offline
+    </span>
+    <span class="text-[var(--text-muted)]">·</span>
+    <span class="text-[var(--text-muted)] text-xs font-mono" x-text="status.broker || 'not connected'"></span>
+    <span class="text-[var(--text-muted)]">·</span>
+    <span class="flex items-center gap-1 text-[var(--text-muted)] text-xs">
+      <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg>
+      <span x-text="isStarted ? 'Auto-start' : 'Stopped'"></span>
+    </span>
+  </div>
+
+  <!-- FEM-style flat action button row -->
+  <div class="flex flex-wrap gap-2 mb-5">
+    <button class="btn btn-secondary" @click="refresh()" id="btn-mqtt-refresh">
+      <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg> Refresh
+    </button>
+    <button class="btn btn-primary" @click="openRepublishModal()" :disabled="publishing"
+            id="btn-mqtt-republish">
+      <svg class="icon" aria-hidden="true" x-show="!publishing" viewBox="0 0 24 24"><use href="#upload"/></svg>
+      <svg class="icon fa-spin" aria-hidden="true" x-show="publishing" viewBox="0 0 24 24"><use href="#loader"/></svg>
+      <span x-text="publishing ? 'Republishing…' : 'Republish'"></span>
+    </button>
+    <button class="btn" @click="openUnpublishModal()" :disabled="unpublishing"
+            id="btn-mqtt-unpublish"
+            style="color:var(--danger);background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3)">
+      <svg class="icon" aria-hidden="true" x-show="!unpublishing" viewBox="0 0 24 24"><use href="#trash-2"/></svg>
+      <svg class="icon fa-spin" aria-hidden="true" x-show="unpublishing" viewBox="0 0 24 24"><use href="#loader"/></svg>
+      <span x-text="unpublishing ? 'Removing…' : 'Unpublish'"></span>
+    </button>
+    <button class="btn btn-secondary" @click="$store.app.showMqttExplorer = true" id="btn-mqtt-explorer">
+      <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#help-circle"/></svg> MQTT Explorer
+    </button>
+  </div>
+
+  <!-- Result toast banner (auto-dismisses) -->
+  <template x-if="pubResult">
+    <div class="rounded-lg border px-4 py-3 mb-4 flex items-center justify-between gap-3 text-sm font-semibold"
+         :class="pubResult.ok
+           ? 'bg-[rgba(16,185,129,.08)] border-[rgba(16,185,129,.4)] text-[var(--ok)]'
+           : 'bg-[rgba(239,68,68,.08)] border-[rgba(239,68,68,.4)] text-[var(--danger)]'">
+      <span x-text="pubResult.msg"></span>
+      <button class="text-xs opacity-60 hover:opacity-100" @click="pubResult=null">✕</button>
+    </div>
+  </template>
+
+  <!-- Sub-tabs: larger, bolder, with 3px accent top-bar on active tab -->
+  <div class="flex gap-0 mb-6 border-b-2 border-[var(--border)]">
+    <template x-for="tab in [{id:'overview',icon:'activity',label:'Overview'},{id:'entities',icon:'list',label:'Entity Registry'},{id:'config',icon:'settings',label:'Configuration'},{id:'system',icon:'sliders',label:'System Controls'}]" :key="tab.id">
+      <button @click="activeView = tab.id"
+              class="flex items-center gap-2 px-6 py-3.5 text-base font-black tracking-wide transition-all rounded-t-lg relative"
+              :class="activeView === tab.id
+                ? 'text-[var(--accent)] bg-[var(--surface-1)] border border-b-0 border-[var(--border)] shadow-sm'
+                : 'text-[var(--text-secondary)] font-bold hover:text-[var(--text-primary)] hover:bg-[var(--surface-0)] border border-transparent'"
+              :style="activeView === tab.id ? 'margin-bottom:-2px; border-bottom:2px solid var(--surface-1)' : ''">
+        <!-- Accent stripe — clear active indicator -->
+        <span x-show="activeView === tab.id"
+              class="absolute inset-x-0 top-0 h-[3px] rounded-t-lg"
+              style="background:var(--accent)"></span>
+        <svg class="icon flex-shrink-0" aria-hidden="true" viewBox="0 0 24 24"><use :href="'#' + tab.icon"/></svg>
+        <span x-text="tab.label"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- ══ OVERVIEW ══ -->
+  <div x-show="activeView === 'overview'" x-cloak>
+    <!-- V1 Style Metric Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px">
+      <!-- Connection + service state -->
+      <div class="metric-card">
+        <div class="metric-label">Service State</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+          <span class="status-dot" :class="isStarted ? 'online' : 'offline'"></span>
+          <span class="metric-value font-extrabold" style="font-size:1.1rem"
+                :style="'color:' + (isStarted ? 'var(--ok)' : serviceState === 'stopped' ? 'var(--warn)' : 'var(--text-muted)')"
+                x-text="serviceStateLabel"></span>
+        </div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px" x-show="isStarted && uptimeStr"
+             x-text="'↑ ' + uptimeStr"></div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px"
+             x-text="serviceStatus?.broker || '—'"></div>
+      </div>
+      <!-- Messages published -->
+      <div class="metric-card">
+        <div class="metric-label">Messages Published</div>
+        <div class="metric-value font-extrabold" x-text="(status.messages_published || 0).toLocaleString()"></div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px" x-show="!status.last_publish_time">since last start</div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px" x-show="status.last_publish_time" x-text="`Last: ${new Date(status.last_publish_time * 1000).toLocaleTimeString()}`"></div>
+      </div>
+      <!-- Reconnect count -->
+      <div class="metric-card">
+        <div class="metric-label">Reconnects</div>
+        <div class="metric-value font-extrabold"
+             :style="(status.reconnect_count || 0) > 0 ? 'color:var(--warn)' : ''"
+             x-text="status.reconnect_count || 0"></div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px">broker drops</div>
+      </div>
+      <!-- Queue depth -->
+      <div class="metric-card">
+        <div class="metric-label">Queue Depth</div>
+        <div class="metric-value font-extrabold"
+             :style="(status.queue_depth || 0) > 10 ? 'color:var(--warn)' : ''"
+             x-text="status.queue_depth || 0"></div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px">pending messages</div>
+      </div>
+    </div>
+    
+    <template x-if="status.last_error">
+      <div class="card" style="margin-bottom:16px;border-color:var(--danger)">
+        <div class="card-label c-danger">⚠ Last Broker Error</div>
+        <code style="font-size:.8rem;color:var(--danger)" x-text="status.last_error"></code>
+      </div>
+    </template>
+
+    <!-- Topic Registry -->
+    <div class="card p-0 overflow-hidden">
+      <div class="px-5 py-3 bg-[var(--surface-1)] border-b border-[var(--border)] flex items-center gap-2 font-semibold text-sm">
+        <svg class="icon text-[var(--accent)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#rss"/></svg> Active Topics
+        <span class="text-xs text-[var(--text-muted)]" x-text="'(' + topics.length + ')'"></span>
+      </div>
+      <table class="data-table text-sm">
+        <thead><tr><th>Topic</th><th class="text-right">QoS</th></tr></thead>
+        <tbody class="divide-y divide-[var(--border)] [&>tr:nth-child(even)]:bg-[var(--surface-50)]">
+          <template x-for="(t, i) in topics" :key="i">
+            <tr>
+              <td class="font-mono text-xs">
+                <div class="font-bold text-[var(--text-primary)]" x-text="t.pattern"></div>
+                <div class="text-[10px] text-[var(--text-muted)] mt-1" x-text="t.description"></div>
+              </td>
+              <td class="text-right text-[var(--text-muted)]" x-text="configForm.qos"></td>
+            </tr>
+          </template>
+          <template x-if="topics.length === 0">
+            <tr><td colspan="2" class="text-center text-[var(--text-muted)] py-8">No topics published yet</td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══ ENTITY REGISTRY ══ -->
+  <div x-show="activeView === 'entities'" x-cloak>
+    <div class="flex flex-wrap gap-3 mb-4">
+      <input type="text" x-model="search" @input="applyFilters()" placeholder="Search entities…" class="form-control flex-1 min-w-48">
+      <select x-model="filterType" @change="applyFilters()" class="form-control min-w-32 bg-[var(--surface-0)] text-[var(--text-primary)]">
+        <option value="">All Types</option>
+        <option>sensor</option><option>select</option><option>switch</option><option>number</option>
+      </select>
+      <select x-model="filterGroup" @change="applyFilters()" class="form-control min-w-36 bg-[var(--surface-0)] text-[var(--text-primary)]">
+        <option value="">All Groups</option>
+        <option>battery</option><option>solar</option><option>power</option><option>energy</option><option>status</option><option>control</option>
+      </select>
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" x-model="showControls" @change="applyFilters()">
+        Controls only
+      </label>
+      <span class="text-sm text-[var(--text-muted)] self-center" x-text="filteredEntities.length + ' entities'"></span>
+    </div>
+    <div class="card p-0 overflow-hidden border border-[var(--border)]">
+      <div class="overflow-y-auto overflow-x-auto max-h-[500px]">
+        <table class="data-table text-[11px] leading-tight w-full relative">
+          <thead class="sticky top-0 bg-[var(--surface-1)] z-10 shadow-sm"><tr class="py-1"><th>Display Name</th><th>Target</th><th>MQTT Topic</th><th>HA Type</th><th>Unit</th><th>Value</th><th>Config</th></tr></thead>
+        <tbody class="divide-y divide-[var(--border)] [&>tr:nth-child(even)]:bg-[var(--surface-50)]">
+          <template x-for="(e, i) in filteredEntities" :key="i">
+            <tr class="py-0.5">
+              <td class="font-bold text-[var(--text-primary)] whitespace-nowrap py-1" x-text="e.name"></td>
+              <td class="whitespace-nowrap py-1"><span class="chip text-[10px] py-0 px-1 bg-[var(--surface-2)] text-[var(--text-muted)]" x-text="e.target || e.group || e.state_group"></span></td>
+              <td class="font-mono text-[10px] text-[var(--text-muted)] whitespace-nowrap py-1 truncate max-w-[200px]" x-text="e.topic" :title="e.topic"></td>
+              <td class="py-1"><span class="chip text-[10px] py-0 px-1" :class="e.is_control ? 'bg-[rgba(245,158,11,.15)] text-[var(--warn)] border-[rgba(245,158,11,.3)] border' : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'" x-text="e.ha_type"></span></td>
+              <td class="text-xs text-[var(--text-muted)] py-1" x-text="e.unit || '—'"></td>
+              <td class="font-mono font-bold text-xs py-1" :class="e.value === null ? 'text-[var(--danger)]' : 'text-[var(--ok)]'" x-text="e.value !== null ? e.value : 'offline'"></td>
+              <td class="text-right py-1">
+                <button class="btn btn-secondary py-1 px-2 text-[10px]" @click="inspectPayload = e" title="View HA Discovery Payload">
+                  <svg class="icon text-[var(--accent)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#file-json"/></svg>
+                </button>
+              </td>
+            </tr>
+          </template>
+          <template x-if="filteredEntities.length === 0">
+            <tr><td colspan="6" class="text-center text-[var(--text-muted)] py-8">No entities match filter</td></tr>
+          </template>
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ CONFIGURATION ══ -->
+  <div x-show="activeView === 'config'" x-cloak>
+
+    <!-- Service State Banner -->
+    <div class="rounded-xl border p-4 mb-5 shadow-sm flex items-center justify-between gap-4 flex-wrap"
+         :class="isStarted
+           ? 'bg-[rgba(16,185,129,.08)] border-[rgba(16,185,129,.4)]'
+           : serviceState === 'not_configured'
+           ? 'bg-[var(--surface-1)] border-dashed border-[var(--border)]'
+           : 'bg-[rgba(245,158,11,.08)] border-[rgba(245,158,11,.4)]'">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:10px;height:10px;border-radius:50%;display:inline-block"
+                :style="isStarted ? 'background:var(--ok)' : serviceState === 'stopped' ? 'background:var(--warn)' : 'background:var(--text-muted)'"></span>
+          <strong x-text="serviceStateLabel"></strong>
+        </div>
+        <span x-show="isStarted && uptimeStr" style="font-size:.75rem;color:var(--text-muted);font-family:monospace"
+              x-text="'↑ ' + uptimeStr"></span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button x-show="isStarted" @click="openPinModal('disable')"
+                class="btn" style="color:var(--danger);background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3)">
+          Disable MQTT
+        </button>
+        <button x-show="!isStarted" @click="openPinModal('enable')"
+                class="btn btn-primary">
+          Enable MQTT
+        </button>
+      </div>
+    </div>
+
+    <!-- Restart-Required Banner -->
+    <template x-if="restartRequired">
+      <div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 mb-5 flex items-center justify-between gap-4 flex-wrap shadow-sm">
+        <div class="flex items-center gap-3 text-amber-300 text-sm font-semibold">
+          <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+          </svg>
+          <span>Connection settings saved — <strong>restart required</strong> to apply broker host / port / auth changes.</span>
+        </div>
+        <button @click="reconnect()" :disabled="reconnecting"
+                class="btn flex items-center gap-1.5 text-amber-200 bg-amber-500/20 border border-amber-500/40 hover:bg-amber-500/35 transition-colors">
+          <svg class="icon" :class="reconnecting ? 'fa-spin' : ''" aria-hidden="true" viewBox="0 0 24 24"><use :href="reconnecting ? '#loader' : '#refresh-cw'"/></svg>
+          <span x-text="reconnecting ? 'Restarting…' : 'Force Reconnect Now'"></span>
+        </button>
+      </div>
+    </template>
+
+    <div class="card p-6 max-w-3xl mx-auto relative border border-[var(--border)]">
+
+      <div class="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-4 border-b border-[var(--border)] pb-2 mt-2">MQTT Broker Connection</div>
+
+      <!-- Broker auto-detect (HA Addon only) -->
+      <div style="margin-bottom:16px;padding:12px 14px;border-radius:8px;background:var(--surface-1);border:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div style="font-size:.82rem;color:var(--text-secondary)">
+            <strong>Auto-Detect Mosquitto</strong>
+            <div style="font-size:.72rem;color:var(--text-muted);margin-top:2px">HA Add-on: checks for Mosquitto Add-on (core-mosquitto)</div>
+          </div>
+          <button class="btn btn-secondary" @click="detectBroker()" :disabled="detecting">
+            <svg class="icon" :class="detecting ? 'fa-spin' : ''" aria-hidden="true" viewBox="0 0 24 24"><use :href="detecting ? '#loader' : '#wifi'"/></svg>
+            <span x-text="detecting ? 'Detecting…' : 'Auto-Detect'"></span>
+          </button>
+        </div>
+        <template x-if="detectResult">
+          <div style="margin-top:10px;padding:8px 12px;border-radius:6px;font-size:.78rem"
+               :style="detectResult.detected ? 'background:rgba(16,185,129,.08);color:var(--ok);border:1px solid rgba(16,185,129,.3)' : 'background:rgba(245,158,11,.08);color:var(--warn);border:1px solid rgba(245,158,11,.3)'">
+            <span x-show="detectResult.detected">✅ <span x-text="detectResult.note"></span></span>
+            <span x-show="!detectResult.detected" x-text="detectResult.error || detectResult.note"></span>
+          </div>
+        </template>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div class="form-group">
+          <label>Broker Host</label>
+          <input class="form-control font-mono" x-model="configForm.host" placeholder="mosquitto">
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input type="number" class="form-control font-mono" x-model.number="configForm.port" placeholder="1883">
+        </div>
+        <div class="form-group">
+          <label>Username (Optional)</label>
+          <input type="text" class="form-control" autocomplete="off" x-model="configForm.username" placeholder="Leave blank if none">
+        </div>
+        <div class="form-group">
+          <label>Password (Optional)</label>
+          <input type="password" class="form-control" autocomplete="new-password" x-model="configForm.password" placeholder="Leave blank if none">
+        </div>
+      </div>
+
+      <div class="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-4 border-b border-[var(--border)] pb-2 mt-8">Advanced Configuration</div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div class="form-group">
+          <label>Client ID</label>
+          <input class="form-control font-mono" x-model="configForm.client_id" placeholder="franklinwh_bridge">
+        </div>
+        <div class="form-group">
+          <label>Instance UID</label>
+          <input class="form-control font-mono" x-model="configForm.instance_label" placeholder="FHAI">
+        </div>
+        <div class="form-group">
+          <label>QoS Level</label>
+          <select class="form-control" x-model.number="configForm.qos">
+            <option value="0">0 — At most once</option>
+            <option value="1">1 — At least once</option>
+            <option value="2">2 — Exactly once</option>
+          </select>
+        </div>
+        <div class="form-group flex flex-col justify-end pb-2">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" class="w-4 h-4 accent-[var(--accent)]" x-model="configForm.retain_discovery">
+            <span class="text-sm">Retain Discovery Messages</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Prefix Overrides -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+        <div class="form-group">
+          <label class="text-[var(--warn)]">Topic Prefix (override)</label>
+          <input class="form-control font-mono" x-model="configForm.topic_prefix" placeholder="franklinwh">
+        </div>
+        <div class="form-group">
+          <label class="text-[var(--warn)]">Discovery Prefix (override)</label>
+          <input class="form-control font-mono" x-model="configForm.discovery_prefix" placeholder="homeassistant">
+        </div>
+      </div>
+
+      <!-- Save result -->
+      <template x-if="configSaveResult">
+        <div class="mt-4 p-3 rounded-lg text-sm font-semibold"
+             :class="configSaveResult.ok ? 'bg-[rgba(16,185,129,.1)] text-[var(--ok)]' : 'bg-[rgba(239,68,68,.1)] text-[var(--danger)]'"
+             x-text="configSaveResult.ok ? 'Configuration saved successfully.' : (configSaveResult.error || 'Save failed.')"></div>
+      </template>
+
+      <!-- Test result -->
+      <template x-if="testResult">
+        <div class="mt-4 p-3 rounded-lg text-sm font-semibold"
+             :class="testResult.ok ? 'bg-[rgba(16,185,129,.1)] text-[var(--ok)]' : 'bg-[rgba(239,68,68,.1)] text-[var(--danger)]'"
+             x-text="testResult.ok ? '✅ Connected to ' + testResult.host + ':' + testResult.port + ' (' + testResult.latency_ms + 'ms)' : '❌ ' + (testResult.error || 'Connection failed')"></div>
+      </template>
+
+      <div class="flex justify-between items-center mt-8 pt-5 border-t border-[var(--border)] flex-wrap gap-3">
+        <div class="flex gap-2">
+          <button class="btn btn-secondary" @click="reconnect()" :disabled="reconnecting">
+            <svg class="icon" :class="reconnecting ? 'fa-spin' : ''" aria-hidden="true" viewBox="0 0 24 24"><use :href="reconnecting ? '#loader' : '#refresh-cw'"/></svg>
+            <span x-text="reconnecting ? 'Reconnecting…' : 'Force Reconnect'"></span>
+          </button>
+          <button class="btn btn-secondary" @click="testConnection()" :disabled="testLoading">
+            <svg class="icon" :class="testLoading ? 'animate-pulse' : ''" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg>
+            <span x-text="testLoading ? 'Testing…' : 'Test Connection'"></span>
+          </button>
+        </div>
+        <button class="btn btn-primary px-6" @click="saveConfig()" :disabled="savingConfig">
+          <svg class="icon fa-spin" x-show="savingConfig" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+          <svg class="icon" x-show="!savingConfig" aria-hidden="true" viewBox="0 0 24 24"><use href="#save"/></svg>
+          Save Configuration
+        </button>
+      </div>
+
+      <!-- Headless note -->
+      <div style="margin-top:24px;padding:16px;background:var(--surface-0);border-radius:8px;border:1px solid var(--border)">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:8px">Headless / Scripted Install</div>
+        <pre style="font-family:monospace;font-size:.72rem;color:var(--text-secondary);overflow-x:auto">MQTT_ENABLED=true
+MQTT_HOST=core-mosquitto
+MQTT_PORT=1883
+MQTT_USERNAME=...
+MQTT_PASSWORD=...</pre>
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">No PIN required for headless installs — PIN gate is UI-only.</div>
+      </div>
+    </div>
+
+    <!-- ── Entity ID Prefix ── -->
+    <div class="card p-6 max-w-3xl mx-auto mt-4 border border-[var(--border)]">
+      <div class="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-1 border-b border-[var(--border)] pb-2">
+        Entity ID Prefix
+      </div>
+      <p class="text-xs text-[var(--text-muted)] mb-4 mt-2">
+        Controls the <code class="font-mono bg-[var(--surface-1)] px-1 rounded">unique_id</code> prefix for all Home Assistant entities.
+        Changing this will recreate all entities in HA — use <strong>Run Migration</strong> to safely tombstone old IDs and republish.
+      </p>
+
+      <!-- Current prefix display -->
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex-1">
+          <div class="text-xs text-[var(--text-muted)] mb-1">Active Template</div>
+          <code class="font-mono text-sm text-[var(--text-primary)] bg-[var(--surface-1)] px-3 py-1.5 rounded border border-[var(--border)] block" x-text="prefixInfo.template || 'Loading…'"></code>
+        </div>
+        <div class="flex-1" x-show="prefixInfo.examples && prefixInfo.examples.length">
+          <div class="text-xs text-[var(--text-muted)] mb-1">Rendered Example</div>
+          <code class="font-mono text-xs text-[var(--ok)] bg-[var(--surface-1)] px-3 py-1.5 rounded border border-[var(--border)] block" x-text="prefixInfo.examples?.[0]?.example_entity || '—'"></code>
+        </div>
+      </div>
+
+      <!-- Sync status -->
+      <div class="mb-4 text-xs flex items-center gap-2"
+           :class="prefixInfo.in_sync ? 'text-[var(--ok)]' : 'text-[var(--warn)]'">
+        <span x-text="prefixInfo.in_sync ? '✅ Publisher in sync with DB' : '⚠ Publisher out of sync — restart or migrate to apply'"></span>
+      </div>
+
+      <!-- Quick presets -->
+      <div class="mb-4">
+        <div class="text-xs text-[var(--text-muted)] mb-2">Quick Presets</div>
+        <div class="flex flex-wrap gap-2">
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Device name ────────────────────────────────────────────────────
+           Separate from the entity prefix and far safer: renaming a device in
+           Home Assistant does not move its entities or their history, because
+           entity ids follow the unique_id. It is a label.
+
+           It is a setting because it was a decision in the code, and that
+           decision changed three times in one release cycle — each change
+           churning the device in Home Assistant for no reason the user chose. -->
+      <div x-data="deviceNameCard()" x-init="load()"
+           class="rounded-xl border border-[var(--border)] bg-[var(--surface-0)] p-4 mb-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+          <div>
+            <h3 class="text-sm font-bold text-gray-100">Home Assistant device name</h3>
+            <p class="text-[10px] text-gray-400 mt-0.5">
+              How this gateway is labelled in Devices. Safe to change — entity
+              ids and history are unaffected.
+            </p>
+          </div>
+          <span class="text-[10px] font-mono text-primary-light" x-text="preview"></span>
+        </div>
+
+        <div class="flex flex-wrap gap-2 mb-3">
+          <template x-for="p in presets" :key="p.t">
+            <button type="button" @click="draft = p.t"
+                    class="btn btn-secondary text-xs"
+                    :class="draft === p.t ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+              <span x-text="p.label"></span>
+            </button>
+          </template>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <input type="text" x-model="draft" spellcheck="false"
+                 class="flex-1 min-w-[240px] px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-xs text-gray-200 font-mono">
+          <button type="button" @click="save()" :disabled="busy || !draft.trim()"
+                  class="px-3 py-2 rounded-lg bg-primary text-white text-[11px] font-bold disabled:opacity-40">
+            Save
+          </button>
+        </div>
+        <p class="text-[10px] text-gray-500 mt-1.5">
+          Tokens: <code>{model}</code> <code>{serial4}</code> <code>{short_id}</code>
+          <code>{serial}</code> <code>{name}</code> — at least one is required.
+        </p>
+        <p x-show="message" x-cloak class="text-[10px] mt-2"
+           :class="error ? 'text-red-400' : 'text-emerald-400'" x-text="message"></p>
+      </div>
+
+      <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-0)] p-4">
+        <div>
+          <div>
+          <!-- The bare prefix. Older FranklinWH integrations published
+               sensor.franklinwh_battery_power and friends, so dashboards and
+               power-flow cards built against them point here. Choosing it makes
+               those cards work again without editing them — four of the five
+               entities a power-flow card uses match exactly, because the slugs
+               never changed. Only one gateway can own it, so it is offered
+               plainly rather than as the default. -->
+          <button @click="prefixDraft='franklinwh_'"
+                  class="btn btn-secondary text-xs" :class="prefixDraft === 'franklinwh_' ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+            franklinwh_ <span class="ml-1 text-[var(--text-muted)]">(matches older dashboards)</span>
+          </button>
+
+          <button @click="prefixDraft='franklinwh_{short_id}_'"
+                  class="btn btn-secondary text-xs" :class="prefixDraft === 'franklinwh_{short_id}_' ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+            franklinwh_{short_id}_ <span class="ml-1 text-[var(--text-muted)]">(default)</span>
+          </button>
+          <button @click="prefixDraft='{gateway_name}_'"
+                  class="btn btn-secondary text-xs" :class="prefixDraft === '{gateway_name}_' ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+            {gateway_name}_
+          </button>
+          <button @click="prefixDraft='fhp_'"
+                  class="btn btn-secondary text-xs" :class="prefixDraft === 'fhp_' ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+            fhp_
+          </button>
+          <button @click="prefixDraft='agate_{short_id}_'"
+                  class="btn btn-secondary text-xs" :class="prefixDraft === 'agate_{short_id}_' ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+            agate_{short_id}_
+          </button>
+          <button @click="prefixDraft='{gateway_name}_{short_id}_'"
+                  class="btn btn-secondary text-xs" :class="prefixDraft === '{gateway_name}_{short_id}_' ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+            {gateway_name}_{short_id}_
+          </button>
+          <button x-show="prefixInfo.examples?.[0]?.site_id"
+                  @click="prefixDraft='{site_id}_{short_id}_'"
+                  class="btn btn-secondary text-xs" :class="prefixDraft === '{site_id}_{short_id}_' ? 'border-[var(--accent)] text-[var(--accent)]' : ''">
+            {site_id}_{short_id}_
+          </button>
+        </div>
+      </div>
+
+      <!-- Supported tokens reference -->
+      <details class="mb-4 text-xs">
+        <summary class="cursor-pointer text-[var(--text-muted)] hover:text-[var(--text)] select-none">
+          ▸ Supported tokens
+        </summary>
+        <div class="mt-2 border border-[var(--border)] rounded overflow-hidden">
+          <table class="w-full text-xs">
+            <thead class="bg-[var(--surface-1)]">
+              <tr>
+                <th class="text-left px-3 py-1.5 text-[var(--text-muted)] font-semibold">Token</th>
+                <th class="text-left px-3 py-1.5 text-[var(--text-muted)] font-semibold">Resolves to</th>
+                <th class="text-left px-3 py-1.5 text-[var(--text-muted)] font-semibold">Example</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="tok in (prefixInfo.supported_tokens || [])" :key="tok.token">
+                <tr class="border-t border-[var(--border)]">
+                  <td class="px-3 py-1.5"><code class="text-[var(--accent)]" x-text="tok.token"></code></td>
+                  <td class="px-3 py-1.5 text-[var(--text-muted)]" x-text="tok.description"></td>
+                  <td class="px-3 py-1.5 font-mono text-[var(--ok)]" x-text="tok.example"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </details>
+
+      <!-- Custom input -->
+      <div class="form-group mb-3">
+        <label>Custom Template <span class="text-[var(--text-muted)] font-normal">(lowercase, alphanumeric + underscore, max 48 chars)</span></label>
+        <input class="form-control font-mono" x-model="prefixDraft" placeholder="franklinwh_{short_id}_"
+               :class="prefixDraft !== prefixInfo.template ? 'border-[var(--accent)]' : ''"
+               @input.debounce.300ms="loadPrefix()">
+      </div>
+
+      <!-- Action row -->
+      <div class="flex items-center gap-3 flex-wrap">
+        <button class="btn btn-primary" @click="openPrefixChangeFlow()"
+                :disabled="!prefixDraft || prefixDraft === prefixInfo.template || prefixScanLoading">
+          <svg class="icon fa-spin" aria-hidden="true" x-show="prefixScanLoading" viewBox="0 0 24 24"><use href="#loader"/></svg>
+          <svg class="icon" aria-hidden="true" x-show="!prefixScanLoading" viewBox="0 0 24 24"><use href="#shield"/></svg>
+          <span x-text="prefixScanLoading ? 'Scanning MQTT…' : 'Change Prefix…'"></span>
+        </button>
+        <span class="text-xs text-[var(--text-muted)]" x-show="prefixDraft === prefixInfo.template">Template unchanged</span>
+      </div>
+    </div>
+  </div>
+  <!-- ── Ghost Devices ── -->
+  <div class="card mt-8">
+    <div class="text-sm font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-1 border-b border-[var(--border)] pb-2">
+      Old / Duplicate Devices
+    </div>
+    <p class="text-xs text-[var(--text-muted)] mt-3 mb-4 leading-relaxed">
+      Home Assistant keys a device on its <span class="font-mono">identifiers</span>, not its name. When ours changed,
+      the old identifier stopped being published to &mdash; and because discovery messages are retained, Home Assistant
+      keeps rebuilding the old device, with every entity it ever had, on each restart. Those are the duplicates that show
+      up in entity pickers. Removing them here clears the retained message that recreates them.
+    </p>
+
+    <label class="flex items-start gap-2.5 cursor-pointer mb-4">
+      <input type="checkbox" class="mt-0.5 w-4 h-4 accent-[var(--accent)] flex-shrink-0"
+             :checked="ghostAuto" @change="setGhostAuto($event.target.checked)">
+      <span class="text-xs text-[var(--text-secondary)] leading-relaxed">
+        <strong>Remove them automatically on startup.</strong>
+        Only devices belonging to a gateway registered here are removed &mdash; the same hardware under the
+        identifier it used to carry. A device from a gateway you no longer have is listed below instead of
+        deleted, because it may be history you want.
+      </span>
+    </label>
+
+    <div class="flex items-center gap-3 flex-wrap">
+      <button class="btn btn-secondary" @click="scanGhosts()" :disabled="ghostScanning">
+        <svg class="icon fa-spin" aria-hidden="true" x-show="ghostScanning" viewBox="0 0 24 24"><use href="#loader"/></svg>
+        <svg class="icon" aria-hidden="true" x-show="!ghostScanning" viewBox="0 0 24 24"><use href="#search"/></svg>
+        <span x-text="ghostScanning ? 'Scanning broker…' : 'Scan for old devices'"></span>
+      </button>
+      <span class="text-xs text-[var(--text-muted)]" x-show="ghostScanned && ghostDevices.length === 0" x-cloak>
+        No duplicate devices found.
+      </span>
+      <span class="text-xs text-amber-400" x-show="ghostDetail" x-cloak x-text="ghostDetail"></span>
+    </div>
+
+    <template x-if="ghostDevices.length">
+      <div class="mt-4 space-y-3">
+        <template x-for="d in ghostDevices" :key="d.identity || d.device_name">
+          <div class="rounded-lg border border-[var(--border)] p-3" style="background:var(--surface-2)">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+              <div class="min-w-0">
+                <div class="font-bold text-[var(--text-primary)] text-sm" x-text="d.device_name"></div>
+                <div class="font-mono text-[10px] text-[var(--text-muted)] mt-0.5" x-text="d.identity || 'no device identifier'"></div>
+                <div class="text-xs text-[var(--text-muted)] mt-1">
+                  <span x-text="d.entity_count"></span> entity(s) &mdash; <span x-text="d.reason"></span>
+                </div>
+              </div>
+              <button class="btn" style="background:rgba(239,68,68,.2);color:var(--danger);border:1px solid rgba(239,68,68,.4)"
+                      :disabled="ghostClearing" @click="removeGhost(d)">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#trash-2"/></svg>
+                Remove
+              </button>
+            </div>
+            <details class="mt-2" x-show="d.entities.length">
+              <summary class="text-[10px] text-[var(--text-muted)] cursor-pointer">Show entities</summary>
+              <div class="mt-1.5 flex flex-wrap gap-1">
+                <template x-for="e in d.entities" :key="e">
+                  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded" style="background:var(--surface-1); color:var(--text-muted)" x-text="e"></span>
+                </template>
+              </div>
+            </details>
+          </div>
+        </template>
+        <p class="text-[11px] text-[var(--text-muted)]">
+          Restart Home Assistant after removing, so it drops the device it has already built.
+        </p>
+      </div>
+    </template>
+  </div>
+
+  <!-- ── Prefix Warning Modal ── -->
+  <div x-show="showPrefixWarnModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-lg border-2 border-red-500/50">
+      <div class="px-6 py-4 border-b border-[var(--border)]" style="background:rgba(239,68,68,.12)">
+        <h3 class="font-bold flex items-center gap-2 text-red-400 text-base">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+          Breaking Change — Entity IDs Will Change
+        </h3>
+      </div>
+      <div class="p-6 space-y-4">
+        <!-- Entity count badge -->
+        <div class="rounded-lg border border-red-500/30 bg-red-500/8 p-4 text-sm">
+          <template x-if="prefixScanResult && prefixScanResult.found > 0">
+            <p class="text-red-300 font-semibold">
+              <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+              <span x-text="prefixScanResult.found"></span> live entities detected in Home Assistant under the old prefix.
+              <span class="block text-xs font-normal mt-1 opacity-80">Changing the prefix will remove and recreate all of them.</span>
+            </p>
+          </template>
+          <template x-if="!prefixScanResult || prefixScanResult.found === 0">
+            <p class="text-green-300 font-semibold">
+              ✅ No live entities detected — safe to change prefix without migration.
+            </p>
+          </template>
+        </div>
+
+        <!-- Old → New -->
+        <div class="flex items-center gap-3 font-mono text-sm">
+          <span class="bg-[var(--surface-1)] px-2 py-1 rounded text-red-300 truncate" x-text="prefixInfo.template"></span>
+          <svg class="icon flex-shrink-0 text-[var(--text-muted)]" viewBox="0 0 24 24"><use href="#arrow-right"/></svg>
+          <span class="bg-[var(--surface-1)] px-2 py-1 rounded text-green-300 truncate" x-text="prefixDraft"></span>
+        </div>
+
+        <p class="text-[var(--text-secondary)] text-sm">
+          Changing the entity prefix will <strong>orphan existing HA dashboards, automations, history, and template sensors</strong> that reference the old entity IDs. This cannot be undone automatically.
+        </p>
+
+        <!-- Checklist -->
+        <div class="space-y-2 mt-2" x-show="prefixScanResult && prefixScanResult.found > 0">
+          <label class="flex items-start gap-3 cursor-pointer text-sm">
+            <input type="checkbox" class="mt-0.5 w-4 h-4 accent-red-400 flex-shrink-0" x-model="prefixWarnChecks[0]">
+            <span class="text-[var(--text-secondary)]">I understand existing HA automations referencing old entity IDs <strong>will break</strong></span>
+          </label>
+          <label class="flex items-start gap-3 cursor-pointer text-sm">
+            <input type="checkbox" class="mt-0.5 w-4 h-4 accent-red-400 flex-shrink-0" x-model="prefixWarnChecks[1]">
+            <span class="text-[var(--text-secondary)]">I have <strong>backed up my HA configuration</strong></span>
+          </label>
+          <label class="flex items-start gap-3 cursor-pointer text-sm">
+            <input type="checkbox" class="mt-0.5 w-4 h-4 accent-red-400 flex-shrink-0" x-model="prefixWarnChecks[2]">
+            <span class="text-[var(--text-secondary)]">I understand dashboards and scripts <strong>may need manual updates</strong></span>
+          </label>
+        </div>
+      </div>
+      <div class="px-6 pb-5 flex justify-end gap-3 bg-[var(--surface-1)] border-t border-[var(--border)]">
+        <button class="btn btn-secondary" @click="showPrefixWarnModal=false; prefixWarnChecks=[false,false,false]">Cancel</button>
+        <template x-if="prefixScanResult && prefixScanResult.found > 0">
+          <button class="btn" style="background:rgba(239,68,68,.2);color:var(--danger);border:1px solid rgba(239,68,68,.4)"
+                  :disabled="!prefixWarnChecks.every(v=>v)"
+                  @click="openPrefixPreview()">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#eye"/></svg>
+            Preview Migration
+          </button>
+        </template>
+        <template x-if="!prefixScanResult || prefixScanResult.found === 0">
+          <button class="btn btn-primary" @click="runPrefixMigration(false)">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#check"/></svg>
+            Apply Prefix
+          </button>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Prefix Preview Modal ── -->
+  <div x-show="showPrefixPreviewModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-2xl border border-[var(--border)]">
+      <div class="modal-header flex items-center justify-between bg-[var(--surface-1)] border-b border-[var(--border)]">
+        <h3 class="font-bold flex items-center gap-2">
+          <svg class="icon text-amber-400" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+          Migration Preview — <span x-text="prefixPreview.length"></span> entities
+        </h3>
+        <button class="icon-btn" @click="showPrefixPreviewModal=false"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg></button>
+      </div>
+      <div class="p-4 overflow-y-auto max-h-80">
+        <table class="data-table text-xs w-full">
+          <thead><tr><th>Old Entity ID</th><th>New Entity ID</th></tr></thead>
+          <tbody>
+            <template x-for="(row, i) in prefixPreview" :key="i">
+              <tr>
+                <td class="font-mono text-red-300/80 text-[10px]" x-text="row.old_entity_id"></td>
+                <td class="font-mono text-green-300/80 text-[10px]" x-text="row.new_entity_id"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div class="px-6 pb-5 flex justify-end gap-3 bg-[var(--surface-1)] border-t border-[var(--border)]">
+        <button class="btn btn-secondary" @click="showPrefixPreviewModal=false">Cancel</button>
+        <button class="btn" style="background:rgba(239,68,68,.2);color:var(--danger);border:1px solid rgba(239,68,68,.4)"
+                :disabled="prefixMigrating"
+                @click="runPrefixMigration(false)">
+          <svg class="icon fa-spin" aria-hidden="true" x-show="prefixMigrating" viewBox="0 0 24 24"><use href="#loader"/></svg>
+          <svg class="icon" aria-hidden="true" x-show="!prefixMigrating" viewBox="0 0 24 24"><use href="#zap"/></svg>
+          <span x-text="prefixMigrating ? 'Migrating…' : 'Run Migration'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MQTT PIN Modal — Automations style ── -->
+  <div x-show="showPinModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-md border-2 border-[rgba(168,85,247,.5)]">
+      <!-- Header -->
+      <div class="bg-[rgba(168,85,247,.15)] px-6 py-4 border-b border-[var(--border)]">
+        <h3 class="font-bold flex items-center gap-2 text-[color:#a855f7]">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#lock"/></svg>
+          MQTT Admin Access Control
+        </h3>
+      </div>
+
+      <div class="p-3">
+        <p class="text-[var(--text-secondary)] text-sm mb-4"
+           x-text="pinAction === 'enable'
+             ? 'This will start the MQTT publisher and HA Discovery. Enter the shown PIN to confirm.'
+             : 'This will stop publishing and disconnect from the broker. Enter the shown PIN to confirm.'"></p>
+
+        <!-- Generating spinner -->
+        <template x-if="pinLoading && !pinValue">
+          <div class="bg-[var(--surface-1)] border border-[var(--border)] rounded-xl text-center py-8 mb-4 flex items-center justify-center gap-3 text-[var(--text-muted)]">
+            <svg class="icon fa-spin" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+            Generating PIN…
+          </div>
+        </template>
+
+        <!-- PIN display card -->
+        <template x-if="pinValue">
+          <div class="bg-[var(--surface-1)] border border-[var(--border)] rounded-xl text-center py-8 mb-4">
+            <div class="text-xs text-[var(--text-muted)] uppercase tracking-widest mb-2">Enter This PIN</div>
+            <div class="text-5xl font-extrabold" style="color:#a855f7; letter-spacing:0.25em" x-text="pinValue"></div>
+            <div class="text-xs font-mono mt-3"
+                 :style="pinSecondsLeft < 60 ? 'color:var(--danger)' : 'color:var(--warn)'"
+                 x-text="pinTimeLabel"></div>
+          </div>
+        </template>
+
+        <!-- Single text input -->
+        <template x-if="pinValue">
+          <div class="form-group mb-4">
+            <label>Confirm PIN</label>
+            <input id="mqtt-pin-input" class="form-control text-center text-xl tracking-widest font-bold"
+                   type="text" inputmode="numeric" maxlength="6"
+                   x-model="pinInput"
+                   @keyup.enter="submitPin()"
+                   placeholder="_ _ _ _ _ _">
+          </div>
+        </template>
+
+        <!-- Error -->
+        <template x-if="pinError">
+          <div class="text-sm text-[var(--danger)] font-semibold mb-3 text-center" x-text="pinError"></div>
+        </template>
+
+        <div class="text-xs text-[var(--text-muted)]">PIN is single-use and expires in 10 minutes. Confirming grants a 24-hour session — you won't be re-prompted until tomorrow.</div>
+      </div>
+
+      <div class="p-3 flex justify-end gap-2 bg-[var(--surface-1)] border-t border-[var(--border)]">
+        <button class="btn btn-secondary" @click="closePinModal()">Cancel</button>
+        <button class="btn btn-primary" @click="submitPin()"
+                :disabled="pinInput.trim().length < 6 || pinLoading || !pinValue"
+                x-text="pinLoading ? 'Confirming…' : (pinAction === 'enable' ? 'Enable MQTT' : 'Disable MQTT')">
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Republish HA Discovery? modal (FEM model) -->
+  <div x-show="showRepublishModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-md">
+      <div class="p-6 flex gap-4">
+        <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center" style="background:rgba(245,158,11,.15)">
+          <svg class="icon text-amber-400" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+        </div>
+        <div>
+          <h3 class="font-bold text-[var(--text-primary)] text-base mb-2">Republish HA Discovery?</h3>
+          <p class="text-[var(--text-secondary)] text-sm leading-relaxed mb-3">
+            This re-sends all HA Discovery payloads with code-defined entity names.
+          </p>
+          <p class="text-sm leading-relaxed">
+            <span class="text-amber-400">⚠</span>
+            <span class="text-[var(--text-secondary)]"> Any entity labels you customised directly in Home Assistant will be reset to defaults.</span>
+          </p>
+          <p class="text-[var(--text-secondary)] text-sm mt-3 leading-relaxed">
+            To preserve custom labels, use <strong>Unpublish → Wait 30s → Republish</strong> instead.
+          </p>
+        </div>
+      </div>
+      <div class="px-6 pb-5 flex justify-end gap-3">
+        <button class="btn btn-secondary" @click="showRepublishModal=false">Cancel</button>
+        <button class="btn btn-primary" @click="executeRepublish()">Republish</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remove All Entities? modal with countdown safety timer (FEM model) -->
+  <div x-show="showUnpublishModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-md">
+      <div class="p-6 flex gap-4">
+        <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center" style="background:rgba(239,68,68,.15)">
+          <svg class="icon text-red-400" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+        </div>
+        <div class="flex-1">
+          <h3 class="font-bold text-[var(--text-primary)] text-base mb-2">Remove All Entities?</h3>
+          <p class="text-[var(--text-secondary)] text-sm leading-relaxed">
+            This clears ghost devices by sending empty retained payloads to Home Assistant.<br>
+            You can Republish afterwards to recreate them cleanly.
+          </p>
+          <!-- Countdown progress bar — CSS transition drains from 100%→0% over 3s -->
+          <div class="mt-4 h-1 rounded-full overflow-hidden bg-[var(--surface-2)]">
+            <div x-ref="unpublishBar"
+                 class="h-full rounded-full"
+                 style="background:var(--danger);width:100%;transition:none"></div>
+          </div>
+        </div>
+      </div>
+      <div class="px-6 pb-5 flex justify-end gap-3">
+        <button class="btn btn-secondary" @click="cancelUnpublish()">Cancel</button>
+        <button class="btn relative overflow-hidden"
+                style="color:var(--danger);background:rgba(239,68,68,.2);border:1px solid rgba(239,68,68,.4)"
+                :disabled="unpublishCountdown > 0"
+                @click="executeUnpublish()">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" x-show="unpublishCountdown > 0"><use href="#clock"/></svg>
+          <span x-text="unpublishCountdown > 0 ? `Remove All (${unpublishCountdown}s)` : 'Remove All'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Payload Inspector Modal -->
+  <div x-show="inspectPayload" x-cloak class="modal-backdrop" x-transition.opacity @click.self="inspectPayload = null">
+    <div class="modal-panel max-w-2xl border border-[var(--border)] shadow-xl">
+      <div class="modal-header flex items-center justify-between bg-[var(--surface-1)] border-b border-[var(--border)]">
+        <h3 class="font-bold flex items-center gap-2"><svg class="icon text-[var(--accent)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#file-json"/></svg> HA Discovery Payload</h3>
+        <button class="icon-btn text-xs" @click="inspectPayload = null"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg></button>
+      </div>
+      <div class="p-6">
+        <p class="text-sm text-[var(--text-secondary)] mb-4">This is the exact JSON structure for the <strong class="text-[var(--text-primary)]" x-text="inspectPayload?.name"></strong> entity.</p>
+        <div class="bg-[#0f172a] p-4 rounded-lg border border-[#1e293b] overflow-x-auto shadow-inner">
+          <pre class="font-mono text-xs text-[#10b981]" x-text="JSON.stringify(inspectPayload?.config, null, 2)"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── System Controls panel ─────────────────────────────────────────── -->
+  <div x-show="activeView === 'system'" x-cloak>
+    <div class="space-y-6">
+
+      <!-- ── Poll Interval ──────────────────────────────────────────────── -->
+      <div class="bg-gray-900/60 border border-gray-700/50 rounded-xl overflow-hidden">
+        <div class="bg-gray-900/70 px-4 py-3 border-b border-gray-700/50">
+          <h3 class="text-sm font-black text-gray-100 uppercase tracking-wider flex items-center gap-2">
+            <i class="fas fa-tachometer-alt text-blue-400"></i> Poll Interval
+          </h3>
+          <p class="text-xs text-gray-400 mt-0.5">How often FHAI polls FranklinWH Cloud API and publishes MQTT entity updates</p>
+        </div>
+        <div class="p-4 space-y-4">
+          <div class="flex items-center gap-3">
+            <label class="text-sm font-semibold text-gray-300 w-28 flex-shrink-0">Interval (sec)</label>
+            <input type="number" x-model.number="pollInterval" min="10" max="300" step="5"
+                   id="input-poll-interval"
+                   class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-100 font-mono w-24 focus:border-blue-500 focus:outline-none" />
+            <span class="text-xs text-gray-500">Range: 10–300s</span>
+            <button @click="applyPollInterval()" :disabled="pollSaving"
+                    id="btn-apply-poll-interval"
+                    class="ml-auto bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-xs transition-colors flex items-center gap-2">
+              <i class="fas" :class="pollSaving ? 'fa-sync-alt fa-spin' : 'fa-check'"></i>
+              <span x-text="pollSaving ? 'Applying…' : 'Apply'"></span>
+            </button>
+          </div>
+          <div class="text-xs text-gray-500 flex flex-wrap gap-4">
+            <span>
+              <span class="text-gray-400 font-semibold">Estimated calls/hr:</span>
+              <span class="text-blue-300 font-mono" x-text="Math.round(3600 / pollInterval * 2)"></span>
+              <span class="text-gray-600">(base, ~2 calls/cycle with caching)</span>
+            </span>
+            <span x-show="pollInterval < 30" class="text-amber-400">
+              ⚠ &lt;30s intervals may increase API footprint significantly
+            </span>
+          </div>
+          <div x-show="pollMsg" class="text-xs font-semibold px-3 py-2 rounded-lg"
+               :class="pollMsg?.ok ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30'"
+               x-text="pollMsg?.text"></div>
+        </div>
+      </div>
+
+      <!-- ── API Rate Limiter Guard ───────────────────────────────────────── -->
+      <div class="bg-gray-900/60 border border-gray-700/50 rounded-xl overflow-hidden">
+        <div class="bg-gray-900/70 px-4 py-3 border-b border-gray-700/50 flex items-center justify-between">
+          <div>
+            <h3 class="text-sm font-black text-gray-100 uppercase tracking-wider flex items-center gap-2">
+              <i class="fas fa-shield-alt text-purple-400"></i> API Rate Limiter Guard
+            </h3>
+            <p class="text-xs text-gray-400 mt-0.5">FHAI self-imposed guard to catch rogue/misconfigured polling — NOT a FranklinWH cloud server limit</p>
+          </div>
+          <!-- Status badge -->
+          <div class="flex-shrink-0">
+            <span x-show="!rl.is_throttled"
+                  class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block"></span>
+              OK
+            </span>
+            <span x-show="rl.is_throttled"
+                  class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-red-500/15 text-red-400 border border-red-500/30 animate-pulse">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-400 inline-block"></span>
+              THROTTLED
+            </span>
+          </div>
+        </div>
+        <div class="p-4 space-y-5">
+
+          <!-- Usage rows — explicit bindings (x-for on derived objects silently drops user edits) -->
+          <div class="space-y-3">
+
+            <!-- Per-minute -->
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="text-gray-400 font-semibold">This minute</span>
+                <div class="flex items-center gap-3">
+                  <span class="font-mono" :class="rl.calls_last_minute / (rl.limit_per_minute||1) > 0.85 ? 'text-red-400' : rl.calls_last_minute / (rl.limit_per_minute||1) > 0.60 ? 'text-amber-400' : 'text-emerald-400'"
+                        x-text="rl.calls_last_minute + ' / ' + (rl.limit_per_minute||'∞') + ' (' + (rl.limit_per_minute > 0 ? Math.round(rl.calls_last_minute/rl.limit_per_minute*100) : 0) + '%)'"></span>
+                  <input type="number" x-model.number="rlInputPerMin" min="0"
+                         class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 font-mono w-20 focus:border-purple-500 focus:outline-none"
+                         title="Per-minute limit (0 = unlimited)" />
+                </div>
+              </div>
+              <div class="w-full bg-gray-700/50 rounded-full h-1.5 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500"
+                     :class="rl.limit_per_minute > 0 && rl.calls_last_minute/rl.limit_per_minute > 0.85 ? 'bg-red-500' : rl.limit_per_minute > 0 && rl.calls_last_minute/rl.limit_per_minute > 0.60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                     :style="'width:' + (rl.limit_per_minute > 0 ? Math.min(Math.round(rl.calls_last_minute/rl.limit_per_minute*100),100) : 0) + '%'"></div>
+              </div>
+            </div>
+
+            <!-- Per-hour -->
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="text-gray-400 font-semibold">This hour</span>
+                <div class="flex items-center gap-3">
+                  <span class="font-mono" :class="rl.calls_last_hour / (rl.limit_per_hour||1) > 0.85 ? 'text-red-400' : rl.calls_last_hour / (rl.limit_per_hour||1) > 0.60 ? 'text-amber-400' : 'text-emerald-400'"
+                        x-text="rl.calls_last_hour + ' / ' + (rl.limit_per_hour||'∞') + ' (' + (rl.limit_per_hour > 0 ? Math.round(rl.calls_last_hour/rl.limit_per_hour*100) : 0) + '%)'"></span>
+                  <input type="number" x-model.number="rlInputPerHour" min="0"
+                         class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 font-mono w-20 focus:border-purple-500 focus:outline-none"
+                         title="Per-hour limit (0 = unlimited)" />
+                </div>
+              </div>
+              <div class="w-full bg-gray-700/50 rounded-full h-1.5 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500"
+                     :class="rl.limit_per_hour > 0 && rl.calls_last_hour/rl.limit_per_hour > 0.85 ? 'bg-red-500' : rl.limit_per_hour > 0 && rl.calls_last_hour/rl.limit_per_hour > 0.60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                     :style="'width:' + (rl.limit_per_hour > 0 ? Math.min(Math.round(rl.calls_last_hour/rl.limit_per_hour*100),100) : 0) + '%'"></div>
+              </div>
+            </div>
+
+            <!-- Daily -->
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="text-gray-400 font-semibold">Today</span>
+                <div class="flex items-center gap-3">
+                  <span class="font-mono" :class="rl.calls_today / (rl.daily_budget||1) > 0.85 ? 'text-red-400' : rl.calls_today / (rl.daily_budget||1) > 0.60 ? 'text-amber-400' : 'text-emerald-400'"
+                        x-text="rl.calls_today + ' / ' + (rl.daily_budget||'∞') + ' (' + (rl.daily_budget > 0 ? Math.round(rl.calls_today/rl.daily_budget*100) : 0) + '%)'"></span>
+                  <input type="number" x-model.number="rlInputDaily" min="0"
+                         class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 font-mono w-20 focus:border-purple-500 focus:outline-none"
+                         title="Daily budget (0 = unlimited)" />
+                </div>
+              </div>
+              <div class="w-full bg-gray-700/50 rounded-full h-1.5 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500"
+                     :class="rl.daily_budget > 0 && rl.calls_today/rl.daily_budget > 0.85 ? 'bg-red-500' : rl.daily_budget > 0 && rl.calls_today/rl.daily_budget > 0.60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                     :style="'width:' + (rl.daily_budget > 0 ? Math.min(Math.round(rl.calls_today/rl.daily_budget*100),100) : 0) + '%'"></div>
+              </div>
+            </div>
+
+          </div>
+
+
+          <!-- Info note -->
+          <div class="text-xs text-gray-500 bg-gray-800/50 rounded-lg px-3 py-2 border border-gray-700/50">
+            <span class="text-gray-400 font-semibold">ℹ Normal operation</span> with DEFAULT_CACHE + TTL extensions ≈ ~2 API calls per poll cycle.
+            At 30s intervals: ~240 calls/hr — well below the default 1500/hr guard.
+            Guard triggers only if code is making unexpected static endpoint calls without caching.
+          </div>
+
+          <!-- Actions -->
+          <div class="flex items-center gap-3">
+            <button @click="applyRateLimits()" :disabled="rlSaving"
+                    id="btn-apply-rate-limits"
+                    class="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg text-xs transition-colors flex items-center gap-2">
+              <i class="fas" :class="rlSaving ? 'fa-sync-alt fa-spin' : 'fa-save'"></i>
+              <span x-text="rlSaving ? 'Saving…' : 'Apply Limits'"></span>
+            </button>
+            <button @click="resetRateLimits()"
+                    id="btn-reset-rate-limits"
+                    class="bg-gray-700 hover:bg-gray-600 text-gray-300 font-bold py-2 px-4 rounded-lg text-xs transition-colors">
+              Reset to Defaults
+            </button>
+            <button @click="loadRateLimits()" class="bg-gray-800 hover:bg-gray-700 text-gray-400 py-2 px-3 rounded-lg text-xs transition-colors ml-auto">
+              <i class="fas fa-sync-alt text-xs"></i>
+            </button>
+          </div>
+          <div x-show="rlMsg" class="text-xs font-semibold px-3 py-2 rounded-lg"
+               :class="rlMsg?.ok ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30'"
+               x-text="rlMsg?.text"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>

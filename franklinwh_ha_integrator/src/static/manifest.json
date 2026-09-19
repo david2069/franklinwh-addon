@@ -1,0 +1,9 @@
+{
+  "name": "FranklinWH HA Integrator",
+  "short_name": "FranklinWH",
+  "description": "FranklinWH aGate battery management for Home Assistant",
+  "start_url": "/admin",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#6366f1"
+}

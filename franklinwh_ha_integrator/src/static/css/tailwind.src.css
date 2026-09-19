@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  /* The gray scale does double duty. The config maps gray-700/800/900 to
+     --surface-* because bg-gray-800 (522 uses) and bg-gray-900 (290) need a
+     surface colour. As *text* those same names then resolve to a pale fill on
+     a pale card: in light mode `text-gray-700` was #e2e8f0 on white, which is
+     how "Current SOC: 66.842%" came out near-invisible on a phone.
+     Dark mode hid it — --surface-2 is a mid grey there, readable enough that
+     nobody noticed.
+
+     The text utilities route to text variables; the bg utilities keep the
+     surfaces. 60 call sites are corrected without touching a template. */
+  .text-gray-700 { color: var(--text-muted); }
+  .text-gray-800 { color: var(--text-secondary); }
+  .text-gray-900 { color: var(--text-primary); }
+}
