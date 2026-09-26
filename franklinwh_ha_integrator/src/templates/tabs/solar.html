@@ -1,0 +1,2874 @@
+<div x-data="solarSetupPanel()" x-init="init()" class="space-y-5">
+
+  <!-- ══════════════════════════════════════════════════════════════
+       CARD 0 — Gateway Solar Sources (per-gateway topology)
+       ══════════════════════════════════════════════════════════════ -->
+  <div x-data="{
+    gwId: Alpine.store('app')?.currentGateway?.short_id || '',
+    gwList: [],              // all registered gateways for the selector
+    mockMode: false,         // UI toggle for mocking aPBox hardware
+    sources: [],
+    totalKwp: 0,
+    sourceTypeOptions: [],   // from capabilities: allowed_source_types
+    excludedTypes: [],       // from capabilities: excluded_source_types
+    caps: null,              // full capabilities response
+    loading: false,
+    adding: false,
+    saveError: '',
+    addError: '',            // Phase B: visible error banner on add form
+    topologyError: '',
+    topologyOk: '',
+    topology: { service_amps: '', grid_type: '', gateway_phase: '' },
+    // Phase A: NOT AVAILABLE modal
+    showUnavailableModal: false,
+    // Phase C: utility service link
+    utilityServices: [],
+    linkedUtilityServiceId: '',
+    linkingUtility: false,
+    utilityLinkError: '',
+    utilityLinkOk: '',
+    newSrc: {
+      source_type: '', kwp: '', label: '', source_name: '', port: 1, accessory_id: '',
+      // Ph-SM: inverter metadata
+      brand: '', inverter_type: 'string', phase_count: 1, ac_voltage: '', ac_hz: '',
+      max_amps: 63, solar_metering_mode: 'single_phase_internal',
+      off_grid_capable: 0, pv_data_api: 0,
+      pv_control: 0, pv_control_type: 'production_switch', pv_control_entity: '',
+      _showDetails: false,
+    },
+
+    async loadGateways() {
+      try {
+        const r = await fetch('api/gateways');
+        const d = await r.json();
+        // /api/gateways returns a list directly
+        this.gwList = Array.isArray(d) ? d : (d.gateways || []);
+        // Default to currentGateway if not yet set
+        if (!this.gwId && this.gwList.length) this.gwId = this.gwList[0].short_id;
+      } catch(e) { /* non-fatal */ }
+    },
+
+    async load() {
+      if (!this.gwId) return;
+      this.loading = true;
+      this.saveError = '';
+      try {
+        // Load sources and capabilities in parallel
+        const [srcRes, capRes] = await Promise.all([
+          fetch('api/solar/gateways/' + this.gwId + '/sources').then(r => r.json()),
+          fetch('api/solar/gateways/' + this.gwId + '/capabilities?mock_hardware=' + (this.mockMode ? 'apbox' : '')).then(r => r.json()),
+        ]);
+        this.sources = (srcRes.sources || []).map(s => ({ ...s, _collapsed: false }));
+        this.totalKwp = srcRes.total_kwp || 0;
+        if (capRes.ok) {
+          this.caps = capRes;
+          this.sourceTypeOptions = capRes.allowed_source_types || [];
+          this.excludedTypes = capRes.excluded_source_types || [];
+          // Default new source to first allowed type
+          if (this.sourceTypeOptions.length && !this.newSrc.source_type) {
+            this.newSrc.source_type = this.sourceTypeOptions[0].value;
+          }
+          // Auto-fill regional hz default from model
+          if (!this.newSrc.ac_hz && capRes.grid_topology?.ac_hz) {
+            this.newSrc.ac_hz = capRes.grid_topology.ac_hz;
+          }
+          // Auto-fill max_amps default from regional standard
+          if (capRes.amps_limit) this.newSrc.max_amps = capRes.amps_limit;
+        } else {
+          // Fallback: show all types if capabilities endpoint unavailable
+          this.sourceTypeOptions = [
+            { value: 'pv_port_1',  label: 'PV Input 1',              colour: '#fbbf24', available_ports: [1] },
+            { value: 'pv_port_2',  label: 'PV Input 2',              colour: '#f59e0b', available_ports: [2] },
+            { value: 'mppt_1',     label: 'MPPT / DC Input 1',       colour: '#34d399' },
+            { value: 'mppt_2',     label: 'MPPT / DC Input 2',       colour: '#10b981' },
+            { value: 'ahub_pv_1',  label: 'aHub PV Input 1',         colour: '#818cf8' },
+            { value: 'ahub_pv_2',  label: 'aHub PV Input 2',         colour: '#6366f1' },
+            { value: 'apbox_pv_1', label: 'aPBox Remote PV 1',       colour: '#60a5fa' },
+            { value: 'apbox_pv_2', label: 'aPBox Remote PV 2',       colour: '#3b82f6' },
+            { value: 'split_ct',   label: 'Split-CT Solar',           colour: '#c084fc' },
+          ];
+          this.newSrc.source_type = 'pv_port_1';
+        }
+      } catch(e) { this.saveError = 'Load failed: ' + e.message; }
+      this.loading = false;
+    },
+
+    // Phase B: computed — check duplicate before adding
+    get isDuplicateType() {
+      if (!this.newSrc.source_type) return false;
+      return this.sources.some(s => s.source_type === this.newSrc.source_type);
+    },
+
+    async addSource() {
+      if (!this.newSrc.kwp || this.newSrc.kwp <= 0) return;
+      this.adding = true; this.addError = ''; this.saveError = '';
+      // Phase B: duplicate guard
+      if (this.isDuplicateType) {
+        const label = this.sourceTypeOptions.find(o => o.value === this.newSrc.source_type)?.label || this.newSrc.source_type;
+        this.addError = label + ' is already configured. Edit the existing source or choose a different type.';
+        this.adding = false;
+        return;
+      }
+      try {
+        const body = {
+          source_type: this.newSrc.source_type,
+          kwp: parseFloat(this.newSrc.kwp),
+          label: this.newSrc.label || null,
+          source_name: this.newSrc.source_name || null,
+          // port is implicit in pv_port_1/pv_port_2 but send for legacy compat
+          port: this.newSrc.source_type === 'pv_port_1' ? 1
+              : this.newSrc.source_type === 'pv_port_2' ? 2
+              : this.newSrc.source_type === 'pv_port'   ? parseInt(this.newSrc.port)
+              : null,
+          accessory_id: (this.newSrc.source_type.includes('remote_pv') || this.newSrc.source_type.includes('ahub_pv') || this.newSrc.source_type.includes('apbox_pv'))
+                        ? (this.newSrc.accessory_id || null) : null,
+          // Ph-SM: inverter metadata
+          brand:                this.newSrc.brand || null,
+          inverter_type:        this.newSrc.inverter_type || null,
+          phase_count:          parseInt(this.newSrc.phase_count) || 1,
+          ac_voltage:           this.newSrc.ac_voltage ? parseInt(this.newSrc.ac_voltage) : null,
+          ac_hz:                this.newSrc.ac_hz ? parseInt(this.newSrc.ac_hz) : null,
+          // Ph-2: amperage safety
+          max_amps:             this.newSrc.max_amps ? parseInt(this.newSrc.max_amps) : 63,
+          // Ph-3: metering mode
+          solar_metering_mode:  this.newSrc.solar_metering_mode || 'single_phase_internal',
+          // Ph-6: capability flags
+          off_grid_capable:     this.newSrc.off_grid_capable ? 1 : 0,
+          pv_data_api:          this.newSrc.pv_data_api ? 1 : 0,
+          pv_control:           this.newSrc.pv_control ? 1 : 0,
+          pv_control_type:      this.newSrc.pv_control ? (this.newSrc.pv_control_type || null) : null,
+          pv_control_entity:    this.newSrc.pv_control && this.newSrc.pv_control_type === 'ha_entity' ? (this.newSrc.pv_control_entity || null) : null,
+        };
+        const r = await fetch('api/solar/gateways/' + this.gwId + '/sources', {
+          method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.newSrc = {
+            source_type: this.sourceTypeOptions[0]?.value || '', kwp: '', label: '', source_name: '', port: 1, accessory_id: '',
+            brand: '', inverter_type: 'string', phase_count: 1, ac_voltage: '', ac_hz: '',
+            max_amps: 63, solar_metering_mode: 'single_phase_internal',
+            off_grid_capable: 0, pv_data_api: 0,
+            pv_control: 0, pv_control_type: 'production_switch', pv_control_entity: '',
+            _showDetails: false,
+          };
+          await this.load();
+        } else { this.addError = d.error || 'Add failed'; }
+      } catch(e) { this.addError = e.message; }
+      this.adding = false;
+    },
+
+    async toggleEnabled(src) {
+      const r = await fetch('api/solar/gateways/' + this.gwId + '/sources/' + src.id, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ enabled: src.enabled ? 0 : 1 })
+      });
+      const d = await r.json();
+      if (d.ok) { src.enabled = src.enabled ? 0 : 1; this.totalKwp = d.total_kwp; }
+    },
+
+    async updateKwp(src) {
+      if (!src._editKwp || isNaN(parseFloat(src._editKwp))) return;
+      const r = await fetch('api/solar/gateways/' + this.gwId + '/sources/' + src.id, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ kwp: parseFloat(src._editKwp) })
+      });
+      const d = await r.json();
+      if (d.ok) { src.kwp = parseFloat(src._editKwp); src._editingKwp = false; this.totalKwp = d.total_kwp; }
+    },
+
+    async deleteSource(src) {
+      if (!confirm('Remove this solar source?')) return;
+      const r = await fetch('api/solar/gateways/' + this.gwId + '/sources/' + src.id, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.ok) { await this.load(); }
+      else { this.saveError = d.error || 'Delete failed'; }
+    },
+
+    capForType(type) {
+      return (this.sourceTypeOptions || []).find(o => o.value === type) || {};
+    },
+    srcIcon(type)   {
+      const m = {
+        pv_port: 'fa-solar-panel', pv_port_1: 'fa-solar-panel', pv_port_2: 'fa-solar-panel',
+        dc_coupled: 'fa-bolt', mppt_1: 'fa-bolt', mppt_2: 'fa-bolt',
+        remote_pv: 'fa-tower-broadcast', remote_pv_1: 'fa-tower-broadcast', remote_pv_2: 'fa-tower-broadcast',
+        ahub_pv_1: 'fa-tower-broadcast', ahub_pv_2: 'fa-tower-broadcast',
+        apbox_pv_1: 'fa-tower-broadcast', apbox_pv_2: 'fa-tower-broadcast',
+        split_ct: 'fa-scissors', three_phase: 'fa-rotate',
+      };
+      return m[type] || 'fa-solar-panel';
+    },
+    srcColour(type) { const cap = this.capForType(type); return cap.colour || '#94a3b8'; },
+    availablePorts(type) { const cap = this.capForType(type); return cap.available_ports || []; },
+    isRemoteType(type) { return type.includes('remote_pv') || type.includes('ahub_pv') || type.includes('apbox_pv'); },
+  }"
+  x-init="gwId = Alpine.store('app')?.currentGateway?.short_id || ''; loadGateways().then(() => load())"
+  x-effect="if (sourceTypeOptions.length && !newSrc.source_type) { newSrc.source_type = sourceTypeOptions[0].value; }"
+     class="rounded-xl border border-gray-700 bg-[var(--surface-0)] overflow-hidden"
+     style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px rgba(0,0,0,0.35);">
+
+    <!-- Card header -->
+    <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2 min-w-0">
+        <i class="fas fa-diagram-project text-amber-400 text-xs flex-shrink-0"></i>
+        <p class="text-xs font-bold text-gray-200 flex-shrink-0">Gateway Solar Sources</p>
+        <!-- Model badge when loaded -->
+        <span class="text-[9px] text-gray-500 truncate" x-show="caps?.model_name" x-text="caps?.model_name"></span>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <!-- Gateway selector — lets installer switch which gateway they're configuring -->
+        <select x-model="gwId" @change="load()"
+                class="text-[9px] rounded-lg px-2 py-1 bg-gray-900 border border-gray-600 text-gray-200 focus:outline-none focus:border-amber-500"
+                title="Select gateway to configure solar sources">
+          <template x-for="gw in gwList" :key="gw.short_id">
+            <option :value="gw.short_id" x-text="gw.name + ' (' + gw.short_id + ')'"></option>
+          </template>
+          <template x-if="!gwList.length">
+            <option value="" x-text="gwId || 'Loading…'"></option>
+          </template>
+        </select>
+        
+        <!-- Mock Hardware Checkbox -->
+        <label class="flex items-center gap-1.5 cursor-pointer text-gray-400 hover:text-amber-400 ml-2 border-l border-gray-700 pl-3">
+          <input type="checkbox" x-model="mockMode" @change="load()" class="rounded text-[var(--primary-light)] bg-[var(--surface-1)] border-[var(--border)] focus:ring-[var(--primary-light)] focus:ring-offset-0">
+          <span class="text-[9px] font-bold uppercase tracking-wider">Mock aPBox</span>
+        </label>
+
+        <!-- Total kWp badge -->
+        <span class="px-2 py-0.5 rounded-full text-[9px] font-bold border border-amber-500/30 text-amber-400"
+              style="background:rgba(251,191,36,0.08)"
+              x-text="totalKwp > 0 ? totalKwp.toFixed(1) + ' kWp total' : 'No sources'"></span>
+      </div>
+    </div>
+
+
+    <div class="p-4 space-y-3">
+
+      <!-- Loading -->
+      <div x-show="loading" class="text-[10px] text-gray-500 text-center py-4">
+        <i class="fa-solid fa-spinner fa-spin mr-1"></i> Loading sources…
+      </div>
+
+      <!-- Empty state -->
+      <div x-show="!loading && sources.length === 0"
+           class="text-center py-4 rounded-xl border border-dashed border-gray-700">
+        <i class="fa-solid fa-solar-panel text-gray-700 text-2xl mb-2 block"></i>
+        <p class="text-[10px] text-gray-500">No solar sources configured for this gateway.</p>
+        <p class="text-[9px] text-gray-600 mt-0.5">Add a source below to enable Y-axis auto-scaling on charts.</p>
+      </div>
+      <!-- ── Solar Topology Diagram (Phase 5) ─────────────────────────────
+           CSS flexbox flow: PV nodes → Gateway node → Grid/Battery nodes.
+           Renders live from Alpine state. Shown only when sources exist.
+      ─────────────────────────────────────────────────────────────────── -->
+      <div x-show="!loading && sources.length > 0" class="rounded-xl overflow-hidden bg-gray-100/50 dark:bg-black/25 border border-black/5 dark:border-white/5"
+           >
+
+        <!-- Diagram label -->
+        <div class="px-3 pt-2.5 pb-0 flex items-center gap-1.5">
+          <i class="fas fa-diagram-project text-[9px] text-gray-600"></i>
+          <span class="text-[8px] font-bold uppercase tracking-widest text-gray-600">Connection Diagram</span>
+          <span class="text-[8px] text-gray-700 ml-auto" x-text="caps?.model_name || ''"></span>
+        </div>
+
+        <!-- Main diagram row -->
+        <div class="flex items-stretch gap-0 p-3 overflow-x-auto" style="min-height:90px">
+
+          <!-- LEFT: Solar PV input nodes (stacked vertically) -->
+          <div class="flex flex-col justify-center gap-1.5 flex-shrink-0" style="min-width:120px;max-width:160px">
+            <template x-for="src in sources" :key="src.id">
+              <div class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 relative bg-white/50 dark:bg-white/5"
+                   :style="'border:1px solid ' + (src.enabled ? srcColour(src.source_type) + '33' : 'var(--tw-prose-counters, rgba(75,85,99,0.4))')">
+                <!-- Icon -->
+                <i class="fas text-[10px] flex-shrink-0"
+                   :class="srcIcon(src.source_type)"
+                   :style="'color:' + (src.enabled ? srcColour(src.source_type) : '#4b5563')"></i>
+                <!-- Labels -->
+                <div class="min-w-0 flex-1">
+                  <div class="text-[9px] font-bold truncate leading-tight"
+                       :style="'color:' + (src.enabled ? srcColour(src.source_type) : '#6b7280')"
+                       x-text="src.source_type_label || src.source_type"></div>
+                  <div class="text-[8px] text-gray-600 font-mono leading-tight" x-text="src.kwp + ' kWp'"></div>
+                  <div class="text-[7px] text-gray-700 truncate leading-tight" x-text="src.brand || src.source_name || ''"></div>
+                </div>
+                <!-- Disabled overlay dot -->
+                <span x-show="!src.enabled"
+                      class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-gray-700"
+                      title="Disabled"></span>
+              </div>
+            </template>
+          </div>
+
+          <!-- Arrow: PV → Gateway -->
+          <div class="flex flex-col items-center justify-center flex-shrink-0 px-1" style="min-width:32px">
+            <div class="flex flex-col gap-0.5 items-center">
+              <template x-for="src in sources" :key="src.id">
+                <div class="h-px w-6 transition-colors"
+                     :style="'background:' + (src.enabled ? srcColour(src.source_type) : '#374151')"></div>
+              </template>
+            </div>
+            <!-- Merge arrow tip -->
+            <div class="w-2 h-2 border-r-2 border-t-2 rotate-45 -mr-1 mt-0.5"
+                 style="border-color:rgba(251,191,36,0.4)"></div>
+          </div>
+
+          <!-- CENTRE: Gateway node -->
+          <div class="flex flex-col items-center justify-center rounded-xl px-3 py-2 flex-shrink-0 bg-indigo-50/50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/30"
+               style="min-width:110px;">
+            <i class="fas fa-server text-indigo-400 text-base mb-1"></i>
+            <div class="text-[9px] font-black text-gray-800 dark:text-gray-200 text-center" x-text="gwList.find(g => g.short_id === gwId)?.name || gwId"></div>
+            <div class="text-[7px] text-gray-600 font-mono mt-0.5" x-text="gwId"></div>
+            <div class="text-[7px] text-indigo-400/70 mt-1 text-center leading-tight"
+                 x-text="caps?.model_name || 'aGate'"></div>
+            <!-- Phase / amps chip -->
+            <div class="flex gap-1 mt-1.5 flex-wrap justify-center">
+              <template x-if="topology.grid_type">
+                <span class="text-[7px] px-1 py-0.5 rounded font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20"
+                      x-text="topology.grid_type === 'single_phase' ? '1φ' : topology.grid_type === 'three_phase_230' || topology.grid_type === 'three_phase_415' ? '3φ' : '2φ'"></span>
+              </template>
+              <template x-if="topology.service_amps">
+                <span class="text-[7px] px-1 py-0.5 rounded font-mono font-bold bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-500 border border-gray-300 dark:border-gray-700"
+                      x-text="topology.service_amps + 'A'"></span>
+              </template>
+            </div>
+          </div>
+
+          <!-- Arrows: Gateway → Grid + Battery -->
+          <div class="flex flex-col justify-center flex-shrink-0 px-1" style="min-width:28px">
+            <div class="w-5 h-px" style="background:rgba(96,165,250,0.4)"></div>
+            <div class="w-5 h-px mt-3" style="background:rgba(52,211,153,0.4)"></div>
+          </div>
+
+          <!-- RIGHT: Grid + Battery nodes -->
+          <div class="flex flex-col justify-center gap-2 flex-shrink-0" style="min-width:90px">
+
+            <!-- Grid -->
+            <div class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 bg-blue-50/50 dark:bg-blue-500/5 border border-blue-200 dark:border-blue-400/20"
+                 >
+              <i class="fas fa-tower-broadcast text-blue-400 text-[10px]"></i>
+              <div>
+                <div class="text-[9px] font-bold text-blue-600 dark:text-blue-300">Grid</div>
+                <div class="text-[7px] text-gray-600 font-mono leading-tight"
+                     x-text="topology.grid_type ? ({single_phase:'230V 1φ', split_phase_240:'240V 2φ', split_phase_208:'208V 2φ', three_phase_230:'230V 3φ', three_phase_415:'415V 3φ'}[topology.grid_type] || topology.grid_type) : 'Utility'"></div>
+              </div>
+            </div>
+
+            <!-- Battery -->
+            <div class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 bg-emerald-50/50 dark:bg-emerald-500/5 border border-emerald-200 dark:border-emerald-400/20"
+                 >
+              <i class="fas fa-battery-three-quarters text-emerald-400 text-[10px]"></i>
+              <div>
+                <div class="text-[9px] font-bold text-emerald-600 dark:text-emerald-300">Battery</div>
+                <div class="text-[7px] text-gray-600 leading-tight"
+                     x-text="caps?.model_name ? caps.model_name.split(' ')[0] + ' Storage' : 'Storage'"></div>
+              </div>
+            </div>
+
+          </div>
+
+        </div><!-- end diagram row -->
+
+        <!-- Total kWp summary bar -->
+        <div class="px-3 pb-2.5 flex items-center gap-3 border-t border-black/5 dark:border-white/5 pt-2">
+          <span class="text-[8px] text-gray-600">Total solar</span>
+          <div class="flex-1 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-800" style="height:4px">
+            <div class="h-full rounded-full transition-all duration-700"
+                 style="background:linear-gradient(90deg,#fbbf24,#f59e0b)"
+                 :style="'width:' + Math.min(100, (totalKwp / 30) * 100) + '%'"></div>
+          </div>
+          <span class="text-[9px] font-mono font-bold text-amber-600 dark:text-amber-400" x-text="totalKwp.toFixed(1) + ' kWp'"></span>
+        </div>
+
+      </div><!-- end topology diagram -->
+
+      <!-- Source cards -->
+      <template x-for="src in sources" :key="src.id">
+        <div class="flex items-start gap-3 rounded-xl px-3 py-2.5 transition-all"
+             :style="'background:rgba(255,255,255,0.02);border:1px solid ' + (src.enabled ? 'rgba(251,191,36,0.15)' : 'rgba(148,163,184,0.10)')">
+          <!-- Chevron for Expand/Collapse -->
+          <button type="button" @click="src._collapsed = !src._collapsed" class="text-gray-500 hover:text-gray-300 transition mt-1 mr-0.5">
+            <i class="fa-solid" :class="src._collapsed ? 'fa-chevron-right' : 'fa-chevron-down'" style="font-size: 8px;"></i>
+          </button>
+
+          <!-- Icon -->
+          <i class="fas text-sm mt-0.5 flex-shrink-0"
+             :class="srcIcon(src.source_type)"
+             :style="'color:' + (src.enabled ? srcColour(src.source_type) : '#4b5563')"></i>
+
+          <div class="flex-1 min-w-0 space-y-0.5">
+            <div class="cursor-pointer select-none" @click="src._collapsed = !src._collapsed">
+              <!-- source_name (user-friendly display name) -->
+              <template x-if="src.source_name">
+                <p class="text-[10px] font-semibold text-gray-300" x-text="src.source_name"></p>
+              </template>
+              <!-- Type label -->
+              <p class="text-[10px] font-bold"
+                 :style="'color:' + (src.enabled ? srcColour(src.source_type) : '#6b7280')"
+                 x-text="src.source_type_label || src.source_type"></p>
+            </div>
+
+            <!-- kWp inline edit (Always visible) -->
+            <div class="flex items-center gap-1.5 mt-1">
+              <template x-if="!src._editingKwp">
+                <span class="text-[10px] font-mono font-bold text-gray-300"
+                      x-text="src.kwp + ' kWp'"
+                      @dblclick="src._editKwp = src.kwp; src._editingKwp = true"
+                      title="Double-click to edit"></span>
+              </template>
+              <template x-if="src._editingKwp">
+                <div class="flex items-center gap-1">
+                  <input type="number" step="0.1" min="0" x-model="src._editKwp"
+                         class="w-20 text-[9px] font-mono rounded px-1.5 py-0.5 bg-gray-900 border border-amber-500/50 text-gray-100 focus:outline-none"
+                         @keydown.enter="updateKwp(src)" @keydown.escape="src._editingKwp = false">
+                  <button @click="updateKwp(src)" class="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">Save</button>
+                  <button @click="src._editingKwp = false" class="text-[8px] px-1.5 py-0.5 rounded text-gray-500">✕</button>
+                </div>
+              </template>
+            </div>
+
+            <!-- Collapsible secondary details -->
+            <div x-show="!src._collapsed" x-collapse class="space-y-1.5 mt-1.5">
+              <!-- Label / port / accessory -->
+              <p class="text-[9px] text-gray-500"
+                 x-text="[src.label, src.port ? 'PV Port ' + src.port : null, src.accessory_id ? 'Accessory: ' + src.accessory_id : null].filter(Boolean).join(' · ') || 'No label'"></p>
+
+              <div class="flex flex-wrap gap-1.5 items-center">
+                <span x-show="src.detected_by === 'discover'"
+                      class="text-[7px] px-1.5 py-0.5 rounded-full font-bold"
+                      style="background:rgba(96,165,250,0.12);color:#60a5fa;border:1px solid rgba(96,165,250,0.25)">
+                  Discover
+                </span>
+                <!-- Split-CT: informational note -->
+                <span x-show="src.source_type === 'split_ct'"
+                      class="text-[7px] px-1.5 py-0.5 rounded-full font-bold"
+                      style="background:rgba(192,132,252,0.10);color:#c084fc;border:1px solid rgba(192,132,252,0.25)"
+                      title="Not included in SD forecast — billing reference only">
+                  Billing ref
+                </span>
+                <!-- Utility service link badge -->
+                <template x-if="src.utility_service_id || src.linked_service_name">
+                  <span class="text-[7px] px-1.5 py-0.5 rounded-full font-bold inline-block"
+                        style="background:rgba(99,102,241,0.12);color:#818cf8;border:1px solid rgba(99,102,241,0.25)"
+                        x-text="'⚡ ' + (src.linked_service_name || 'Linked to service')"
+                        title="This solar source feeds into this electricity service"></span>
+                </template>
+              </div>
+
+              <!-- Inverter metadata badges on source card -->
+              <div class="flex flex-wrap gap-1 mt-1">
+                <template x-if="src.brand">
+                  <span class="text-[7px] px-1.5 py-0.5 rounded font-semibold bg-gray-800 text-gray-400 border border-gray-700" x-text="src.brand"></span>
+                </template>
+                <template x-if="src.inverter_type">
+                  <span class="text-[7px] px-1.5 py-0.5 rounded font-semibold bg-gray-800 text-gray-400 border border-gray-700"
+                        x-text="{string:'String',micro:'Microinverter',optimiser:'Optimiser'}[src.inverter_type] || src.inverter_type"></span>
+                </template>
+                <template x-if="src.phase_count > 1">
+                  <span class="text-[7px] px-1.5 py-0.5 rounded font-semibold" style="background:rgba(99,102,241,0.1);color:#818cf8;border:1px solid rgba(99,102,241,0.2)">
+                    3φ
+                  </span>
+                </template>
+                <template x-if="src.ac_voltage">
+                  <span class="text-[7px] px-1.5 py-0.5 rounded font-mono font-semibold bg-gray-800 text-gray-500 border border-gray-700" x-text="src.ac_voltage + 'V'"></span>
+                </template>
+                <template x-if="src.ac_hz">
+                  <span class="text-[7px] px-1.5 py-0.5 rounded font-mono font-semibold bg-gray-800 text-gray-500 border border-gray-700" x-text="src.ac_hz + 'Hz'"></span>
+                </template>
+                <template x-if="src.pv_control">
+                  <span class="text-[7px] px-1.5 py-0.5 rounded font-bold"
+                        style="background:rgba(16,185,129,0.1);color:#34d399;border:1px solid rgba(16,185,129,0.2)"
+                        x-text="{production_switch:'ON/OFF Ctrl',curtailment:'Curtailment',ha_entity:'HA Control'}[src.pv_control_type] || 'PV Control'"></span>
+                </template>
+              </div>
+              <p x-show="src.source_type === 'split_ct'"
+                 class="text-[8px] leading-relaxed mt-1"
+                 :style="src.enabled ? 'color:#fbbf24' : 'color:#a78bfa'"
+                 x-text="src.enabled
+                   ? 'Included in forecast Y-axis scaling. External solar — not directly wired to this gateway.'
+                   : 'Billing reference only — not included in SD forecast or Y-axis scaling. Toggle on to include in chart scaling.'">
+              </p>
+            </div>
+          </div>
+
+          <!-- Enable toggle — for split_ct this means "Include in forecast Y-axis" -->
+          <div class="flex flex-col items-center gap-0.5 flex-shrink-0 mt-1">
+            <button type="button" @click="toggleEnabled(src)"
+                    class="relative w-8 h-4 rounded-full transition-colors"
+                    :class="src.enabled ? 'bg-amber-500' : 'bg-gray-700'">
+              <span class="absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform"
+                    :class="src.enabled ? 'translate-x-4 left-0.5' : 'left-0.5'"></span>
+            </button>
+            <!-- Contextual sub-label under toggle -->
+            <span class="text-[6px] font-bold leading-tight text-center"
+                  :class="src.source_type === 'split_ct'
+                    ? (src.enabled ? 'text-amber-400' : 'text-gray-600')
+                    : (src.enabled ? 'text-emerald-400' : 'text-gray-600')"
+                  x-text="src.source_type === 'split_ct'
+                    ? (src.enabled ? 'In forecast' : 'Excl. forecast')
+                    : (src.enabled ? 'Enabled' : 'Disabled')">
+            </span>
+          </div>
+
+          <!-- Delete (manual only) -->
+          <button x-show="src.detected_by === 'manual'"
+                  @click="deleteSource(src)"
+                  class="text-gray-600 hover:text-red-400 transition text-xs flex-shrink-0 mt-0.5"
+                  title="Remove source">
+            <i class="fa-solid fa-trash-can"></i>
+          </button>
+        </div>
+      </template>
+
+      <!-- Error display -->
+      <p x-show="saveError" class="text-[9px] text-red-400 font-bold" x-text="saveError"></p>
+
+      <!-- Phase A: NOT AVAILABLE → collapsible chip button -->
+      <template x-if="excludedTypes.length > 0">
+        <div>
+          <button @click="showUnavailableModal = true"
+                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[8px] font-bold transition"
+                  style="background:rgba(75,85,99,0.15);border:1px solid rgba(75,85,99,0.3);color:#6b7280">
+            <i class="fas fa-circle-info text-[8px]"></i>
+            <span x-text="excludedTypes.length + ' type' + (excludedTypes.length > 1 ? 's' : '') + ' not available on this gateway'"></span>
+            <i class="fas fa-chevron-right text-[7px] ml-0.5"></i>
+          </button>
+        </div>
+      </template>
+
+      <!-- Phase A: NOT AVAILABLE modal (teleported) -->
+      <template x-teleport="body">
+        <div x-show="showUnavailableModal" x-cloak
+             class="fixed inset-0 z-[2000] flex items-center justify-center"
+             style="background:rgba(15,23,42,0.7);backdrop-filter:blur(4px)"
+             @click.self="showUnavailableModal = false"
+             x-transition:enter="transition ease-out duration-150"
+             x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+          <div class="rounded-2xl w-full max-w-sm mx-4"
+               style="background:var(--surface-0);border:1px solid rgba(255,255,255,0.08);box-shadow:0 24px 60px rgba(0,0,0,0.6)"
+               @click.stop>
+            <!-- Header -->
+            <div class="flex items-center justify-between px-4 pt-4 pb-3 border-b border-gray-700">
+              <div class="flex items-center gap-2">
+                <i class="fas fa-circle-xmark text-gray-500 text-sm"></i>
+                <span class="text-[11px] font-black text-gray-300 uppercase tracking-wider">Not Available on This Gateway</span>
+              </div>
+              <button @click="showUnavailableModal = false" class="text-gray-600 hover:text-gray-300 transition text-lg leading-none">&times;</button>
+            </div>
+            <!-- Body -->
+            <div class="p-4 space-y-2">
+              <p class="text-[9px] text-gray-600 mb-3">These solar connection types are not supported by the installed hardware. Upgrade requirements are shown below.</p>
+              <template x-for="ex in excludedTypes" :key="ex.value">
+                <div class="flex items-start gap-2.5 rounded-lg px-3 py-2.5"
+                     style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.05)">
+                  <i class="fas text-gray-600 text-[11px] mt-0.5 flex-shrink-0"
+                     :class="{
+                       'fa-solar-panel': ex.value.startsWith('pv_port'),
+                       'fa-bolt': ex.value.startsWith('mppt') || ex.value==='dc_coupled',
+                       'fa-tower-broadcast': ex.value.startsWith('remote_pv') || ex.value.includes('ahub_pv') || ex.value.includes('apbox_pv'),
+                       'fa-scissors': ex.value==='split_ct'
+                     }"></i>
+                  <div class="min-w-0">
+                    <div class="text-[10px] font-bold text-gray-400" x-text="ex.label"></div>
+                    <div class="text-[9px] text-gray-600 mt-0.5" x-text="ex.reason"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="px-4 pb-4">
+              <button @click="showUnavailableModal = false"
+                      class="w-full py-2 rounded-lg text-[10px] font-bold text-gray-400 hover:text-gray-200 transition"
+                      style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06)">Close</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- Phase B: Add Solar form -->
+      <div class="rounded-xl p-3 border border-dashed border-gray-700 space-y-2">
+        <p class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">+ Add Solar</p>
+        <div class="grid grid-cols-2 gap-2">
+          <!-- Source type — filtered to allowed topologies for this gateway -->
+          <div>
+            <label class="block text-[9px] text-gray-500 mb-0.5">Connection Type</label>
+            <select x-model="newSrc.source_type"
+                    class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-200 focus:outline-none focus:border-amber-500">
+              <template x-for="opt in sourceTypeOptions" :key="opt.value">
+                <option :value="opt.value" x-text="opt.label"></option>
+              </template>
+            </select>
+          </div>
+          <!-- kWp -->
+          <div>
+            <label class="block text-[9px] text-gray-500 mb-0.5">Size (kWp)</label>
+            <input type="number" min="0" step="0.1" placeholder="e.g. 6.6"
+                   x-model="newSrc.kwp"
+                   class="w-full text-[10px] font-mono rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+          </div>
+          <!-- PV Port — dynamically populated from capabilities available_ports -->
+          <div x-show="newSrc.source_type === 'pv_port'">
+            <label class="block text-[9px] text-gray-500 mb-0.5">PV Port</label>
+            <select x-model.number="newSrc.port"
+                    class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-200 focus:outline-none focus:border-amber-500">
+              <template x-for="p in (availablePorts('pv_port').length ? availablePorts('pv_port') : [1,2])" :key="p">
+                <option :value="p" x-text="'Port ' + p"></option>
+              </template>
+            </select>
+          </div>
+          <!-- Split-CT advisory inline hint -->
+          <div x-show="newSrc.source_type === 'split_ct'" class="col-span-2">
+            <p class="text-[8px] leading-relaxed" style="color:#c084fc">
+              External CT meter — measures solar not wired directly to this gateway.
+              Billing reference by default; toggle on per-source to include in forecast Y-axis.
+            </p>
+          </div>
+          <!-- Accessory ID (only for remote_pv variants) -->
+          <div x-show="isRemoteType(newSrc.source_type)" class="col-span-2">
+            <label class="block text-[9px] text-gray-500 mb-0.5">
+              Accessory ID
+              <span class="font-normal text-gray-600"
+                    x-text="caps?.flags?.has_apbox && caps?.flags?.has_ahub ? '(aHub / aPBox)' : caps?.flags?.has_apbox ? '(aPBox)' : '(aHub)'">
+              </span>
+            </label>
+            <input type="text" placeholder="Device short_id"
+                   x-model="newSrc.accessory_id"
+                   class="w-full text-[10px] font-mono rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+          </div>
+          <!-- Source Name -->
+          <div class="col-span-2">
+            <label class="block text-[9px] text-gray-500 mb-0.5">Source Name <span class="text-gray-700">(unique display name — links to Utility Service)</span></label>
+            <input type="text" placeholder="e.g. Rooftop North 6.6kW"
+                   x-model="newSrc.source_name"
+                   class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+          </div>
+          <!-- Label -->
+          <div class="col-span-2">
+            <label class="block text-[9px] text-gray-500 mb-0.5">Label <span class="text-gray-700">(optional short tag)</span></label>
+            <input type="text" placeholder="e.g. Rooftop North, Garage East"
+                   x-model="newSrc.label"
+                   class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+          </div>
+        </div>
+
+        <!-- ── Inverter Details (collapsible) ──────────────────────────── -->
+        <div class="mt-2">
+          <button type="button" @click="newSrc._showDetails = !newSrc._showDetails"
+                  class="flex items-center gap-1.5 text-[9px] text-gray-500 hover:text-gray-300 transition font-bold">
+            <i class="fa-solid text-[8px] transition-transform" :class="newSrc._showDetails ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+            Inverter Details
+            <span class="text-gray-700 font-normal">(brand, type, AC specs, PV control)</span>
+          </button>
+          <div x-show="newSrc._showDetails" x-collapse class="mt-2 grid grid-cols-2 gap-2">
+
+            <!-- Brand -->
+            <div class="col-span-2">
+              <label class="block text-[9px] text-gray-500 mb-0.5">Brand / Vendor</label>
+              <input type="text" placeholder="e.g. Fronius, Enphase, SMA, Sungrow"
+                     x-model="newSrc.brand"
+                     class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+            </div>
+
+            <!-- Inverter Type -->
+            <div>
+              <label class="block text-[9px] text-gray-500 mb-0.5">Inverter Type</label>
+              <select x-model="newSrc.inverter_type"
+                      class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-200 focus:outline-none focus:border-amber-500">
+                <option value="string">String Inverter</option>
+                <option value="micro">Microinverter</option>
+                <option value="optimiser">Optimiser (DC)</option>
+              </select>
+            </div>
+
+            <!-- Phase Count -->
+            <div>
+              <label class="block text-[9px] text-gray-500 mb-0.5">Phase</label>
+              <div class="flex gap-2 mt-1">
+                <label class="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" x-model.number="newSrc.phase_count" :value="1" class="accent-amber-500">
+                  <span class="text-[10px] text-gray-300">Single</span>
+                </label>
+                <label class="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" x-model.number="newSrc.phase_count" :value="3" class="accent-amber-500">
+                  <span class="text-[10px] text-gray-300">Three (3φ)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- AC Voltage -->
+            <div>
+              <label class="block text-[9px] text-gray-500 mb-0.5">AC Voltage</label>
+              <select x-model.number="newSrc.ac_voltage"
+                      class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-200 focus:outline-none focus:border-amber-500">
+                <option value="">Select…</option>
+                <option value="110">110V (US/JP)</option>
+                <option value="208">208V (3φ US)</option>
+                <option value="230">230V (AU/EU)</option>
+                <option value="240">240V (AU/UK)</option>
+              </select>
+            </div>
+
+            <!-- AC Frequency -->
+            <div>
+              <label class="block text-[9px] text-gray-500 mb-0.5">Frequency</label>
+              <div class="flex gap-2 mt-1">
+                <label class="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" x-model.number="newSrc.ac_hz" :value="50" class="accent-amber-500">
+                  <span class="text-[10px] text-gray-300">50 Hz (AU/EU)</span>
+                </label>
+                <label class="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" x-model.number="newSrc.ac_hz" :value="60" class="accent-amber-500">
+                  <span class="text-[10px] text-gray-300">60 Hz (US)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Max Amps (solar breaker limit) -->
+            <div>
+              <label class="block text-[9px] text-gray-500 mb-0.5">Max Solar Amps <span class="text-gray-700">(breaker limit — AU: 63A / US: 40A NEC 690)</span></label>
+              <input type="number" min="1" max="100" step="1" placeholder="63"
+                     x-model.number="newSrc.max_amps"
+                     class="w-full text-[10px] font-mono rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+            </div>
+
+            <!-- Solar Metering Mode -->
+            <div>
+              <label class="block text-[9px] text-gray-500 mb-0.5">Metering Mode</label>
+              <select x-model="newSrc.solar_metering_mode"
+                      class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-200 focus:outline-none focus:border-amber-500">
+                <option value="single_phase_internal">Single Phase — Internal CT</option>
+                <option value="three_phase_ct_kit">Three Phase — CT Kit</option>
+                <option value="split_ct_external">Split-CT External Meter</option>
+                <option value="rs485_meter">RS-485 Meter</option>
+              </select>
+            </div>
+
+            <!-- Capability flags -->
+            <div class="col-span-2 flex gap-4">
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model.number="newSrc.off_grid_capable" class="accent-emerald-500">
+                <span class="text-[9px] text-gray-300">Off-Grid Capable</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model.number="newSrc.pv_data_api" class="accent-indigo-400">
+                <span class="text-[9px] text-gray-300">Has PV Data API</span>
+              </label>
+            </div>
+
+            <!-- PV Control -->
+            <div class="col-span-2 rounded-lg p-2.5 border border-gray-700 space-y-2" style="background:rgba(0,0,0,0.2)">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" x-model.number="newSrc.pv_control" class="accent-emerald-500">
+                <span class="text-[10px] font-semibold text-gray-300">Has Remote PV Control</span>
+                <span class="text-[8px] text-gray-600">(API or HA entity for production control)</span>
+              </label>
+              <template x-if="newSrc.pv_control">
+                <div class="space-y-2 pl-5">
+                  <div>
+                    <label class="block text-[9px] text-gray-500 mb-0.5">Control Type</label>
+                    <select x-model="newSrc.pv_control_type"
+                            class="w-full text-[10px] rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-200 focus:outline-none focus:border-emerald-500">
+                      <option value="production_switch">Production ON/OFF Switch</option>
+                      <option value="curtailment">Curtailment Control (%)</option>
+                      <option value="ha_entity">HA Entity</option>
+                    </select>
+                  </div>
+                  <template x-if="newSrc.pv_control_type === 'ha_entity'">
+                    <div>
+                      <label class="block text-[9px] text-gray-500 mb-0.5">HA Entity ID</label>
+                      <input type="text" placeholder="e.g. switch.solar_production"
+                             x-model="newSrc.pv_control_entity"
+                             class="w-full text-[10px] font-mono rounded-lg px-2 py-1.5 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-emerald-500">
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Phase B: error banner + disabled helper -->
+        <div x-show="addError" x-cloak
+             class="flex items-start gap-2 rounded-lg px-3 py-2"
+             style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25)">
+          <i class="fas fa-circle-exclamation text-red-400 text-[10px] mt-0.5 flex-shrink-0"></i>
+          <span class="text-[9px] text-red-300 leading-snug" x-text="addError"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="addSource()" :disabled="adding || !newSrc.kwp || !newSrc.source_type"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 transition disabled:opacity-40">
+            <i class="fa-solid" :class="adding ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+            <span x-text="adding ? 'Adding…' : 'Add Solar'"></span>
+          </button>
+          <span x-show="!newSrc.kwp && !adding" class="text-[8px] text-gray-600">Enter size (kWp) above to enable</span>
+          <span x-show="isDuplicateType && newSrc.kwp" x-cloak class="text-[8px] text-amber-600">⚠ Type already exists</span>
+        </div>
+      </div>
+
+      <!-- ── Phase C: Gateway Grid Topology ───────────────────────── -->
+
+
+    </div>
+  </div><!-- end Card 0 -->
+
+
+  <!-- ══════════════════════════════════════════════════════════════
+       CARD 1 — PV System (site metrics, shared by all providers)
+       ══════════════════════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-[var(--surface-0)] overflow-hidden"
+       style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px rgba(0,0,0,0.35);">
+
+    <!-- Card header -->
+    <div class="px-4 py-3 border-b border-gray-700 flex items-center gap-2">
+      <i class="fas fa-solar-panel text-amber-400 text-xs"></i>
+      <p class="text-xs font-bold text-gray-200">PV System</p>
+      <span class="text-[9px] text-gray-500">— site metrics shared by all forecast providers</span>
+    </div>
+
+    <div class="p-5 space-y-4">
+
+      <!-- Gateway solar detection banner -->
+      <div x-show="showNoSolarWarning"
+           class="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2.5">
+        <i class="fas fa-triangle-exclamation text-amber-400 text-xs mt-0.5 flex-shrink-0"></i>
+        <p class="text-[10px] text-amber-300 leading-relaxed">
+          <strong>No solar detected on this gateway.</strong>
+          Ensure panels are wired to the gateway, or configure Enphase direct below
+          if your inverter is independently panel-wired.
+          <span class="text-amber-500">This is advisory only — config is not blocked.</span>
+        </p>
+      </div>
+
+      <!-- Lat / Lng ─── Smart coordinate input with Maps-notation support -->
+      <div class="rounded-xl p-3" style="background:rgba(251,191,36,0.04);border:1px solid rgba(251,191,36,0.12)">
+
+        <!-- How-to callout (collapsible) & Cloud Sync -->
+        <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <div x-data="{ showCoordHelp: false }" class="flex-1 min-w-[200px]">
+            <button type="button" @click="showCoordHelp = !showCoordHelp"
+                    class="flex items-center gap-1.5 text-[9px] text-amber-400 font-bold hover:text-amber-300 transition">
+              <i class="fa-solid fa-circle-info text-[8px]"></i>
+              How to find coordinates from Maps
+              <i class="fa-solid text-[7px] transition-transform" :class="showCoordHelp ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+            </button>
+            <div x-show="showCoordHelp" x-collapse class="mt-2 space-y-1.5" x-cloak>
+              <div class="rounded-lg p-2.5" style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.06)">
+                <p class="text-[9px] text-amber-300 font-bold mb-1.5">⚠️ Maps apps show S/N/E/W — this field uses decimal degrees (±)</p>
+                <div class="grid grid-cols-2 gap-x-4 gap-y-1">
+                  <div>
+                    <p class="text-[8px] text-gray-500 font-bold uppercase tracking-wider mb-0.5">Latitude</p>
+                    <p class="text-[9px] text-gray-300"><span class="text-red-400 font-bold">S</span> → <span class="text-red-400">negative</span> &nbsp;·&nbsp; <span class="text-emerald-400 font-bold">N</span> → positive</p>
+                    <p class="text-[9px] text-gray-500 mt-0.5">Apple Maps: <span class="font-mono text-amber-300">33.78° S</span> → enter <span class="font-mono text-emerald-400">-33.78</span></p>
+                    <p class="text-[9px] text-gray-500">Google Maps: <span class="font-mono text-amber-300">-33.78, 151.18</span> → copy as-is</p>
+                  </div>
+                  <div>
+                    <p class="text-[8px] text-gray-500 font-bold uppercase tracking-wider mb-0.5">Longitude</p>
+                    <p class="text-[9px] text-gray-300"><span class="text-emerald-400 font-bold">E</span> → positive &nbsp;·&nbsp; <span class="text-red-400 font-bold">W</span> → <span class="text-red-400">negative</span></p>
+                    <p class="text-[9px] text-gray-500 mt-0.5">Apple Maps: <span class="font-mono text-amber-300">151.18° E</span> → enter <span class="font-mono text-emerald-400">151.18</span></p>
+                    <p class="text-[9px] text-gray-500">You can also paste <span class="font-mono text-amber-300">33.78S</span> or <span class="font-mono text-amber-300">33.78° S</span> — the field auto-converts.</p>
+                  </div>
+                </div>
+                <div class="mt-2 pt-2 border-t border-white/5">
+                  <p class="text-[9px] text-gray-400">
+                    <span class="font-bold text-amber-400">Apple Maps:</span> long-press your location → tap the address card → scroll down to Coordinates.<br>
+                    <span class="font-bold text-amber-400">Google Maps:</span> long-press your location → the decimal coords appear at the top of the info card.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <button type="button" @click="syncLocation()" :disabled="syncingLocation"
+                    class="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 text-[9px] font-bold transition disabled:opacity-50 flex items-center gap-1.5">
+              <template x-if="syncingLocation">
+                <i class="fa-solid fa-rotate-right animate-spin text-[8px]"></i>
+              </template>
+              <template x-if="!syncingLocation">
+                <i class="fa-solid fa-cloud-arrow-down text-[8px]"></i>
+              </template>
+              Sync Location from Cloud
+            </button>
+          </div>
+        </div>
+
+        <!-- Inputs -->
+        <div class="grid grid-cols-2 gap-3">
+          <!-- Latitude -->
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+              Latitude
+              <span class="text-gray-600 font-normal ml-1">S = negative · N = positive</span>
+            </label>
+            <input type="text" placeholder="e.g. -33.78 or 33.78° S"
+                   id="solar-lat"
+                   x-model="latRaw"
+                   @blur="parseLat()"
+                   @keydown.enter="parseLat()"
+                   :class="latWarn ? 'border-amber-500' : 'border-gray-600'"
+                   class="w-full text-sm font-bold rounded-lg px-3 py-2 bg-gray-900 border text-gray-100 focus:outline-none focus:border-amber-500 transition">
+            <p x-show="latWarn" class="text-[9px] text-amber-400 mt-0.5 font-bold" x-text="latWarn"></p>
+            <p x-show="!latWarn && latRaw !== '' && latRaw !== null" class="text-[9px] text-gray-600 mt-0.5">Decimal degrees · negative = South</p>
+          </div>
+
+          <!-- Longitude -->
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+              Longitude
+              <span class="text-gray-600 font-normal ml-1">E = positive · W = negative</span>
+            </label>
+            <input type="text" placeholder="e.g. 151.18 or 151.18° E"
+                   id="solar-lng"
+                   x-model="lngRaw"
+                   @blur="parseLng()"
+                   @keydown.enter="parseLng()"
+                   class="w-full text-sm font-bold rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500 transition">
+            <p class="text-[9px] text-gray-600 mt-0.5">Decimal degrees · positive = East (AU/NZ)</p>
+          </div>
+        </div>
+
+      </div>
+
+
+      <!-- Azimuth / Tilt / kWp -->
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="block text-[10px] font-semibold text-gray-400 mb-1">Azimuth°</label>
+          <input type="number" min="0" max="360" step="1" placeholder="180"
+                 id="solar-azimuth" x-model.number="cfg.azimuth"
+                 class="w-full text-sm font-bold rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+          <p class="text-[9px] text-gray-600 mt-0.5">0=N · 90=E · 180=S</p>
+        </div>
+        <div>
+          <label class="block text-[10px] font-semibold text-gray-400 mb-1">Tilt°</label>
+          <input type="number" min="0" max="90" step="0.5" placeholder="22"
+                 id="solar-tilt" x-model.number="cfg.tilt"
+                 class="w-full text-sm font-bold rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+        </div>
+        <div>
+          <label class="block text-[10px] font-semibold text-gray-400 mb-1">Size (kWp)</label>
+          <input type="number" min="0" step="0.1" placeholder="6.6"
+                 id="solar-kwp" x-model.number="cfg.kwp"
+                 class="w-full text-sm font-bold rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+        </div>
+      </div>
+
+      <!-- Home load assumption -->
+      <div>
+        <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+          Home Load Assumption (kW)
+          <span class="font-normal text-gray-600 ml-1">— used for SOC trajectory projection</span>
+        </label>
+        <input type="number" min="0" max="20" step="0.1" placeholder="0.5"
+               id="solar-home-load" x-model.number="cfg.home_load_assumption_kw"
+               class="w-40 text-sm font-bold rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+        <p class="text-[9px] text-gray-600 mt-0.5">net_charge = solar_kW − home_load_kW · Typical AU home: 0.3–1.0 kW avg</p>
+      </div>
+
+      <!-- Save button -->
+      <div class="flex items-center gap-3 pt-1">
+        <button @click="savePV()" :disabled="savingPV"
+                id="solar-save-pv"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs bg-amber-500 text-black hover:bg-amber-400 transition disabled:opacity-50">
+          <i class="fa-solid" :class="savingPV ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+          <span x-text="savingPV ? 'Saving…' : 'Save PV Config'"></span>
+        </button>
+        <span x-show="pvSaveResult" class="text-xs font-bold"
+              :class="pvSaveResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+              x-text="pvSaveResult?.msg"></span>
+      </div>
+
+    </div>
+  </div><!-- end Card 1 -->
+
+  <!-- ══════════════════════════════════════════════════════════════
+       CARD 2 — Forecast Provider (mutually exclusive, one active)
+       ══════════════════════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-[var(--surface-0)] overflow-hidden"
+       style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px rgba(0,0,0,0.35);">
+
+    <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-cloud-sun text-sky-400 text-xs"></i>
+        <p class="text-xs font-bold text-gray-200">Forecast Provider</p>
+        <span class="text-[9px] text-gray-500">— only one active at a time</span>
+      </div>
+      <span x-show="cfg.source && cfg.source !== 'none'"
+            class="text-[9px] font-bold px-2 py-0.5 rounded-full border border-sky-500/40 text-sky-400"
+            x-text="sourceLabel(cfg.source)"></span>
+    </div>
+
+    <div class="p-4 space-y-3">
+
+      <!-- ── Open-Meteo sub-card ── -->
+      <div class="rounded-xl border transition"
+           :class="cfg.source === 'openmeteo' ? 'border-sky-500/50 bg-sky-500/5' : 'border-gray-700 bg-gray-800/40'">
+        <div class="flex items-center justify-between px-4 py-3 cursor-pointer"
+             @click="expandProvider = expandProvider === 'openmeteo' ? '' : 'openmeteo'">
+          <div class="flex items-center gap-3">
+            <button type="button"
+                    @click.stop="setSource('openmeteo')"
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0"
+                    :class="cfg.source === 'openmeteo' ? 'bg-sky-500' : 'bg-gray-700'">
+              <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                    :class="cfg.source === 'openmeteo' ? 'translate-x-4 left-0.5' : 'left-0.5'"></span>
+            </button>
+            <div>
+              <p class="text-xs font-bold text-gray-200">Open-Meteo</p>
+              <p class="text-[9px] text-gray-500">Built-in · Free, keyless and coordinate-based (Recommended)</p>
+            </div>
+          </div>
+          <i class="fas text-gray-600 text-[10px]"
+             :class="expandProvider === 'openmeteo' ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </div>
+        <div x-show="expandProvider === 'openmeteo'" x-collapse class="px-4 pb-4 space-y-3">
+          <p class="text-[10px] text-gray-400 leading-relaxed">
+            Uses the keyless Open-Meteo Solar Forecast API. No API key is required.
+            It uses the coordinates (Latitude, Longitude), tilt, and azimuth configured in the <strong>PV System</strong> card above.
+          </p>
+          <div class="flex items-center gap-3">
+            <button @click="testProvider('openmeteo')" :disabled="testingProvider"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold border border-gray-600 text-gray-300 hover:border-sky-500/40 hover:text-sky-400 transition disabled:opacity-50">
+              <i class="fas" :class="testingProvider === 'openmeteo' ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+              Test Connection
+            </button>
+            <span x-show="providerTestResult?.provider === 'openmeteo'" class="text-[10px] font-bold"
+                  :class="providerTestResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+                  x-text="providerTestResult?.msg"></span>
+          </div>
+          <div x-show="status?.last_sync && cfg.source === 'openmeteo'"
+               class="text-[9px] text-gray-600">
+            Last sync: <span class="text-gray-400" x-text="fmtSync(status?.last_sync)"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Forecast.Solar sub-card ── -->
+      <div class="rounded-xl border transition"
+           :class="cfg.source === 'forecast_solar' ? 'border-amber-500/50 bg-amber-500/5' : 'border-gray-700 bg-gray-800/40'">
+        <div class="flex items-center justify-between px-4 py-3 cursor-pointer"
+             @click="expandProvider = expandProvider === 'forecast_solar' ? '' : 'forecast_solar'">
+          <div class="flex items-center gap-3">
+            <!-- Mutually exclusive toggle -->
+            <button type="button"
+                    @click.stop="setSource('forecast_solar')"
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0"
+                    :class="cfg.source === 'forecast_solar' ? 'bg-amber-500' : 'bg-gray-700'">
+              <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                    :class="cfg.source === 'forecast_solar' ? 'translate-x-4 left-0.5' : 'left-0.5'"></span>
+            </button>
+            <div>
+              <p class="text-xs font-bold text-gray-200">Forecast.Solar</p>
+              <p class="text-[9px] text-gray-500">Built-in · Free tier without API key</p>
+            </div>
+          </div>
+          <i class="fas text-gray-600 text-[10px]"
+             :class="expandProvider === 'forecast_solar' ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </div>
+        <div x-show="expandProvider === 'forecast_solar'" x-collapse class="px-4 pb-4 space-y-3">
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+              API Key <span class="font-normal text-gray-600">— optional (free tier without key)</span>
+            </label>
+            <input type="password" id="solar-forecast-solar-key" x-model="cfg.forecast_solar_api_key"
+                   placeholder="Leave blank for free tier"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+            <p class="text-[9px] text-gray-600 mt-0.5">Free: ~10 req/day · Higher limits at forecast.solar</p>
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+              Rate Limit / Cooldown (Minutes) <span class="font-normal text-gray-600">— minimum time between API requests</span>
+            </label>
+            <input type="number" id="solar-forecast-solar-rate-limit" x-model.number="cfg.forecast_solar_rate_limit_mins"
+                   min="1" placeholder="30"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-amber-500">
+            <p class="text-[9px] text-gray-600 mt-0.5">Recommended: 30 minutes for free tier to avoid 429 errors</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button @click="testProvider('forecast_solar')" :disabled="testingProvider"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold border border-gray-600 text-gray-300 hover:border-amber-500/40 hover:text-amber-400 transition disabled:opacity-50">
+              <i class="fas" :class="testingProvider === 'forecast_solar' ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+              Test Connection
+            </button>
+            <span x-show="providerTestResult?.provider === 'forecast_solar'" class="text-[10px] font-bold"
+                  :class="providerTestResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+                  x-text="providerTestResult?.msg"></span>
+          </div>
+          <div x-show="status?.last_sync && cfg.source === 'forecast_solar'"
+               class="text-[9px] text-gray-600">
+            Last sync: <span class="text-gray-400" x-text="fmtSync(status?.last_sync)"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Solcast sub-card ── -->
+      <div class="rounded-xl border transition"
+           :class="cfg.source === 'solcast' ? 'border-sky-500/50 bg-sky-500/5' : 'border-gray-700 bg-gray-800/40'">
+        <div class="flex items-center justify-between px-4 py-3 cursor-pointer"
+             @click="expandProvider = expandProvider === 'solcast' ? '' : 'solcast'">
+          <div class="flex items-center gap-3">
+            <button type="button"
+                    @click.stop="setSource('solcast')"
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0"
+                    :class="cfg.source === 'solcast' ? 'bg-sky-500' : 'bg-gray-700'">
+              <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                    :class="cfg.source === 'solcast' ? 'translate-x-4 left-0.5' : 'left-0.5'"></span>
+            </button>
+            <div>
+              <p class="text-xs font-bold text-gray-200">Solcast</p>
+              <p class="text-[9px] text-gray-500">Built-in · Requires API key (free 10 calls/day)</p>
+            </div>
+          </div>
+          <i class="fas text-gray-600 text-[10px]"
+             :class="expandProvider === 'solcast' ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </div>
+        <div x-show="expandProvider === 'solcast'" x-collapse class="px-4 pb-4 space-y-3">
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">API Key <span class="text-red-400">*</span></label>
+            <input type="password" id="solar-solcast-key" x-model="cfg.solcast_api_key"
+                   placeholder="From toolkit.solcast.com.au"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-sky-500">
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">Site ID <span class="font-normal text-gray-600">— optional</span></label>
+            <input type="text" id="solar-solcast-site" x-model="cfg.solcast_site_id"
+                   placeholder="From Solcast Toolkit dashboard"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-sky-500">
+            <p class="text-[9px] text-gray-600 mt-0.5">Cache refreshes every 60 min</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button @click="testProvider('solcast')" :disabled="testingProvider"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold border border-gray-600 text-gray-300 hover:border-sky-500/40 hover:text-sky-400 transition disabled:opacity-50">
+              <i class="fas" :class="testingProvider === 'solcast' ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+              Test Connection
+            </button>
+            <span x-show="providerTestResult?.provider === 'solcast'" class="text-[10px] font-bold"
+                  :class="providerTestResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+                  x-text="providerTestResult?.msg"></span>
+          </div>
+          <!-- Solcast daily call rate-meter (SF-002) -->
+          <div x-show="status?.solcast_calls_today != null" class="flex items-center gap-3 pt-1">
+            <div class="flex-1">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[8px] font-bold uppercase tracking-widest"
+                      :class="(status?.solcast_calls_today || 0) >= (status?.solcast_calls_limit || 10) ? 'text-red-400' :
+                              (status?.solcast_calls_today || 0) >= (status?.solcast_calls_limit || 10) - 2 ? 'text-amber-400' : 'text-sky-400'">
+                  API Calls Today
+                </span>
+                <span class="text-[9px] font-mono font-bold"
+                      :class="(status?.solcast_calls_today || 0) >= (status?.solcast_calls_limit || 10) ? 'text-red-400' :
+                              (status?.solcast_calls_today || 0) >= (status?.solcast_calls_limit || 10) - 2 ? 'text-amber-400' : 'text-sky-300'"
+                      x-text="(status?.solcast_calls_today || 0) + ' / ' + (status?.solcast_calls_limit || 10)"></span>
+              </div>
+              <div class="w-full h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500"
+                     :style="'width:' + Math.min(100, ((status?.solcast_calls_today || 0) / (status?.solcast_calls_limit || 10)) * 100) + '%;' +
+                             'background:' + ((status?.solcast_calls_today || 0) >= (status?.solcast_calls_limit || 10) ? '#ef4444' :
+                                              (status?.solcast_calls_today || 0) >= (status?.solcast_calls_limit || 10) - 2 ? '#f59e0b' : '#38bdf8')"></div>
+              </div>
+            </div>
+            <span x-show="(status?.solcast_calls_today || 0) >= (status?.solcast_calls_limit || 10)"
+                  class="text-[8px] font-bold text-red-400 bg-red-900/30 border border-red-700/40 rounded px-1.5 py-0.5 flex-shrink-0">
+              LIMIT HIT — using cache
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── HA Entities sub-card ── -->
+      <div class="rounded-xl border transition"
+           :class="cfg.source === 'ha_entities' ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-gray-700 bg-gray-800/40'">
+        <div class="flex items-center justify-between px-4 py-3 cursor-pointer"
+             @click="expandProvider = expandProvider === 'ha_entities' ? '' : 'ha_entities'">
+          <div class="flex items-center gap-3">
+            <button type="button"
+                    @click.stop="setSource('ha_entities')"
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0"
+                    :class="cfg.source === 'ha_entities' ? 'bg-emerald-500' : 'bg-gray-700'">
+              <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                    :class="cfg.source === 'ha_entities' ? 'translate-x-4 left-0.5' : 'left-0.5'"></span>
+            </button>
+            <div>
+              <p class="text-xs font-bold text-gray-200">HA Entities</p>
+              <p class="text-[9px] text-gray-500">Use your existing HA solar sensors</p>
+            </div>
+          </div>
+          <i class="fas text-gray-600 text-[10px]"
+             :class="expandProvider === 'ha_entities' ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </div>
+        <div x-show="expandProvider === 'ha_entities'" x-collapse class="px-4 pb-4 space-y-3">
+
+          <!-- ── Discovery Panel ────────────────────────────────────────── -->
+          <div x-data="{
+            discovering: false,
+            discovered: [],
+            discoverError: '',
+            async discover() {
+              this.discovering = true;
+              this.discoverError = '';
+              this.discovered = [];
+              try {
+                // Search multiple keywords that cover both FWH and Forecast.Solar entities
+                const keywords = ['solar','pv','forecast','production','estimated','remaining'];
+                const seen = new Set();
+                for (const kw of keywords) {
+                  const r = await fetch('api/ha/entities?domain=sensor&search=' + kw + '&limit=100');
+                  const d = await r.json();
+                  for (const e of (d.entities || [])) {
+                    if (!seen.has(e.entity_id)) {
+                      seen.add(e.entity_id);
+                      this.discovered.push(e);
+                    }
+                  }
+                }
+                if (this.discovered.length === 0) {
+                  this.discoverError = 'No solar/forecast entities found in HA. Check HA → Developer Tools → States.';
+                }
+              } catch(e) {
+                this.discoverError = 'HA unreachable: ' + e.message;
+              }
+              this.discovering = false;
+            },
+            isPower(e) {
+              return e.unit === 'kW' || e.unit === 'W' || (e.entity_id.includes('power') && !e.entity_id.includes('peak'));
+            },
+            isEnergy(e) {
+              return e.unit === 'kWh' || e.entity_id.includes('today') || e.entity_id.includes('remaining') || e.entity_id.includes('forecast');
+            }
+          }" class="rounded-xl p-3" style="background:rgba(16,185,129,0.04);border:1px solid rgba(16,185,129,0.12)">
+
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-[10px] font-bold text-emerald-400">
+                <i class="fa-solid fa-magnifying-glass mr-1"></i>
+                Discover Solar Entities from HA
+              </p>
+              <button type="button" @click="discover()" :disabled="discovering"
+                      class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-bold bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 transition disabled:opacity-50">
+                <i class="fa-solid text-[8px]" :class="discovering ? 'fa-spinner fa-spin' : 'fa-radar'"></i>
+                <span x-text="discovering ? 'Scanning HA…' : 'Scan HA'"></span>
+              </button>
+            </div>
+
+            <p class="text-[9px] text-gray-500 mb-2">
+              Scans your Home Assistant for solar sensors — click any row to assign it to a field below.
+              Both FranklinWH sensors and HA Forecast.Solar integration entities are found automatically.
+            </p>
+
+            <p x-show="discoverError" class="text-[9px] text-amber-400 font-bold" x-text="discoverError"></p>
+
+            <!-- Results table -->
+            <template x-if="discovered.length > 0">
+              <div class="space-y-2">
+                <!-- Power / Live sensors -->
+                <template x-if="discovered.filter(e => isPower(e)).length > 0">
+                  <div>
+                    <p class="text-[8px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                      ⚡ Live Power Sensors — use as "Solar Production Entity"
+                    </p>
+                    <div class="space-y-1">
+                      <template x-for="e in discovered.filter(e2 => isPower(e2))" :key="e.entity_id">
+                        <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 bg-gray-900/60 hover:bg-gray-800/80 transition">
+                          <div class="flex-1 min-w-0">
+                            <p class="text-[9px] font-mono font-bold text-gray-200 truncate" x-text="e.entity_id"></p>
+                            <p class="text-[8px] text-gray-500 truncate" x-text="e.name"></p>
+                          </div>
+                          <span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded"
+                                :class="e.state && e.state !== 'unavailable' ? 'bg-emerald-700/40 text-emerald-300' : 'bg-gray-700 text-gray-400'"
+                                x-text="e.state + (e.unit ? ' ' + e.unit : '')"></span>
+                          <button type="button"
+                                  @click="$dispatch('set-actual-entity', {id: e.entity_id})"
+                                  class="flex-shrink-0 text-[8px] px-2 py-1 rounded font-bold bg-sky-600/20 border border-sky-500/30 text-sky-400 hover:bg-sky-600/30 transition">
+                            Use as Live kW
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Energy / Forecast sensors -->
+                <template x-if="discovered.filter(e => isEnergy(e)).length > 0">
+                  <div>
+                    <p class="text-[8px] font-bold text-gray-500 uppercase tracking-wider mb-1 mt-2">
+                      ☀️ Forecast / Energy Sensors — use as "Solar Forecast Entity"
+                    </p>
+                    <div class="space-y-1">
+                      <template x-for="e in discovered.filter(e2 => isEnergy(e2))" :key="e.entity_id">
+                        <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 bg-gray-900/60 hover:bg-gray-800/80 transition">
+                          <div class="flex-1 min-w-0">
+                            <p class="text-[9px] font-mono font-bold text-gray-200 truncate" x-text="e.entity_id"></p>
+                            <p class="text-[8px] text-gray-500 truncate" x-text="e.name"></p>
+                          </div>
+                          <span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded"
+                                :class="e.state && e.state !== 'unavailable' ? 'bg-amber-700/40 text-amber-300' : 'bg-gray-700 text-gray-400'"
+                                x-text="e.state + (e.unit ? ' ' + e.unit : '')"></span>
+                          <button type="button"
+                                  @click="$dispatch('set-forecast-entity', {id: e.entity_id})"
+                                  class="flex-shrink-0 text-[8px] px-2 py-1 rounded font-bold bg-amber-600/20 border border-amber-500/30 text-amber-400 hover:bg-amber-600/30 transition">
+                            Use as Forecast
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <!-- Solar Production entity picker -->
+          <div x-data="haEntityPicker({domains:'sensor', initial: cfg.ha_solar_actual_entity || ''})"
+               x-init="$watch('cfg.ha_solar_actual_entity', v => { if (v !== value) { value = v || ''; validate(); } })"
+               @entity-selected="cfg.ha_solar_actual_entity = $event.detail.entity_id"
+               @set-actual-entity.window="value = $event.detail.id; cfg.ha_solar_actual_entity = $event.detail.id; validate()"
+               class="relative">
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+              Solar Production Entity
+              <span class="font-normal text-gray-600"> — live kW right now (e.g. sensor.fhp_solar_power)</span>
+            </label>
+            <div class="flex items-center gap-2">
+              <input type="text" placeholder="sensor.fhp_solar_power"
+                     id="solar-actual-entity" x-model="value"
+                     @input="onInput(); cfg.ha_solar_actual_entity = value"
+                     @blur="validate(); close()" @focus="if(value.length >= 2) search()"
+                     autocomplete="off"
+                     class="flex-1 text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-emerald-500">
+              <span x-show="validated === 'ok'"   class="text-emerald-400 text-sm flex-shrink-0"><i class="fa-solid fa-circle-check"></i></span>
+              <span x-show="validated === 'warn'"  class="text-amber-400 text-sm flex-shrink-0"><i class="fa-solid fa-triangle-exclamation"></i></span>
+              <span x-show="loading" class="text-gray-500 text-sm flex-shrink-0"><i class="fa-solid fa-spinner fa-spin"></i></span>
+            </div>
+            <p x-show="validLabel" class="text-[9px] mt-1"
+               :class="validated === 'ok' ? 'text-emerald-500' : 'text-amber-500'" x-text="validLabel"></p>
+            <div x-show="open" x-transition
+                 class="absolute left-0 right-0 top-full mt-1 rounded-xl border shadow-2xl overflow-y-auto z-50 bg-gray-800 border-gray-600"
+                 style="max-height:180px">
+              <template x-for="ent in results" :key="ent.entity_id">
+                <button @click="select(ent)" class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-white/5 border-b border-gray-700/30">
+                  <div class="flex-1 min-w-0">
+                    <div class="text-[10px] font-mono font-bold truncate text-gray-100" x-text="ent.entity_id"></div>
+                    <div class="text-[8px] text-gray-500" x-text="ent.name"></div>
+                  </div>
+                  <span class="text-[9px] font-mono px-1 py-0.5 rounded font-bold"
+                        :class="ent.state && ent.state !== 'unavailable' ? 'bg-sky-700 text-white' : 'bg-gray-700 text-gray-300'"
+                        x-text="ent.state"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <!-- Solar Forecast entity picker -->
+          <div x-data="haEntityPicker({domains:'sensor', initial: cfg.ha_solar_forecast_entity || ''})"
+               x-init="$watch('cfg.ha_solar_forecast_entity', v => { if (v !== value) { value = v || ''; validate(); } })"
+               @entity-selected="cfg.ha_solar_forecast_entity = $event.detail.entity_id"
+               @set-forecast-entity.window="value = $event.detail.id; cfg.ha_solar_forecast_entity = $event.detail.id; validate()"
+               class="relative">
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+              Solar Forecast Entity
+              <span class="font-normal text-gray-600"> — remaining or total kWh today (e.g. sensor.forecast_solar_forecast_pv_today)</span>
+            </label>
+            <div class="flex items-center gap-2">
+              <input type="text" placeholder="sensor.forecast_solar_forecast_pv_today"
+                     id="solar-forecast-entity" x-model="value"
+                     @input="onInput(); cfg.ha_solar_forecast_entity = value"
+                     @blur="validate(); close()" @focus="if(value.length >= 2) search()"
+                     autocomplete="off"
+                     class="flex-1 text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-emerald-500">
+              <span x-show="validated === 'ok'"   class="text-emerald-400 text-sm flex-shrink-0"><i class="fa-solid fa-circle-check"></i></span>
+              <span x-show="validated === 'warn'"  class="text-amber-400 text-sm flex-shrink-0"><i class="fa-solid fa-triangle-exclamation"></i></span>
+              <span x-show="loading" class="text-gray-500 text-sm flex-shrink-0"><i class="fa-solid fa-spinner fa-spin"></i></span>
+            </div>
+            <p x-show="validLabel" class="text-[9px] mt-1"
+               :class="validated === 'ok' ? 'text-emerald-500' : 'text-amber-500'" x-text="validLabel"></p>
+            <div x-show="open" x-transition
+                 class="absolute left-0 right-0 top-full mt-1 rounded-xl border shadow-2xl overflow-y-auto z-50 bg-gray-800 border-gray-600"
+                 style="max-height:180px">
+              <template x-for="ent in results" :key="ent.entity_id">
+                <button @click="select(ent)" class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-white/5 border-b border-gray-700/30">
+                  <div class="flex-1 min-w-0">
+                    <div class="text-[10px] font-mono font-bold truncate text-gray-100" x-text="ent.entity_id"></div>
+                    <div class="text-[8px] text-gray-500" x-text="ent.name"></div>
+                  </div>
+                  <span class="text-[9px] font-mono px-1 py-0.5 rounded font-bold"
+                        :class="ent.state && ent.state !== 'unavailable' ? 'bg-sky-700 text-white' : 'bg-gray-700 text-gray-300'"
+                        x-text="ent.state"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end HA entities -->
+
+      <!-- Global save for Card 2 -->
+      <div class="flex items-center gap-3 pt-1">
+        <button @click="saveForecastProvider()" :disabled="savingProvider"
+                id="solar-save-provider"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs bg-sky-600 text-white hover:bg-sky-500 transition disabled:opacity-50">
+          <i class="fa-solid" :class="savingProvider ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+          <span x-text="savingProvider ? 'Saving…' : 'Save Provider'"></span>
+        </button>
+        <!-- Diagnostics button -->
+        <button @click="showDiagnosticsModal = true; runDiagnostics()"
+                id="solar-diagnostics-btn"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 transition">
+          <i class="fa-solid fa-stethoscope"></i>
+          Diagnostics
+        </button>
+        <!-- View Forecast Data button -->
+        <button @click="showForecastViewer = true; loadForecastData()"
+                id="solar-view-forecast-btn"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 transition">
+          <i class="fa-solid fa-chart-bar"></i>
+          View Forecast
+        </button>
+        <span x-show="providerSaveResult" class="text-xs font-bold"
+              :class="providerSaveResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+              x-text="providerSaveResult?.msg"></span>
+      </div>
+
+    </div>
+  </div><!-- end Card 2 -->
+
+  <!-- ══════════════════════════════════════════════════════════════
+       CARD 3 — Enphase PV Control
+       ══════════════════════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-[var(--surface-0)] overflow-hidden"
+       style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px rgba(0,0,0,0.35);">
+
+    <div class="px-4 py-3 border-b border-gray-700 flex items-center gap-2">
+      <i class="fas fa-bolt text-violet-400 text-xs"></i>
+      <p class="text-xs font-bold text-gray-200">Enphase PV Control</p>
+      <span class="text-[9px] text-gray-500">— optional direct Envoy integration</span>
+    </div>
+
+    <div class="p-5 space-y-4">
+
+      <!-- Firmware banner -->
+      <div class="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2.5">
+        <i class="fas fa-info-circle text-amber-400 text-xs mt-0.5 flex-shrink-0"></i>
+        <p class="text-[10px] text-amber-300 leading-relaxed">
+          Requires Enphase Envoy firmware <strong>v7.x+</strong>. Works with DIY Installer accounts (full DPEL)
+          and standard Enlighten accounts (curtailment only). Enlighten credentials are used to auto-fetch
+          and renew the local JWT — <em>never sent anywhere except Enphase cloud</em>.
+        </p>
+      </div>
+
+      <!-- Mode selector — radio cards -->
+      <div>
+        <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Control Mode</label>
+        <div class="space-y-2">
+
+          <!-- none -->
+          <label class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition"
+                 :class="cfg.enphase_mode === 'none' ? 'border-gray-500 bg-gray-700/40' : 'border-gray-700 hover:border-gray-600'">
+            <input type="radio" value="none" x-model="cfg.enphase_mode" class="accent-violet-500">
+            <div>
+              <p class="text-xs font-bold text-gray-300">None</p>
+              <p class="text-[9px] text-gray-500">No Enphase integration</p>
+            </div>
+          </label>
+
+          <!-- ha_entity -->
+          <label class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition"
+                 :class="cfg.enphase_mode === 'ha_entity' ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-gray-700 hover:border-gray-600'">
+            <input type="radio" value="ha_entity" x-model="cfg.enphase_mode" class="accent-emerald-500">
+            <div>
+              <p class="text-xs font-bold text-gray-300">HA Entity <span class="text-[9px] font-normal text-gray-500 ml-1">— use existing HA Enphase integration</span></p>
+              <p class="text-[9px] text-gray-500">No Enlighten credentials needed</p>
+            </div>
+          </label>
+
+          <!-- direct_envoy -->
+          <label class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition"
+                 :class="cfg.enphase_mode === 'direct_envoy' ? 'border-violet-500/50 bg-violet-500/5' : 'border-gray-700 hover:border-gray-600'">
+            <input type="radio" value="direct_envoy" x-model="cfg.enphase_mode" class="accent-violet-500">
+            <div>
+              <p class="text-xs font-bold text-gray-300">Direct Envoy <span class="text-[9px] font-normal text-gray-500 ml-1">— JWT auto-fetch via Enlighten cloud</span></p>
+              <p class="text-[9px] text-gray-500">DPEL export control (Installer) or curtailment (Standard)</p>
+            </div>
+          </label>
+
+        </div>
+      </div>
+
+      <!-- ── ha_entity mode fields ── -->
+      <div x-show="cfg.enphase_mode === 'ha_entity'" class="space-y-3 p-3 rounded-xl border border-emerald-600/30 bg-emerald-500/5">
+        <p class="text-[9px] text-emerald-400 font-bold uppercase tracking-widest">HA Entity Mode</p>
+        <p class="text-[10px] text-gray-400">Uses your existing HA Enphase integration — no Enlighten credentials needed here.</p>
+
+        <!-- Curtail entity picker -->
+        <div x-data="haEntityPicker({domains:'switch,input_boolean,number', initial: cfg.ha_solar_curtail_entity || ''})"
+             x-init="$watch('cfg.ha_solar_curtail_entity', v => { if (v !== value) { value = v || ''; validate(); } })"
+             @entity-selected="cfg.ha_solar_curtail_entity = $event.detail.entity_id"
+             class="relative">
+          <label class="block text-[10px] font-semibold text-gray-400 mb-1">
+            Curtailment Entity <span class="font-normal text-gray-600">— switch / input_boolean / number</span>
+          </label>
+          <div class="flex items-center gap-2">
+            <input type="text" placeholder="switch.enphase_solar_production"
+                   id="solar-curtail-entity" x-model="value"
+                   @input="onInput(); cfg.ha_solar_curtail_entity = value"
+                   @blur="validate(); close()" @focus="if(value.length >= 2) search()"
+                   autocomplete="off"
+                   class="flex-1 text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-emerald-500">
+            <span x-show="validated === 'ok'"   class="text-emerald-400 text-sm flex-shrink-0"><i class="fa-solid fa-circle-check"></i></span>
+            <span x-show="validated === 'warn'"  class="text-amber-400 text-sm flex-shrink-0"><i class="fa-solid fa-triangle-exclamation"></i></span>
+            <span x-show="loading" class="text-gray-500 text-sm flex-shrink-0"><i class="fa-solid fa-spinner fa-spin"></i></span>
+          </div>
+          <p x-show="validLabel" class="text-[9px] mt-1"
+             :class="validated === 'ok' ? 'text-emerald-500' : 'text-amber-500'" x-text="validLabel"></p>
+          <div x-show="open" x-transition
+               class="absolute left-0 right-0 top-full mt-1 rounded-xl border shadow-2xl overflow-y-auto z-50 bg-gray-800 border-gray-600"
+               style="max-height:180px">
+            <template x-for="ent in results" :key="ent.entity_id">
+              <button @click="select(ent)" class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-white/5 border-b border-gray-700/30">
+                <div class="flex-1 min-w-0">
+                  <div class="text-[10px] font-mono font-bold truncate text-gray-100" x-text="ent.entity_id"></div>
+                  <div class="text-[8px] text-gray-500" x-text="ent.name"></div>
+                </div>
+                <span class="text-[9px] font-mono px-1 py-0.5 rounded font-bold"
+                      :class="ent.state && ent.state !== 'unavailable' ? 'bg-sky-700 text-white' : 'bg-gray-700 text-gray-300'"
+                      x-text="ent.state"></span>
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── direct_envoy mode fields ── -->
+      <div x-show="cfg.enphase_mode === 'direct_envoy'" class="space-y-4 p-3 rounded-xl border border-violet-600/30 bg-violet-500/5">
+        <p class="text-[9px] text-violet-400 font-bold uppercase tracking-widest">Direct Envoy Mode — JWT 3-Step Flow</p>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">Envoy Host / IP</label>
+            <input type="text" id="solar-enphase-host" x-model="cfg.enphase_host"
+                   placeholder="192.168.1.x or envoy.local"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-violet-500">
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">Envoy Serial</label>
+            <input type="text" id="solar-enphase-serial" x-model="cfg.enphase_serial"
+                   placeholder="121234567890"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-violet-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">Enlighten Email</label>
+            <input type="email" id="solar-enphase-user" x-model="cfg.enphase_enlighten_user"
+                   placeholder="you@example.com"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-violet-500">
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">Enlighten Password</label>
+            <input type="password" id="solar-enphase-password" x-model="cfg.enphase_enlighten_password"
+                   placeholder="Stored for auto-renewal"
+                   class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-violet-500">
+          </div>
+        </div>
+
+        <!-- JWT status row -->
+        <div class="flex items-center gap-3 p-2.5 rounded-lg border border-gray-700 bg-gray-800/60">
+          <div class="flex-1 min-w-0">
+            <p class="text-[9px] text-gray-500 font-semibold uppercase tracking-wide">JWT Token</p>
+            <p class="text-[10px] font-mono text-gray-300 truncate"
+               x-text="cfg.enphase_token ? cfg.enphase_token.slice(0,40) + '…' : 'Not fetched'"></p>
+            <p class="text-[9px] text-gray-600 mt-0.5"
+               x-show="cfg.enphase_token_expiry"
+               x-text="'Expires: ' + (cfg.enphase_token_expiry ? new Date(cfg.enphase_token_expiry).toLocaleString('en-AU') : '—')"></p>
+          </div>
+          <!-- Account type badge -->
+          <span x-show="enphaseAccountType"
+                class="text-[9px] font-bold px-2 py-1 rounded-full flex-shrink-0"
+                :class="enphaseAccountType === 'installer' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'"
+                x-text="enphaseAccountType === 'installer' ? 'Installer Account' : 'Standard Account'"></span>
+        </div>
+
+        <!-- DPEL fields (shown after token fetched) -->
+        <div x-show="cfg.enphase_token" class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">Export Limit (W)</label>
+            <input type="number" min="0" step="100" id="solar-export-limit" x-model.number="cfg.enphase_export_limit_w"
+                   placeholder="0 = no limit"
+                   class="w-full text-xs rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-violet-500">
+          </div>
+          <div>
+            <label class="block text-[10px] font-semibold text-gray-400 mb-1">Slew Rate (W/min)</label>
+            <input type="number" min="0" step="50" id="solar-slew-rate" x-model.number="cfg.enphase_slew_rate"
+                   placeholder="500"
+                   class="w-full text-xs rounded-lg px-3 py-2 bg-gray-900 border border-gray-600 text-gray-100 focus:outline-none focus:border-violet-500">
+          </div>
+        </div>
+
+        <!-- Fetch / Renew JWT + Test Connection buttons -->
+        <div class="flex flex-wrap items-center gap-3">
+          <button @click="fetchToken()" :disabled="fetchingToken"
+                  id="solar-fetch-jwt"
+                  class="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs bg-violet-600 text-white hover:bg-violet-500 transition disabled:opacity-50">
+            <i class="fas" :class="fetchingToken ? 'fa-spinner fa-spin' : 'fa-key'"></i>
+            <span x-text="fetchingToken ? 'Fetching…' : (cfg.enphase_token ? 'Renew JWT' : 'Fetch JWT')"></span>
+          </button>
+          <button @click="testEnphase()" :disabled="testingEnphase || !cfg.enphase_host"
+                  id="solar-test-enphase"
+                  class="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs border border-gray-600 text-gray-300 hover:border-violet-500/40 hover:text-violet-400 transition disabled:opacity-50">
+            <i class="fas" :class="testingEnphase ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+            <span x-text="testingEnphase ? 'Testing…' : 'Test Connection'"></span>
+          </button>
+          <span x-show="enphaseResult" class="text-[10px] font-bold"
+                :class="enphaseResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+                x-text="enphaseResult?.msg"></span>
+        </div>
+
+        <!-- Test connection detail -->
+        <div x-show="enphaseResult?.ok && enphaseResult?.detail" class="text-[9px] text-gray-500 space-y-0.5">
+          <p>Serial: <span class="text-gray-300 font-mono" x-text="enphaseResult?.detail?.serial_number"></span></p>
+          <p>Firmware: <span class="text-gray-300 font-mono" x-text="enphaseResult?.detail?.firmware_version"></span></p>
+          <p>DPEL: <span class="font-bold"
+                         :class="(enphaseResult?.detail?.dpel_capable === 'supported' || enphaseResult?.detail?.dpel_capable === 'yes') ? 'text-emerald-400' : 'text-amber-400'"
+                         x-text="(enphaseResult?.detail?.dpel_capable === 'supported' || enphaseResult?.detail?.dpel_capable === 'yes') ? 'Capable ✓' : 'Not capable (curtailment only)'"></span></p>
+        </div>
+
+      </div><!-- end direct_envoy -->
+
+      <!-- Enphase save button -->
+      <div class="flex items-center gap-3 pt-1">
+        <button @click="saveEnphase()" :disabled="savingEnphase"
+                id="solar-save-enphase"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg font-bold text-xs bg-violet-600 text-white hover:bg-violet-500 transition disabled:opacity-50">
+          <i class="fa-solid" :class="savingEnphase ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+          <span x-text="savingEnphase ? 'Saving…' : 'Save Enphase Config'"></span>
+        </button>
+        <span x-show="enphaseSaveResult" class="text-xs font-bold"
+              :class="enphaseSaveResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+              x-text="enphaseSaveResult?.msg"></span>
+      </div>
+
+    </div>
+  </div><!-- end Card 3 -->
+
+  <!-- ══════════════════════════════════════════════════════════════
+       CARD 4 — Live Status (read-only)
+       ══════════════════════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-[var(--surface-0)] overflow-hidden"
+       style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px rgba(0,0,0,0.35);">
+
+    <div class="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-chart-line text-emerald-400 text-xs"></i>
+        <p class="text-xs font-bold text-gray-200">Live Status</p>
+        <span class="text-[9px] text-gray-500">— read-only</span>
+      </div>
+      <button @click="refreshForecast()" :disabled="refreshing"
+              id="solar-refresh-forecast"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold border border-gray-600 text-gray-300 hover:border-emerald-500/40 hover:text-emerald-400 transition disabled:opacity-50">
+        <i class="fas" :class="refreshing ? 'fa-spinner fa-spin' : 'fa-refresh'"></i>
+        <span x-text="refreshing ? 'Refreshing…' : 'Refresh Forecast'"></span>
+      </button>
+    </div>
+
+    <div class="p-5">
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+
+        <!-- Active Source -->
+        <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-3">
+          <p class="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">Active Source</p>
+          <p class="text-sm font-bold"
+             :class="status?.active_source && status.active_source !== 'none' ? 'text-amber-400' : 'text-gray-600'"
+             x-text="sourceLabel(status?.active_source) || '—'"></p>
+        </div>
+
+        <!-- Last Sync -->
+        <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-3">
+          <p class="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">Last Sync</p>
+          <p class="text-sm font-bold text-gray-300" x-text="fmtSync(status?.last_sync) || '—'"></p>
+        </div>
+
+        <!-- Today's Forecast kWh -->
+        <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-3">
+          <p class="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">Today Forecast</p>
+          <p class="text-sm font-bold text-sky-400"
+             x-text="forecastToday !== null ? forecastToday.toFixed(1) + ' kWh' : '—'"></p>
+        </div>
+
+        <!-- Envoy Live (direct_envoy only) -->
+        <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-3"
+             :class="cfg.enphase_mode !== 'direct_envoy' ? 'opacity-40' : ''">
+          <div class="flex items-center justify-between mb-1">
+            <p class="text-[9px] font-bold uppercase tracking-widest text-gray-500">Envoy Now</p>
+            <button x-show="cfg.enphase_mode === 'direct_envoy'"
+                    @click="pollEnvoy()"
+                    :disabled="envoyPolling"
+                    :title="envoyPolling ? 'Fetching…' : (envoyError || 'Click to fetch live production from local Envoy')"
+                    class="text-[10px] text-emerald-400 hover:text-emerald-300 disabled:opacity-40">
+              <i class="fas" :class="envoyPolling ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>
+            </button>
+          </div>
+          <p class="text-sm font-bold"
+             :class="envoyError ? 'text-rose-400' : 'text-emerald-400'"
+             x-text="envoyWatts !== null
+                       ? envoyWatts + ' W'
+                       : (cfg.enphase_mode === 'direct_envoy'
+                            ? (envoyError ? 'Unreachable' : (envoyPolling ? 'Fetching…' : 'Click ↻ to fetch'))
+                            : 'N/A')"></p>
+          <p class="text-[8px] text-gray-600 mt-0.5"
+             x-show="envoyTodayWh !== null"
+             x-text="'Today: ' + (envoyTodayWh / 1000).toFixed(2) + ' kWh'"></p>
+        </div>
+
+      </div>
+
+      <!-- ── Inline mini forecast chart ─────────────────────────────── -->
+      <template x-if="forecastMiniSlots && forecastMiniSlots.length > 0">
+        <div class="mt-4 rounded-xl p-3" style="background:rgba(16,185,129,0.03);border:1px solid rgba(16,185,129,0.12)">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">
+              <i class="fas fa-sun mr-1"></i>Today's Solar — FranklinWH Cloud + Forecast
+            </p>
+            <div class="flex items-center gap-3 text-[8px] text-gray-600">
+              <span x-show="forecastMiniActualKwh != null">
+                Actual <span class="text-amber-300 font-bold" x-text="forecastMiniActualKwh?.toFixed(1) + ' kWh'"></span>
+              </span>
+              <span>Forecast <span class="text-emerald-300 font-bold" x-text="forecastToday !== null ? forecastToday.toFixed(1) + ' kWh' : '—'"></span></span>
+              <span>Peak <span class="text-gray-300 font-bold" x-text="forecastMiniPeak.toFixed(1) + ' kW'"></span></span>
+            </div>
+          </div>
+          <!-- Bar chart: amber = FranklinWH Cloud actuals, green = forecast, yellow = current slot -->
+          <div class="flex items-end gap-px h-12 w-full overflow-hidden" style="gap:1.5px">
+            <template x-for="(slot, i) in forecastMiniSlots" :key="i">
+              <div class="flex-1 rounded-sm transition-all duration-300"
+                   :style="'height:' + (forecastMiniPeak > 0 ? Math.max(2, slot.pv_kw / forecastMiniPeak * 100) : 2) + '%;' +
+                           'background:' + (slot.isCurrent   ? 'rgba(251,191,36,0.95)' :
+                                            slot.isActual    ? 'rgba(245,158,11,0.7)'  :
+                                            slot.isNight     ? 'rgba(255,255,255,0.04)':
+                                                               'rgba(16,185,129,0.5)')">
+              </div>
+            </template>
+          </div>
+          <!-- Legend + time axis -->
+          <div class="flex items-center justify-between mt-1.5">
+            <div class="flex items-center gap-3 text-[7px] text-gray-600">
+              <span class="flex items-center gap-1"><span class="w-2 h-1.5 rounded-sm inline-block" style="background:rgba(245,158,11,0.7)"></span>Cloud Actual</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-1.5 rounded-sm inline-block" style="background:rgba(16,185,129,0.5)"></span>Forecast</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-1.5 rounded-sm inline-block" style="background:rgba(251,191,36,0.95)"></span>Now</span>
+            </div>
+            <div class="flex gap-0 text-[7px] text-gray-700 font-mono">
+              <template x-for="label in ['0h','6h','12h','18h','24h']" :key="label">
+                <span class="w-[20%] text-center" x-text="label"></span>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+
+
+      <!-- No forecast data hint -->
+      <div x-show="forecastMiniSlots && forecastMiniSlots.length === 0 && !refreshing"
+           class="mt-3 flex items-center gap-2 text-[9px] text-gray-600">
+        <i class="fas fa-circle-info text-amber-500/50"></i>
+        No forecast data yet — click <span class="text-amber-400 font-bold mx-1">Refresh Forecast</span> to fetch, or check Diagnostics.
+      </div>
+
+      <!-- Refresh result -->
+      <p x-show="refreshResult" class="mt-3 text-[10px] font-bold"
+         :class="refreshResult?.ok ? 'text-emerald-400' : 'text-red-400'"
+         x-text="refreshResult?.msg"></p>
+    </div>
+
+  </div><!-- end Card 4 -->
+
+  <!-- ══════════════════════════════════════════════════════════════
+       DIAGNOSTICS MODAL
+       ══════════════════════════════════════════════════════════════ -->
+  <div x-show="showDiagnosticsModal" x-cloak
+       class="fixed inset-0 z-[200] flex items-center justify-center"
+       style="background:rgba(0,0,0,0.7);backdrop-filter:blur(6px)">
+    <div class="relative w-full max-w-2xl mx-4 rounded-2xl overflow-hidden"
+         style="background:linear-gradient(145deg,#111827,#0d1117);border:1px solid rgba(251,191,36,0.2);box-shadow:0 24px 80px rgba(0,0,0,0.7),inset 0 1px 0 rgba(255,255,255,0.05)"
+         @click.outside="showDiagnosticsModal = false">
+
+      <!-- Header -->
+      <div class="flex items-center justify-between px-5 py-4"
+           style="border-bottom:1px solid rgba(255,255,255,0.06)">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center"
+               style="background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.3)">
+            <i class="fa-solid fa-stethoscope text-amber-400 text-xs"></i>
+          </div>
+          <div>
+            <p class="text-sm font-bold text-gray-100">Solar Forecast Diagnostics</p>
+            <p class="text-[9px] text-gray-500">7-step probe · config → HA → location → provider → cache → connection → refresh</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <!-- Summary badge -->
+          <span x-show="diagResult && !diagRunning"
+                class="text-[9px] font-black px-2.5 py-1 rounded-full"
+                :class="diagResult?.ok ? 'bg-emerald-900/50 text-emerald-400 border border-emerald-700/50' : 'bg-red-900/50 text-red-400 border border-red-700/50'"
+                x-text="diagResult?.summary"></span>
+          <button @click="showDiagnosticsModal = false"
+                  class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-200 hover:bg-white/5 transition">
+            <i class="fa-solid fa-xmark text-xs"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Body -->
+      <div class="px-5 py-4" style="max-height:70vh;overflow-y:auto">
+
+        <!-- Loading skeleton -->
+        <div x-show="diagRunning" class="space-y-2.5 py-2">
+          <template x-for="i in 7">
+            <div class="flex items-center gap-3 animate-pulse">
+              <div class="w-16 h-4 rounded bg-gray-700/60"></div>
+              <div class="flex-1 h-4 rounded bg-gray-700/40"></div>
+            </div>
+          </template>
+          <p class="text-center text-xs text-gray-500 mt-4">
+            <i class="fa-solid fa-spinner fa-spin mr-1"></i> Running probe…
+          </p>
+        </div>
+
+        <!-- Results -->
+        <div x-show="!diagRunning && diagResult" class="space-y-2">
+          <template x-for="(entry, idx) in (diagResult?.entries || [])" :key="idx">
+            <div class="flex items-start gap-3 px-3 py-2.5 rounded-lg"
+                 :style="entry.status === 'error'
+                   ? 'background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15)'
+                   : entry.status === 'warn'
+                     ? 'background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15)'
+                     : entry.status === 'ok'
+                       ? 'background:rgba(16,185,129,0.04);border:1px solid rgba(16,185,129,0.12)'
+                       : 'background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06)'">
+              <!-- Status pill -->
+              <span class="flex-shrink-0 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full mt-0.5"
+                    :class="{
+                      'bg-emerald-900/60 text-emerald-400 border border-emerald-700/50': entry.status === 'ok',
+                      'bg-amber-900/60 text-amber-400 border border-amber-700/50':     entry.status === 'warn',
+                      'bg-red-900/60 text-red-400 border border-red-700/50':           entry.status === 'error',
+                      'bg-gray-700/60 text-gray-400 border border-gray-600/50':        entry.status === 'info',
+                    }"
+                    x-text="entry.status"></span>
+              <div class="flex-1 min-w-0">
+                <!-- Step name + message -->
+                <div class="flex items-baseline gap-1.5 flex-wrap">
+                  <span class="text-[9px] font-black uppercase tracking-widest"
+                        :class="{
+                          'text-gray-500': entry.status === 'info',
+                          'text-emerald-500': entry.status === 'ok',
+                          'text-amber-500': entry.status === 'warn',
+                          'text-red-500': entry.status === 'error',
+                        }"
+                        x-text="entry.step.replace(/_/g,' ')"></span>
+                  <span class="text-[10px] text-gray-300" x-text="entry.msg"></span>
+                </div>
+                <!-- Detail (sub-text) -->
+                <p x-show="entry.detail" class="text-[9px] text-gray-600 mt-0.5 font-mono" x-text="entry.detail"></p>
+              </div>
+              <!-- Timestamp -->
+              <span class="flex-shrink-0 text-[8px] text-gray-700 font-mono"
+                    x-text="entry.ts ? entry.ts.slice(11,19) + ' UTC' : ''"></span>
+            </div>
+          </template>
+        </div>
+
+        <!-- Empty (not yet run) -->
+        <div x-show="!diagRunning && !diagResult"
+             class="text-center text-xs text-gray-600 py-8">
+          <i class="fa-solid fa-stethoscope text-amber-500/30 text-2xl mb-3 block"></i>
+          Click <strong class="text-amber-400">Diagnostics</strong> to start the probe.
+        </div>
+
+      </div>
+
+      <!-- Footer -->
+      <div class="flex items-center justify-between px-5 py-3"
+           style="border-top:1px solid rgba(255,255,255,0.06)">
+        <p class="text-[9px] text-gray-600">
+          Run at: <span class="text-gray-500 font-mono" x-text="diagResult?.run_ts ? diagResult.run_ts.slice(0,19).replace('T',' ') + ' UTC' : '—'"></span>
+        </p>
+        <div class="flex items-center gap-2">
+          <button @click="runDiagnostics()" :disabled="diagRunning"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 transition disabled:opacity-50">
+            <i class="fa-solid fa-rotate-right" :class="diagRunning ? 'fa-spin' : ''"></i>
+            Re-Run
+          </button>
+          <button @click="showDiagnosticsModal = false"
+                  class="px-3 py-1.5 rounded-lg text-[10px] font-bold text-gray-400 hover:bg-white/5 transition">
+            Close
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- end diagnostics modal -->
+
+  <!-- ══════════════════════════════════════════════════════════
+       FORECAST VIEWER MODAL
+       ════════════════════════════════════════════════════════ -->
+   <div x-show="showForecastViewer" x-cloak
+       class="fixed inset-0 z-[250] flex items-center justify-center"
+       style="background:rgba(0,0,0,0.85);backdrop-filter:blur(8px)">
+    <div class="relative w-full max-w-4xl mx-4 rounded-2xl overflow-hidden flex flex-col shadow-[0_30px_100px_rgba(0,0,0,0.9)]"
+         style="background:#0d1117;border:1px solid rgba(255,255,255,0.12);max-height:92vh">
+
+      <!-- Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0 bg-gray-900/50">
+        <div>
+          <p class="text-sm font-black text-white flex items-center gap-2">
+            <i class="fa-solid fa-chart-bar text-emerald-400"></i>
+            Solar Forecast Data Viewer
+          </p>
+          <p class="text-[9px] text-gray-400 mt-0.5">
+            Source: <span class="text-emerald-400 font-bold" x-text="forecastData?.source || '—'"></span>
+            &nbsp;·&nbsp; Last fetch: <span class="text-gray-300" x-text="forecastData?.last_sync ? new Date(forecastData.last_sync).toLocaleString() : '—'"></span>
+            &nbsp;·&nbsp; <span x-text="(forecastData?.slots||[]).length + ' slots'"></span>
+          </p>
+        </div>
+        <button @click="showForecastViewer = false"
+                class="w-9 h-9 flex items-center justify-center rounded-xl bg-white/5 hover:bg-red-500/20 text-white hover:text-red-400 border border-white/10 transition-all shadow-lg">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <!-- Loading -->
+      <div x-show="forecastLoading" class="flex-1 flex items-center justify-center py-16">
+        <div class="text-center">
+          <i class="fa-solid fa-spinner fa-spin text-emerald-400 text-2xl mb-3"></i>
+          <p class="text-sm text-gray-500">Fetching forecast data…</p>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <template x-if="!forecastLoading && forecastData">
+        <div class="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+
+          <!-- Summary cards -->
+          <div class="grid grid-cols-2 gap-3">
+            <template x-for="(day, idx) in forecastDays" :key="idx">
+              <div class="rounded-xl p-3" :style="idx === 0
+                ? 'background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2)'
+                : 'background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.2)'">
+                <p class="text-[9px] font-bold uppercase tracking-wider mb-2"
+                   :class="idx === 0 ? 'text-emerald-400' : 'text-sky-400'"
+                   x-text="day.label"></p>
+                <div class="grid grid-cols-3 gap-2">
+                  <div>
+                    <p class="text-[8px] text-gray-500">Total kWh</p>
+                    <p class="text-lg font-bold text-gray-100" x-text="day.total_kwh.toFixed(2)"></p>
+                  </div>
+                  <div>
+                    <p class="text-[8px] text-gray-500">Peak kW</p>
+                    <p class="text-lg font-bold text-gray-100" x-text="day.peak_kw.toFixed(2)"></p>
+                  </div>
+                  <div>
+                    <p class="text-[8px] text-gray-500">Peak time</p>
+                    <p class="text-sm font-bold text-gray-100" x-text="day.peak_time"></p>
+                  </div>
+                </div>
+                <p class="text-[9px] text-gray-600 mt-1" x-text="day.slots + ' slots · daylight ' + day.daylight_h + 'h'"></p>
+              </div>
+            </template>
+          </div>
+
+          <!-- ── Chart mode toggle ──────────────────────────────────── -->
+          <div class="flex items-center gap-2">
+            <button @click="viewMode='forecast'"
+                    :class="viewMode==='forecast' ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-300' : 'bg-white/3 border-white/10 text-gray-500'"
+                    class="px-3 py-1.5 rounded-lg text-[9px] font-bold border transition">
+              <i class="fa-solid fa-calendar-days mr-1"></i>Forecast (Today + Tomorrow)
+            </button>
+            <button @click="viewMode='centred'; loadActuals()"
+                    :class="viewMode==='centred' ? 'bg-amber-600/30 border-amber-500/50 text-amber-300' : 'bg-white/3 border-white/10 text-gray-500'"
+                    class="px-3 py-1.5 rounded-lg text-[9px] font-bold border transition">
+              <i class="fa-solid fa-crosshairs mr-1"></i>Now Centred (Actuals + Forecast)
+            </button>
+            <!-- Window controls — only in centred mode -->
+            <template x-if="viewMode==='centred'">
+              <div class="flex items-center gap-1.5 ml-2">
+                <span class="text-[8px] text-gray-600">Past:</span>
+                <template x-for="h in [6,12,24]" :key="h">
+                  <button @click="pastHours=h; loadActuals()"
+                          :class="pastHours===h ? 'bg-amber-500/20 text-amber-300' : 'text-gray-500'"
+                          class="px-1.5 py-0.5 rounded text-[8px] font-bold border border-white/5"
+                          x-text="h+'h'"></button>
+                </template>
+                <span class="text-[8px] text-gray-600 ml-1">Future:</span>
+                <template x-for="h in [12,24,48]" :key="h">
+                  <button @click="futureHours=h"
+                          :class="futureHours===h ? 'bg-sky-500/20 text-sky-300' : 'text-gray-500'"
+                          class="px-1.5 py-0.5 rounded text-[8px] font-bold border border-white/5"
+                          x-text="h+'h'"></button>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <!-- Bar chart -->
+          <div class="rounded-xl p-3" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05)">
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-[10px] font-bold text-gray-400"
+                 x-text="viewMode==='forecast' ? 'Production Forecast — 30-min slots (local time)' : 'Now Centred: Cloud Actuals (amber) + Forecast (green)'"></p>
+              <div class="flex items-center gap-3 text-[8px] text-gray-500">
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm inline-block" style="background:#10b981"></span>Today forecast</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm inline-block" style="background:#38bdf8"></span>Tomorrow</span>
+                <span x-show="viewMode==='centred'" class="flex items-center gap-1"><span class="w-2 h-2 rounded-full inline-block" style="background:#f59e0b"></span>Cloud Actual</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm inline-block" style="background:#374151"></span>Night</span>
+              </div>
+            </div>
+
+            <!-- Actuals loading indicator -->
+            <div x-show="actualsLoading" class="text-[8px] text-amber-400 mb-1 flex items-center gap-1">
+              <i class="fa-solid fa-spinner fa-spin"></i> Loading actuals from FranklinWH Cloud…
+            </div>
+            <div x-show="actualsError" class="text-[8px] text-red-400 mb-1" x-text="actualsError"></div>
+
+            <!-- CSS div bar chart -->
+            <div class="relative">
+              <div class="flex items-end h-28 w-full overflow-x-auto" style="gap:1px;min-width:0">
+                <template x-for="(bar, i) in activeChartBars" :key="'b'+i">
+                  <div class="flex-shrink-0 rounded-sm transition-all duration-150 relative group cursor-default"
+                       :title="bar.label"
+                       :style="'flex-basis:' + (100 / Math.max(activeChartBars.length, 1)) + '%;' +
+                               'min-width:6px;' +
+                               'height:' + Math.max(bar.pct, 1) + '%;' +
+                               'background:' + bar.color + ';' +
+                               (bar.isNow ? 'box-shadow:inset 2px 0 0 #ef4444;' : '') +
+                               'opacity:0.88'">
+                  </div>
+                </template>
+              </div>
+              <!-- NOW label -->
+              <template x-if="viewMode==='centred'">
+                <div class="absolute top-0 text-[7px] text-red-400 font-bold"
+                     :style="'left:' + (nowPct) + '%'"
+                     style="transform:translateX(-50%);pointer-events:none">NOW</div>
+              </template>
+            </div>
+
+            <!-- X-axis labels -->
+            <div class="flex justify-between text-[7px] text-gray-600 mt-1" x-show="viewMode==='forecast'">
+              <span x-text="forecastDays[0]?.label + ' sunrise'"></span>
+              <span>Noon</span>
+              <span x-text="forecastDays[0]?.label + ' sunset'"></span>
+              <span class="text-gray-700">— NIGHT —</span>
+              <span x-text="forecastDays[1]?.label + ' sunrise'"></span>
+              <span>Noon</span>
+              <span x-text="forecastDays[1]?.label + ' sunset'"></span>
+            </div>
+            <div class="flex justify-between text-[7px] text-gray-600 mt-1" x-show="viewMode==='centred'">
+              <span x-text="'-' + pastHours + 'h'"></span>
+              <span class="text-amber-600">← actuals</span>
+              <span class="text-red-500 font-bold">NOW</span>
+              <span class="text-emerald-600">forecast →</span>
+              <span x-text="'+' + futureHours + 'h'"></span>
+            </div>
+          </div>
+
+
+          <!-- Metric mapping explanation -->
+          <div class="rounded-xl p-3" style="background:rgba(251,191,36,0.04);border:1px solid rgba(251,191,36,0.1)">
+            <p class="text-[9px] font-bold text-amber-400 mb-2">
+              <i class="fa-solid fa-circle-info mr-1"></i>
+              API Metrics → How Smart Dispatch uses them
+            </p>
+            <div class="grid grid-cols-2 gap-2">
+              <div class="space-y-1.5">
+                <div class="rounded p-1.5" style="background:rgba(0,0,0,0.2)">
+                  <p class="text-[8px] font-bold text-emerald-300">watts</p>
+                  <p class="text-[8px] text-gray-400">Average power (W) for the period → displayed as kW per slot</p>
+                  <p class="text-[8px] text-sky-400 mt-0.5">SD use: current production signal for dispatch decisions</p>
+                </div>
+                <div class="rounded p-1.5" style="background:rgba(0,0,0,0.2)">
+                  <p class="text-[8px] font-bold text-emerald-300">watt_hours_period ← PRIMARY</p>
+                  <p class="text-[8px] text-gray-400">Energy (Wh) produced in each 30-min period</p>
+                  <p class="text-[8px] text-sky-400 mt-0.5">SD use: slot kWh for SOC trajectory projection &amp; charge/discharge scheduling</p>
+                </div>
+              </div>
+              <div class="space-y-1.5">
+                <div class="rounded p-1.5" style="background:rgba(0,0,0,0.2)">
+                  <p class="text-[8px] font-bold text-gray-300">watt_hours</p>
+                  <p class="text-[8px] text-gray-400">Cumulative daily meter — resets at midnight</p>
+                  <p class="text-[8px] text-gray-500 mt-0.5">Informational only (daily running total)</p>
+                </div>
+                <div class="rounded p-1.5" style="background:rgba(0,0,0,0.2)">
+                  <p class="text-[8px] font-bold text-gray-300">watt_hours_day</p>
+                  <p class="text-[8px] text-gray-400">Total Wh per day across all daylight periods</p>
+                  <p class="text-[8px] text-sky-400 mt-0.5">SD use: daily capacity estimate for TOU planning</p>
+                </div>
+              </div>
+            </div>
+            <p class="text-[8px] text-gray-600 mt-2">
+              Same API called by HA Forecast.Solar integration. Same inputs (lat, lng, tilt, azimuth, kWp). Same JSON schema.
+              HA exposes these as sensor entities; this system stores them as 30-min slots in the forecast cache.
+            </p>
+          </div>
+
+          <!-- Full slot table -->
+          <div class="rounded-xl overflow-hidden" style="border:1px solid rgba(255,255,255,0.06)">
+            <div class="px-3 py-2 flex items-center justify-between" style="background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.06)">
+              <p class="text-[9px] font-bold text-gray-400">Complete Slot Schedule</p>
+              <p class="text-[8px] text-gray-600">
+                <span class="text-emerald-400">■</span> Today &nbsp;
+                <span class="text-sky-400">■</span> Tomorrow &nbsp;
+                <span class="text-gray-600">■</span> Night / zero production
+              </p>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-[9px]">
+                <thead>
+                  <tr style="background:rgba(255,255,255,0.02)">
+                    <th class="px-3 py-1.5 text-left text-gray-500 font-bold">Local Time</th>
+                    <th class="px-3 py-1.5 text-right text-gray-500 font-bold">Avg kW</th>
+                    <th class="px-3 py-1.5 text-right text-gray-500 font-bold">Wh / slot</th>
+                    <th class="px-3 py-1.5 text-right text-gray-500 font-bold">kWh / slot</th>
+                    <th class="px-3 py-1.5 text-left text-gray-500 font-bold">Smart Dispatch use</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(row, i) in forecastRows" :key="i">
+                    <tr :style="i % 2 === 0 ? 'background:rgba(255,255,255,0.01)' : ''"
+                        class="border-t border-white/3">
+                      <td class="px-3 py-1 font-mono" :class="row.dayClass" x-text="row.localTime"></td>
+                      <td class="px-3 py-1 text-right font-mono text-gray-200" x-text="row.pv_kw.toFixed(3)"></td>
+                      <td class="px-3 py-1 text-right font-mono text-gray-300" x-text="row.wh.toFixed(0)"></td>
+                      <td class="px-3 py-1 text-right font-mono" :class="row.pv_kw > 0 ? 'text-emerald-400' : 'text-gray-600'" x-text="(row.wh/1000).toFixed(3)"></td>
+                      <td class="px-3 py-1 text-gray-500" x-text="row.sdUse"></td>
+                    </tr>
+                  </template>
+                </tbody>
+                <tfoot>
+                  <tr style="background:rgba(255,255,255,0.04);border-top:1px solid rgba(255,255,255,0.08)">
+                    <td class="px-3 py-1.5 text-gray-400 font-bold">TOTAL</td>
+                    <td class="px-3 py-1.5 text-right text-gray-500">—</td>
+                    <td class="px-3 py-1.5 text-right font-bold text-gray-200" x-text="forecastRows.reduce((s,r) => s + r.wh, 0).toFixed(0) + ' Wh'"></td>
+                    <td class="px-3 py-1.5 text-right font-bold text-emerald-400" x-text="(forecastRows.reduce((s,r) => s + r.wh, 0)/1000).toFixed(2) + ' kWh'"></td>
+                    <td class="px-3 py-1.5 text-gray-600">2-day total</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Refresh -->
+          <div class="flex items-center gap-3 pb-2">
+            <button @click="loadForecastData(true)" :disabled="forecastLoading"
+                    class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/30 transition disabled:opacity-50">
+              <i class="fa-solid" :class="forecastLoading ? 'fa-spinner fa-spin' : 'fa-rotate-right'"></i>
+              <span x-text="forecastLoading ? 'Fetching…' : 'Force Refresh from API'"></span>
+            </button>
+            <p class="text-[9px] text-gray-600">
+              Free tier: ~10 requests/day. Cache is used automatically between refreshes.
+            </p>
+          </div>
+
+        </div>
+      </template>
+
+    </div>
+  </div><!-- end forecast viewer modal -->
+
+</div><!-- end x-data solarSetupPanel -->
+
+<script>
+function solarSetupPanel() {
+  return {
+    // ── state ──────────────────────────────────────────────────────
+    cfg: {
+      lat: null, lng: null, kwp: null, tilt: null, azimuth: null,
+      home_load_assumption_kw: 0.5,
+      source: null,
+      forecast_solar_api_key: '', forecast_solar_rate_limit_mins: 30, solcast_api_key: '', solcast_site_id: '',
+      ha_solar_actual_entity: '', ha_solar_forecast_entity: '',
+      ha_solar_curtail_entity: '',
+      enphase_mode: 'none', enphase_token: null, enphase_token_expiry: null,
+      enphase_serial: '', enphase_host: '', enphase_enlighten_user: '',
+      enphase_enlighten_password: '', enphase_slew_rate: 500, enphase_export_limit_w: 0,
+    },
+    // Lat/lng raw text inputs — synced from cfg after async loadConfig()
+    latRaw: '', lngRaw: '', latWarn: '',
+    syncingLocation: false,
+    status: null,
+    expandProvider: '',
+    showNoSolarWarning: false,
+    forecastToday: null,
+    forecastMiniSlots: null,   // 48-slot today view for inline mini chart
+    forecastMiniPeak: 0,       // max pv_kw for normalising bar heights
+    forecastMiniActualKwh: null, // today's actual kWh from FranklinWH Cloud API
+    envoyWatts: null,
+    envoyTodayWh: null,
+    envoyPolling: false,
+    envoyError: null,
+    enphaseAccountType: null,
+
+    // ── save states ────────────────────────────────────────────────
+    savingPV: false, pvSaveResult: null,
+    savingProvider: false, providerSaveResult: null,
+    savingEnphase: false, enphaseSaveResult: null,
+
+    // ── test states ────────────────────────────────────────────────
+    testingProvider: false, providerTestResult: null,
+    fetchingToken: false,
+    testingEnphase: false, enphaseResult: null,
+    refreshing: false, refreshResult: null,
+
+    // ── diagnostics state ──────────────────────────────────────────
+    showDiagnosticsModal: false,
+    diagRunning: false,
+    diagResult: null,
+
+    // ── forecast viewer state ──────────────────────────────────────
+    showForecastViewer: false,
+    forecastLoading: false,
+    forecastData: null,
+    viewMode: 'forecast',       // 'forecast' | 'centred'
+    pastHours: 12,
+    futureHours: 24,
+    actualsData: null,
+    actualsLoading: false,
+    actualsError: '',
+
+    get forecastDays() {
+      if (!this.forecastData?.slots?.length) return [];
+      const slots = this.forecastData.slots;
+      // Group by local date
+      const groups = {};
+      for (const s of slots) {
+        const local = new Date(s.timestamp).toLocaleDateString('en-AU', {weekday:'short', month:'short', day:'numeric'});
+        if (!groups[local]) groups[local] = [];
+        groups[local].push(s);
+      }
+      return Object.entries(groups).map(([label, daySlots]) => {
+        const peakSlot = daySlots.reduce((a,b) => a.pv_kw > b.pv_kw ? a : b, daySlots[0]);
+        const totalWh  = daySlots.reduce((s, x) => s + (x.pv_wh || x.pv_kw * 500), 0);
+        const daylight = daySlots.filter(s => s.pv_kw > 0);
+        return {
+          label,
+          total_kwh: totalWh / 1000,
+          peak_kw:   peakSlot.pv_kw,
+          peak_time: new Date(peakSlot.timestamp).toLocaleTimeString('en-AU', {hour:'2-digit', minute:'2-digit'}),
+          slots:     daySlots.length,
+          daylight_h: (daylight.length * 0.5).toFixed(1),
+        };
+      });
+    },
+
+    get forecastRows() {
+      if (!this.forecastData?.slots?.length) return [];
+      const today = new Date().toLocaleDateString('en-AU');
+      return this.forecastData.slots.map(s => {
+        const local   = new Date(s.timestamp);
+        const slotDay = local.toLocaleDateString('en-AU');
+        const isToday = slotDay === today;
+        const isTomorrow = !isToday && this.forecastDays.findIndex(d => d.label !== this.forecastDays[0]?.label) > -1;
+        const wh = s.pv_wh !== undefined ? s.pv_wh : s.pv_kw * 500;
+        let sdUse = '—';
+        if (s.pv_kw > 2.0)  sdUse = 'High gen: charge battery / export surplus';
+        else if (s.pv_kw > 0.5) sdUse = 'Moderate gen: partial self-consumption';
+        else if (s.pv_kw > 0)  sdUse = 'Low gen: self-consumption only';
+        else sdUse = 'Night: no solar — discharge / grid as needed';
+        return {
+          localTime: local.toLocaleString('en-AU', {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}),
+          pv_kw:  s.pv_kw,
+          wh,
+          dayClass: isToday ? 'text-emerald-400' : (slotDay !== today ? 'text-sky-400' : 'text-gray-500'),
+          sdUse,
+        };
+      });
+    },
+
+    get chartWidth() { return (this.forecastData?.slots?.length || 48) * 12; },
+
+    // ── unified chart computed (works for both modes) ──────────────
+    _barW: 12,
+
+    get activeChartBars() {
+      if (this.viewMode === 'centred') return this._centredBars;
+      return this.chartBars;
+    },
+    get activeChartWidth() {
+      if (this.viewMode === 'centred') return this._centredSlots.length * this._barW;
+      return this.chartWidth;
+    },
+
+    get chartBars() {
+      if (!this.forecastData?.slots?.length) return [];
+      const slots = this.forecastData.slots;
+      const maxKw  = Math.max(...slots.map(s => s.pv_kw), 0.01);
+      const today  = new Date().toLocaleDateString('en-AU');
+      return slots.map((s, i) => {
+        const wh      = s.pv_wh !== undefined ? s.pv_wh : s.pv_kw * 500;
+        const slotDay = new Date(s.timestamp).toLocaleDateString('en-AU');
+        const pct     = Math.round((s.pv_kw / maxKw) * 100);
+        const color   = s.pv_kw === 0 ? '#374151'
+                      : slotDay === today ? '#10b981' : '#38bdf8';
+        const localT  = new Date(s.timestamp).toLocaleTimeString('en-AU', {hour:'2-digit', minute:'2-digit'});
+        return { pct, color, isNow: false, label: `${localT} — ${s.pv_kw.toFixed(2)} kW · ${wh.toFixed(0)} Wh` };
+      });
+    },
+
+    // Night gap: detect the gap between last today-slot and first tomorrow-slot
+    get nightGapX() {
+      if (this.viewMode !== 'forecast') return null;
+      const bars = this.chartBars;
+      if (!bars.length) return null;
+      const today = new Date().toLocaleDateString('en-AU');
+      const slots = this.forecastData?.slots || [];
+      let lastTodayI = -1, firstTomI = -1;
+      for (let i = 0; i < slots.length; i++) {
+        const d = new Date(slots[i].timestamp).toLocaleDateString('en-AU');
+        if (d === today) lastTodayI = i;
+        else if (lastTodayI >= 0 && firstTomI < 0) firstTomI = i;
+      }
+      if (lastTodayI < 0 || firstTomI < 0) return null;
+      return bars[lastTodayI].x + this._barW;
+    },
+    get nightGapW() {
+      if (this.viewMode !== 'forecast') return 0;
+      const slots = this.forecastData?.slots || [];
+      const today = new Date().toLocaleDateString('en-AU');
+      let lastTodayI = -1, firstTomI = -1;
+      for (let i = 0; i < slots.length; i++) {
+        const d = new Date(slots[i].timestamp).toLocaleDateString('en-AU');
+        if (d === today) lastTodayI = i;
+        else if (lastTodayI >= 0 && firstTomI < 0) firstTomI = i;
+      }
+      if (lastTodayI < 0 || firstTomI < 0) return 0;
+      return (firstTomI - lastTodayI - 1) * this._barW;
+    },
+
+    // ── Now Centred mode ──────────────────────────────────────────
+    get _centredSlots() {
+      if (!this.forecastData?.slots?.length) return [];
+      const nowMs = Date.now();
+      const pastMs  = this.pastHours  * 3600 * 1000;
+      const futMs   = this.futureHours * 3600 * 1000;
+      const slotMs  = 30 * 60 * 1000;
+      const winStart = nowMs - pastMs - slotMs;
+      const winEnd   = nowMs + futMs;
+      return (this.forecastData.slots || []).filter(s => {
+        const ts = new Date(s.timestamp).getTime();
+        return ts >= winStart && ts <= winEnd;
+      });
+    },
+    get _centredBars() {
+      const slots  = this._centredSlots;
+      if (!slots.length) return [];
+      const allKw  = [
+        ...slots.map(s => s.pv_kw),
+        ...(this.actualsData?.buckets || []).map(b => b.pv_kw || b.value || 0)
+      ];
+      const maxKw  = Math.max(...allKw, 0.01);
+      const today  = new Date().toLocaleDateString('en-AU');
+      const nowMs  = Date.now();
+      return slots.map((s, i) => {
+        const tsMs   = new Date(s.timestamp).getTime();
+        const wh     = s.pv_wh !== undefined ? s.pv_wh : s.pv_kw * 500;
+        const slotDay = new Date(s.timestamp).toLocaleDateString('en-AU');
+        const isPast = tsMs < nowMs;
+        const isNow  = Math.abs(tsMs - nowMs) < 30 * 60 * 1000;
+        // Check if we have a cloud actual for this slot
+        const slotMin = new Date(s.timestamp).getHours() * 60 + new Date(s.timestamp).getMinutes();
+        const actualBucket = (this.actualsData?.buckets || []).find(b => {
+          const bt = new Date(b.timestamp);
+          return bt.getHours() * 60 + bt.getMinutes() === slotMin;
+        });
+        const displayKw = (isPast && actualBucket) ? (actualBucket.pv_kw || 0) : s.pv_kw;
+        const pct = Math.round((displayKw / maxKw) * 100);
+        const color = displayKw === 0 ? '#374151'
+                    : (isPast && actualBucket) ? '#f59e0b'   // amber = cloud actual
+                    : isPast ? '#065f46'                      // dark green = past forecast
+                    : slotDay === today ? '#10b981' : '#38bdf8';
+        const localT = new Date(s.timestamp).toLocaleTimeString('en-AU', {hour:'2-digit', minute:'2-digit'});
+        const src = (isPast && actualBucket) ? 'cloud actual' : 'forecast';
+        return { pct, color, isNow, label: `${localT} (${src}) — ${displayKw.toFixed(2)} kW · ${wh.toFixed(0)} Wh` };
+      });
+    },
+    get nowPct() {
+      const bars = this._centredBars;
+      if (!bars.length) return 50;
+      const nowIdx = bars.findIndex(b => b.isNow);
+      return nowIdx >= 0 ? Math.round((nowIdx / bars.length) * 100) : 50;
+    },
+    get nowX() {
+      const slots = this._centredSlots;
+      if (!slots.length) return null;
+      const nowMs = Date.now();
+      for (let i = 0; i < slots.length; i++) {
+        if (new Date(slots[i].timestamp).getTime() >= nowMs) {
+          return i * this._barW;
+        }
+      }
+      return slots.length * this._barW;
+    },
+    get actualsPolyline() {
+      return this._actualsPoints.map(p => `${p.x},${p.y}`).join(' ') || null;
+    },
+    get actualsDots() { return this._actualsPoints; },
+    get _actualsPoints() {
+      if (!this.actualsData?.buckets?.length || !this._centredSlots.length) return [];
+      const slots = this._centredSlots;
+      const allKw = [
+        ...slots.map(s => s.pv_kw),
+        ...this.actualsData.buckets.map(b => b.value)
+      ];
+      const maxKw = Math.max(...allKw, 0.01);
+      const barW  = this._barW;
+      // Map each actual bucket to x (matching slot position) + y
+      return this.actualsData.buckets.map(b => {
+        const bMs = new Date(b.timestamp).getTime();
+        // Find the nearest slot index
+        let nearest = 0, minDiff = Infinity;
+        for (let i = 0; i < slots.length; i++) {
+          const d = Math.abs(new Date(slots[i].timestamp).getTime() - bMs);
+          if (d < minDiff) { minDiff = d; nearest = i; }
+        }
+        const x = nearest * barW + barW / 2;
+        const y = 100 - Math.round((b.value / maxKw) * 88);
+        const t = new Date(b.timestamp).toLocaleTimeString('en-AU', {hour:'2-digit', minute:'2-digit'});
+        return { x, y, label: `${t} actual: ${b.value.toFixed(2)} kW (${b.samples} samples)` };
+      }).filter(p => p.y > 0 && p.y < 100);
+    },
+
+    async loadActuals() {
+      this.actualsLoading = true;
+      this.actualsError = '';
+      this.actualsData = null;
+      try {
+        // Get the first gateway short_id
+        const gwR = await fetch('api/gateways');
+        const gwD = await gwR.json();
+        const gateways = gwD.gateways || gwD || [];
+        const shortId  = (Array.isArray(gateways) ? gateways[0] : Object.values(gateways)[0])?.short_id;
+        if (!shortId) throw new Error('No gateway found — check Gateways tab');
+
+        const today = new Date().toISOString().split('T')[0];
+        const r = await fetch(`api/solar/actuals?short_id=${shortId}&date=${today}&bucket_mins=30`);
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.detail || `HTTP ${r.status}`);
+        }
+        const d = await r.json();
+
+        // If past window > 12h, also fetch yesterday and prepend
+        if (this.pastHours > 12) {
+          const yest = new Date(); yest.setDate(yest.getDate() - 1);
+          const yesterday = yest.toISOString().split('T')[0];
+          const yr = await fetch(`api/solar/actuals?short_id=${shortId}&date=${yesterday}&bucket_mins=30`);
+          if (yr.ok) {
+            const yd = await yr.json();
+            d.buckets = [...(yd.buckets || []), ...(d.buckets || [])];
+            d.total_kwh = (d.total_kwh || 0) + (yd.total_kwh || 0);
+          }
+        }
+
+        this.actualsData = d;
+        if (!d.buckets?.length) {
+          this.actualsError = `No cloud data for ${today} — cloud may not have synced yet (try after ~5 minutes).`;
+        }
+      } catch(e) {
+        this.actualsError = 'Failed to load actuals: ' + e.message;
+      }
+      this.actualsLoading = false;
+    },
+
+    async loadForecastData(forceRefresh = false) {
+      this.forecastLoading = true;
+      try {
+        if (forceRefresh) {
+          await fetch('api/solar/refresh', {method:'POST'});
+        }
+        const r = await fetch('api/solar/forecast');
+        this.forecastData = await r.json();
+      } catch(e) {
+        console.error('loadForecastData error:', e);
+      }
+      this.forecastLoading = false;
+    },
+
+
+    // ── init ───────────────────────────────────────────────────────
+    async init() {
+      await Promise.all([this.loadConfig(), this.loadStatus()]);
+      this.loadForecast();
+      // Envoy is contacted on-demand only — user must click the Envoy Now
+      // card's refresh button (or use Refresh Forecast). Avoids hammering an
+      // unreachable local appliance every time the Solar tab is opened.
+      this._checkGatewaySolar();
+      // Auto-expand active provider
+      if (this.cfg.source) this.expandProvider = this.cfg.source;
+    },
+
+    async loadConfig() {
+      try {
+        const r = await fetch('api/solar/config');
+        const d = await r.json();
+        if (d.ok && d.config) {
+          Object.assign(this.cfg, d.config);
+          // Sync raw text inputs NOW that cfg is populated
+          if (this.cfg.lat != null) this.latRaw = this.cfg.lat;
+          if (this.cfg.lng != null) this.lngRaw = this.cfg.lng;
+        }
+      } catch(e) { console.warn('solarSetupPanel loadConfig:', e); }
+    },
+
+    async syncLocation() {
+      this.syncingLocation = true;
+      try {
+        const r = await fetch('api/solar/sync_location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          this.latRaw = d.lat;
+          this.lngRaw = d.lng;
+          this.cfg.lat = d.lat;
+          this.cfg.lng = d.lng;
+          this.$store.app.addToast(`Location synced from cloud: lat=${d.lat}, lng=${d.lng} (${d.city || ''})`, 'info');
+        } else {
+          this.$store.app.addToast(d.detail || 'Failed to sync location from cloud', 'error');
+        }
+      } catch (e) {
+        this.$store.app.addToast(`Sync failed: ${e.message}`, 'error');
+      } finally {
+        this.syncingLocation = false;
+      }
+    },
+
+    async loadStatus() {
+      try {
+        const r = await fetch('api/solar/status');
+        const d = await r.json();
+        if (d.ok) this.status = d;
+      } catch(e) { console.warn('solarSetupPanel loadStatus:', e); }
+    },
+
+    async loadForecast() {
+      try {
+        const [forecastResp, gwResp] = await Promise.all([
+          fetch('api/solar/forecast'),
+          fetch('api/gateways'),
+        ]);
+        const d = await forecastResp.json();
+
+        // ── Fetch FranklinWH Cloud actuals (same source as Reporting tab) ──
+        let actualsBySlot = {}; // key: slotMinute (0,30,60...) -> pv_kw from cloud
+        let actualTotalKwh = null;
+        try {
+          const gwD = await gwResp.json();
+          const gateways = gwD.gateways || gwD || [];
+          const shortId = (Array.isArray(gateways) ? gateways[0] : Object.values(gateways)[0])?.short_id;
+          if (shortId) {
+            const today = new Date().toISOString().split('T')[0];
+            const ar = await fetch(`api/solar/actuals?short_id=${shortId}&date=${today}&bucket_mins=30`);
+            if (ar.ok) {
+              const ad = await ar.json();
+              if (ad.buckets?.length) {
+                for (const b of ad.buckets) {
+                  const t = new Date(b.timestamp);
+                  const slotMin = t.getHours() * 60 + t.getMinutes();
+                  actualsBySlot[slotMin] = b.pv_kw;
+                }
+                actualTotalKwh = ad.total_kwh;
+              }
+            }
+          }
+        } catch(e) { /* actuals fetch failed — mini chart still shows forecast only */ }
+
+        this.forecastMiniActualKwh = actualTotalKwh;
+
+        if (d.ok && d.slots && d.slots.length) {
+          // kWh total forecast (pv_wh if present, else pv_kw * 0.5h)
+          this.forecastToday = d.slots.reduce((s, sl) => s + (sl.pv_wh != null ? sl.pv_wh / 1000 : (sl.pv_kw || 0) * 0.5), 0);
+
+          const now = new Date();
+          const nowMs = now.getTime();
+          const todayStr = now.toLocaleDateString('en-AU');
+          const todaySlots = d.slots.filter(s => {
+            try { return new Date(s.timestamp).toLocaleDateString('en-AU') === todayStr; }
+            catch(e) { return false; }
+          });
+          const slots = (todaySlots.length >= 10 ? todaySlots : d.slots).slice(0, 48);
+
+          // Merge actuals: replace forecast kw with cloud actual for past slots
+          const enriched = slots.map(s => {
+            const ts = new Date(s.timestamp);
+            const diffMins = (ts - nowMs) / 60000;
+            const isPast = diffMins < -25; // slot is clearly in the past
+            const slotMin = ts.getHours() * 60 + ts.getMinutes();
+            const actualKw = actualsBySlot[slotMin];
+            const displayKw = (isPast && actualKw != null) ? actualKw : (s.pv_kw || 0);
+            return {
+              pv_kw:     displayKw,
+              isActual:  isPast && actualKw != null,
+              isCurrent: diffMins >= -30 && diffMins < 30,
+              isNight:   displayKw < 0.01,
+              isPast,
+            };
+          });
+
+          this.forecastMiniPeak = Math.max(...enriched.map(s => s.pv_kw), 0.01);
+          this.forecastMiniSlots = enriched;
+        } else {
+          this.forecastMiniSlots = [];
+        }
+      } catch(e) { this.forecastMiniSlots = []; }
+    },
+
+    async pollEnvoy() {
+      if (this.envoyPolling) return;
+      this.envoyPolling = true;
+      this.envoyError = null;
+      try {
+        const r = await fetch('api/solar/enphase/live');
+        const d = await r.json();
+        if (d.ok) {
+          this.envoyWatts = d.current_w;
+          this.envoyTodayWh = d.today_wh;
+        } else {
+          this.envoyError = d.error || 'Unreachable';
+        }
+      } catch(e) {
+        this.envoyError = 'Network error';
+      } finally {
+        this.envoyPolling = false;
+      }
+    },
+
+    _checkGatewaySolar() {
+      try {
+        const gd = Alpine.store('app')?.gatewayData;
+        if (gd && (gd.solarPower === 0 || gd.solarPower === null) && !this.cfg.ha_solar_curtail_entity) {
+          this.showNoSolarWarning = true;
+        }
+      } catch(e) {}
+    },
+
+    // ── helpers ────────────────────────────────────────────────────
+    setSource(src) {
+      this.cfg.source = src;
+      this.expandProvider = src;
+    },
+
+    parseLat() {
+      let v = String(this.latRaw).trim().replace(/°/g, '').replace(/\s+/g, '');
+      const m = v.match(/^([0-9.]+)\s*([SsNn]?)$/);
+      if (m) {
+        let num = parseFloat(m[1]);
+        if (m[2].toLowerCase() === 's') num = -Math.abs(num);
+        if (m[2].toLowerCase() === 'n') num = Math.abs(num);
+        this.cfg.lat = num;
+        this.latRaw = num;
+        // AU/NZ sign check
+        const likelySouth = this.cfg.lng && parseFloat(this.cfg.lng) > 100 && parseFloat(this.cfg.lng) < 180;
+        this.latWarn = (likelySouth && num > 0) ? `⚠ AU/NZ location — latitude should be negative (e.g. ${-Math.abs(num)})` : '';
+      } else {
+        const num = parseFloat(v);
+        if (!isNaN(num)) { this.cfg.lat = num; this.latWarn = ''; }
+      }
+    },
+
+    parseLng() {
+      let v = String(this.lngRaw).trim().replace(/°/g, '').replace(/\s+/g, '');
+      const m = v.match(/^([0-9.]+)\s*([EeWw]?)$/);
+      if (m) {
+        let num = parseFloat(m[1]);
+        if (m[2].toLowerCase() === 'w') num = -Math.abs(num);
+        if (m[2].toLowerCase() === 'e') num = Math.abs(num);
+        this.cfg.lng = num;
+        this.lngRaw = num;
+      } else {
+        const num = parseFloat(v);
+        if (!isNaN(num)) this.cfg.lng = num;
+      }
+    },
+
+    sourceLabel(src) {
+      return { forecast_solar: 'Forecast.Solar', solcast: 'Solcast', ha_entities: 'HA Entities', openmeteo: 'Open-Meteo', none: 'None' }[src] || src || '—';
+    },
+
+    fmtSync(ts) {
+      if (!ts) return null;
+      try { return new Date(ts).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }); }
+      catch(e) { return ts; }
+    },
+
+    _flash(key, ok, msg, ms = 3000) {
+      this[key] = { ok, msg };
+      setTimeout(() => { this[key] = null; }, ms);
+    },
+
+    // ── save Card 1 ────────────────────────────────────────────────
+    async savePV() {
+      this.savingPV = true;
+      try {
+        const r = await fetch('api/solar/config', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: this.cfg.lat, lng: this.cfg.lng, kwp: this.cfg.kwp,
+            tilt: this.cfg.tilt, azimuth: this.cfg.azimuth,
+            home_load_assumption_kw: this.cfg.home_load_assumption_kw,
+          }),
+        });
+        const d = await r.json();
+        this._flash('pvSaveResult', d.ok, d.ok ? '✓ PV config saved' : (d.detail || 'Save failed'));
+      } catch(e) { this._flash('pvSaveResult', false, 'Network error'); }
+      finally { this.savingPV = false; }
+    },
+
+    // ── save Card 2 ────────────────────────────────────────────────
+    async saveForecastProvider() {
+      this.savingProvider = true;
+      try {
+        const payload = { source: this.cfg.source };
+        if (this.cfg.source === 'forecast_solar') {
+          if (this.cfg.forecast_solar_api_key && !this.cfg.forecast_solar_api_key.includes('*')) {
+            payload.forecast_solar_api_key = this.cfg.forecast_solar_api_key;
+          }
+          if (this.cfg.forecast_solar_rate_limit_mins) {
+            payload.forecast_solar_rate_limit_mins = parseInt(this.cfg.forecast_solar_rate_limit_mins);
+          }
+        }
+        if (this.cfg.source === 'solcast') {
+          if (this.cfg.solcast_api_key && !this.cfg.solcast_api_key.includes('*')) payload.solcast_api_key = this.cfg.solcast_api_key;
+          if (this.cfg.solcast_site_id) payload.solcast_site_id = this.cfg.solcast_site_id;
+        }
+        if (this.cfg.source === 'ha_entities') {
+          payload.ha_solar_actual_entity = this.cfg.ha_solar_actual_entity;
+          payload.ha_solar_forecast_entity = this.cfg.ha_solar_forecast_entity;
+        }
+        const r = await fetch('api/solar/config', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        this._flash('providerSaveResult', d.ok, d.ok ? '✓ Provider saved' : (d.detail || 'Save failed'));
+        if (d.ok) await this.loadStatus();
+      } catch(e) { this._flash('providerSaveResult', false, 'Network error'); }
+      finally { this.savingProvider = false; }
+    },
+
+    // ── test provider ──────────────────────────────────────────────
+    async testProvider(provider) {
+      this.testingProvider = provider;
+      this.providerTestResult = null;
+      try {
+        const r = await fetch('api/solar/test', { method: 'POST' });
+        const d = await r.json();
+        this.providerTestResult = { provider, ok: d.ok, msg: d.ok ? '✓ Connected' : (d.message || 'Failed') };
+        setTimeout(() => { this.providerTestResult = null; }, 5000);
+      } catch(e) {
+        this.providerTestResult = { provider, ok: false, msg: 'Network error' };
+      } finally { this.testingProvider = false; }
+    },
+
+    // ── save Card 3 ────────────────────────────────────────────────
+    async saveEnphase() {
+      this.savingEnphase = true;
+      try {
+        const payload = {
+          enphase_mode: this.cfg.enphase_mode,
+          ha_solar_curtail_entity: this.cfg.ha_solar_curtail_entity || null,
+          enphase_host: this.cfg.enphase_host || null,
+          enphase_serial: this.cfg.enphase_serial || null,
+          enphase_enlighten_user: this.cfg.enphase_enlighten_user || null,
+          enphase_slew_rate: this.cfg.enphase_slew_rate,
+          enphase_export_limit_w: this.cfg.enphase_export_limit_w,
+        };
+        if (this.cfg.enphase_enlighten_password) payload.enphase_enlighten_password = this.cfg.enphase_enlighten_password;
+        const r = await fetch('api/solar/config', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const d = await r.json();
+        this._flash('enphaseSaveResult', d.ok, d.ok ? '✓ Enphase config saved' : (d.detail || 'Save failed'));
+      } catch(e) { this._flash('enphaseSaveResult', false, 'Network error'); }
+      finally { this.savingEnphase = false; }
+    },
+
+    // ── JWT fetch ──────────────────────────────────────────────────
+    async fetchToken() {
+      if (!this.cfg.enphase_host || !this.cfg.enphase_serial || !this.cfg.enphase_enlighten_user || !this.cfg.enphase_enlighten_password) {
+        this._flash('enphaseResult', false, 'Fill in Host, Serial, Email, and Password first');
+        return;
+      }
+      this.fetchingToken = true; this.enphaseResult = null;
+      try {
+        const r = await fetch('api/solar/enphase/fetch-token', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            host: this.cfg.enphase_host, serial: this.cfg.enphase_serial,
+            enlighten_user: this.cfg.enphase_enlighten_user,
+            enlighten_password: this.cfg.enphase_enlighten_password,
+          }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.enphaseAccountType = d.account_type;
+          this.cfg.enphase_token = '(fetched)';
+          this.cfg.enphase_token_expiry = d.expiry;
+          this.enphaseResult = { ok: true, msg: '✓ ' + d.message };
+        } else {
+          this.enphaseResult = { ok: false, msg: d.error || 'JWT fetch failed' };
+        }
+      } catch(e) { this.enphaseResult = { ok: false, msg: 'Network error' }; }
+      finally { this.fetchingToken = false; }
+    },
+
+    // ── test Enphase connection ────────────────────────────────────
+    async testEnphase() {
+      this.testingEnphase = true; this.enphaseResult = null;
+      try {
+        const body = { host: this.cfg.enphase_host, username: 'installer', password: this.cfg.enphase_password || '' };
+        if (this.cfg.enphase_token && this.cfg.enphase_token.startsWith('eyJ')) body.token = this.cfg.enphase_token;
+        const r = await fetch('api/solar/enphase/test', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.enphaseResult = { ok: true, msg: '✓ Envoy connected', detail: d.capabilities };
+        } else {
+          this.enphaseResult = { ok: false, msg: d.error || 'Test failed' };
+        }
+      } catch(e) { this.enphaseResult = { ok: false, msg: 'Network error' }; }
+      finally { this.testingEnphase = false; }
+    },
+
+    // ── refresh forecast ───────────────────────────────────────────
+    async refreshForecast() {
+      this.refreshing = true; this.refreshResult = null;
+      try {
+        const r = await fetch('api/solar/forecast?refresh=true');
+        const d = await r.json();
+        if (d.ok) {
+          this.forecastToday = (d.slots || []).reduce((s, sl) => s + (sl.kwh || 0), 0);
+          await this.loadStatus();
+          this._flash('refreshResult', true, '✓ Forecast refreshed');
+        } else {
+          this._flash('refreshResult', false, 'Refresh failed');
+        }
+        if (this.cfg.enphase_mode === 'direct_envoy') await this.pollEnvoy();
+      } catch(e) { this._flash('refreshResult', false, 'Network error'); }
+      finally { this.refreshing = false; }
+    },
+
+    async runDiagnostics() {
+      this.diagRunning = true;
+      this.diagResult = null;
+      try {
+        const r = await fetch('api/solar/diagnostics', { method: 'POST' });
+        this.diagResult = await r.json();
+      } catch(e) {
+        this.diagResult = {
+          ok: false,
+          summary: '0 OK · 0 WARN · 1 ERR',
+          entries: [{ step: 'network', status: 'error', msg: 'Network error: ' + e.message, detail: '', ts: new Date().toISOString() }],
+        };
+      } finally {
+        this.diagRunning = false;
+      }
+    },
+  };
+}
+</script>

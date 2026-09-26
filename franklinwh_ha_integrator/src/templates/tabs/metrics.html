@@ -1,0 +1,690 @@
+<!-- metrics v2 — live gateway telemetry & historical cloud reporting -->
+<div x-data="metricsTab()" x-init="init()" class="max-w-7xl h-full flex flex-col pt-2 pb-8">
+
+  <div class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-700/50 mb-6 pb-4 flex-shrink-0">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#bar-chart-2"/></svg>
+        Reporting
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5" x-text="currentView === 'cloud' ? 'Historical cloud reporting' : currentView === 'energy_flow' ? 'Energy flow — source to destination breakdown' : currentView === 'power_history' ? 'Battery / grid / home / solar timeline with mode overlays' : 'Live gateway telemetry (last poll)'"></p>
+    </div>
+    <div class="flex items-center gap-2">
+      <!-- Gateway Selector (applies to both tabs) -->
+      <select id="metrics-gw-select" x-model="selectedGw" @change="onGwChange()"
+              x-html="`<option value=''>— all gateways —</option>` + (gateways || []).map(gw => `<option value='${gw.short_id}'>${gw.name || gw.short_id} [${gw.short_id}]</option>`).join('')"
+              class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-blue-500 min-w-48 appearance-none">
+      </select>
+      <!-- View Toggle -->
+      <div class="flex bg-gray-900/50 p-1 border border-gray-700 rounded-xl shadow-inner ml-2">
+        <button @click="setView('cloud')"
+                class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-2"
+                :class="currentView === 'cloud' ? 'bg-blue-600 border border-blue-500 text-white shadow-lg' : 'text-gray-400 hover:text-gray-200'">
+          <i class="fas fa-cloud text-[10px]"></i> Cloud Reporting
+        </button>
+        <button @click="setView('energy_flow')"
+                id="metrics-view-energy-flow"
+                class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-2"
+                :class="currentView === 'energy_flow' ? 'bg-amber-600 border border-amber-500 text-white shadow-lg' : 'text-gray-400 hover:text-gray-200'">
+          <i class="fas fa-project-diagram text-[10px]"></i> Energy Flow
+        </button>
+        <button @click="setView('power_history')"
+                class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-2"
+                :class="currentView === 'power_history' ? 'bg-emerald-600 border border-emerald-500 text-white shadow-lg' : 'text-gray-400 hover:text-gray-200'">
+          <i class="fas fa-chart-line text-[10px]"></i> Power History
+        </button>
+        <button @click="setView('telemetry')"
+                class="px-4 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-2"
+                :class="currentView === 'telemetry' ? 'bg-blue-600 border border-blue-500 text-white shadow-lg' : 'text-gray-400 hover:text-gray-200'">
+          <i class="fas fa-microchip text-[10px]"></i> Device Telemetry
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex-1 overflow-y-auto min-h-0 pr-1">
+    <!-- [1] TAB: CLOUD REPORTING -->
+    <div x-show="currentView === 'cloud'" class="space-y-6 animate-fade-in" style="display:none;">
+      
+      <!-- Cloud Controls -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-gray-800/80 border border-gray-700 rounded-xl p-3">
+        <!-- Sub-tab (series) selector -->
+        <div class="flex items-center gap-1 bg-black/20 border border-gray-700/60 p-1 rounded-lg">
+          <template x-for="opt in [
+              { val: 'system', label: 'System' },
+              { val: 'home',   label: 'Home' },
+              { val: 'apower', label: 'Battery' },
+              { val: 'grid',   label: 'Grid' },
+              { val: 'solar',  label: 'Solar' },
+          ]" :key="opt.val">
+            <button @click="cloudSubTab = opt.val; renderChart()"
+                    class="px-3 py-1.5 text-xs font-bold rounded-lg capitalize transition-all"
+                    :class="cloudSubTab === opt.val
+                      ? 'bg-blue-600 text-white shadow-lg'
+                      : 'text-gray-400 hover:text-white hover:bg-white/10'"
+                    x-text="opt.label"></button>
+          </template>
+        </div>
+        <!-- Period + Date + Refresh -->
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Period type pill buttons -->
+          <div class="flex items-center gap-0.5 bg-black/20 border border-gray-700/60 p-1 rounded-lg">
+            <template x-for="opt in [
+                { val: '1_5m', label: 'Day (5-Min)' },
+                { val: '1',    label: 'Day (Hourly)' },
+                { val: '2',    label: 'Week' },
+                { val: '3',    label: 'Month' },
+                { val: '4',    label: 'Year' },
+                { val: '5',    label: 'Lifetime' },
+            ]" :key="opt.val">
+              <button @click="cloudType = opt.val; loadCloud()"
+                      class="px-2.5 py-1 text-xs font-bold rounded-md transition-all"
+                      :class="cloudType === opt.val
+                        ? 'bg-amber-500 text-white shadow-lg'
+                        : 'text-gray-400 hover:text-white hover:bg-white/10'"
+                      x-text="opt.label"></button>
+            </template>
+          </div>
+          <input type="date" x-model="cloudDate" @change="loadCloud()" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+          <button @click="loadCloud()" class="bg-gray-800 border border-gray-700 hover:bg-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-100 transition-colors">
+            <i class="fas fa-sync-alt" :class="cloudLoading ? 'fa-spin' : ''"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Cloud-coverage banner (BD-20 / #23) — surfaces "unavailable" honestly
+           instead of silently rendering zeros. Fires when the endpoint responded
+           but returned no energy arrays for the selected time span, meaning
+           Week/Month/Year/Lifetime coverage isn't implemented for this data
+           tier by the cloud API (or the API returned empty). Only shown for
+           non-Day views so Day view stays visually clean when solar was just
+           zero overnight. -->
+      <div x-show="cloudData && !cloudFlowSummary.hasData && !cloudFlowSummary.isDetailed"
+           class="rounded-xl border border-amber-700/40 bg-amber-900/10 p-3 flex items-start gap-3">
+        <i class="fas fa-info-circle text-amber-400 mt-0.5 flex-shrink-0"></i>
+        <div class="text-xs text-amber-200/90 leading-relaxed">
+          <span class="font-bold">Historical data not yet available for this time span.</span>
+          The Cloud API's coverage for this aggregation is incomplete;
+          try <button @click="cloudType='1_5m'; loadCloud()" class="underline hover:text-amber-100">Day (5-Min)</button>
+          or <button @click="cloudType='1'; loadCloud()" class="underline hover:text-amber-100">Day (Hourly)</button>
+          for reliable numbers. See <a href="/docs/backlog#bd-20-reporting-drill-down" class="underline hover:text-amber-100">BD-20</a>.
+        </div>
+      </div>
+
+      <!-- Summary cards: left-aligned with per-flow breakdowns from cloudFlowSummary -->
+      <div x-show="cloudData" class="grid grid-cols-2 md:grid-cols-4 gap-3 items-start">
+
+        <!-- SOLAR PRODUCTION -->
+        <div class="rounded-xl border border-yellow-700/40 bg-gray-800 p-4 shadow-lg flex flex-col">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-2.5 h-2.5 rounded-full bg-yellow-400 flex-shrink-0"></span>
+            <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Solar Production</div>
+          </div>
+          <div class="text-xl font-black text-yellow-400 mb-3"
+               x-text="cloudFlowSummary.hasData
+                 ? ((cloudFlowSummary.solar.total || cloudData?.solarProduction || 0).toFixed(2) + ' kWh')
+                 : '—'"></div>
+          <!-- Day detail rows -->
+          <div x-show="cloudFlowSummary.isDetailed" class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+            <div class="flex justify-between text-gray-400"><span>→ Home Load</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.solar.toHome || 0).toFixed(2) + ' kWh'"></span></div>
+            <div class="flex justify-between text-gray-400"><span>→ Battery</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.solar.toBattery || 0).toFixed(2) + ' kWh'"></span></div>
+            <div class="flex justify-between text-gray-400"><span>→ Grid Export</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.solar.toGrid || 0).toFixed(2) + ' kWh'"></span></div>
+          </div>
+          <div x-show="!cloudFlowSummary.isDetailed" class="text-[10px] text-gray-600 mt-2 italic">Load day view for breakdown</div>
+        </div>
+
+        <!-- BATTERY FLOWS -->
+        <div class="rounded-xl border border-emerald-700/40 bg-gray-800 p-4 shadow-lg flex flex-col">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 flex-shrink-0"></span>
+            <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Battery Flows</div>
+          </div>
+          <div class="text-xl font-black text-emerald-400 mb-3"
+               x-text="cloudFlowSummary.hasData
+                 ? ((cloudFlowSummary.battery.total || cloudData?.batteryDischarge || 0).toFixed(2) + ' kWh')
+                 : '—'"></div>
+          <div class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+            <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest">Discharge</div>
+            <div x-show="cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>→ Home Load</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.battery.toHome || 0).toFixed(2) + ' kWh'"></span></div>
+            <div x-show="cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>→ Grid Export</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.battery.toGrid || 0).toFixed(2) + ' kWh'"></span></div>
+            <div x-show="!cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>Total Discharged</span><span class="font-bold text-gray-200" x-text="cloudFlowSummary.hasData ? ((cloudData?.batteryDischarge || 0).toFixed(2) + ' kWh') : '—'"></span></div>
+            <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest pt-1">Charge</div>
+            <div x-show="cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>← Solar</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.battery.fromSolar || 0).toFixed(2) + ' kWh'"></span></div>
+            <div x-show="cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>← Grid</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.battery.fromGrid || 0).toFixed(2) + ' kWh'"></span></div>
+            <div x-show="!cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>Total Charged</span><span class="font-bold text-gray-200" x-text="cloudFlowSummary.hasData ? ((cloudFlowSummary.battery.charged || 0).toFixed(2) + ' kWh') : '—'"></span></div>
+          </div>
+        </div>
+
+        <!-- GRID FLOWS -->
+        <div class="rounded-xl border border-indigo-700/40 bg-gray-800 p-4 shadow-lg flex flex-col">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-2.5 h-2.5 rounded-full bg-indigo-400 flex-shrink-0"></span>
+            <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Grid Flows</div>
+          </div>
+          <div class="text-xl font-black text-indigo-400 mb-3"
+               x-text="cloudFlowSummary.hasData
+                 ? ((cloudData?.gridUse || 0).toFixed(2) + ' kWh')
+                 : '—'"></div>
+          <div class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+            <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest">Import</div>
+            <div x-show="cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>→ Battery</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.grid.toBattery || 0).toFixed(2) + ' kWh'"></span></div>
+            <div x-show="cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>→ Home Load</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.grid.toHome || 0).toFixed(2) + ' kWh'"></span></div>
+            <div x-show="!cloudFlowSummary.isDetailed" class="flex justify-between text-gray-400"><span>Total Import</span><span class="font-bold text-gray-200" x-text="cloudFlowSummary.hasData ? ((cloudData?.gridUse || 0).toFixed(2) + ' kWh') : '—'"></span></div>
+            <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest pt-1">Export</div>
+            <div class="flex justify-between text-gray-400"><span>← Total Exported</span><span class="font-bold text-gray-200" x-text="cloudFlowSummary.hasData ? ((cloudFlowSummary.grid.exported || 0).toFixed(2) + ' kWh') : '—'"></span></div>
+          </div>
+        </div>
+
+        <!-- HOME LOAD -->
+        <div class="rounded-xl border border-sky-700/40 bg-gray-800 p-4 shadow-lg flex flex-col">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-2.5 h-2.5 rounded-full bg-sky-400 flex-shrink-0"></span>
+            <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Home Load</div>
+          </div>
+          <div class="text-xl font-black text-sky-400 mb-3"
+               x-text="cloudFlowSummary.hasData
+                 ? ((cloudFlowSummary.home.total || cloudData?.homeLoad || 0).toFixed(2) + ' kWh')
+                 : '—'"></div>
+          <div x-show="cloudFlowSummary.isDetailed" class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+            <div class="flex justify-between text-gray-400"><span>← Solar</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.home.fromSolar || 0).toFixed(2) + ' kWh'"></span></div>
+            <div class="flex justify-between text-gray-400"><span>← Battery</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.home.fromBattery || 0).toFixed(2) + ' kWh'"></span></div>
+            <div class="flex justify-between text-gray-400"><span>← Grid</span><span class="font-bold text-gray-200" x-text="(cloudFlowSummary.home.fromGrid || 0).toFixed(2) + ' kWh'"></span></div>
+          </div>
+          <div x-show="!cloudFlowSummary.isDetailed" class="text-[10px] text-gray-600 mt-2 italic">Load day view for breakdown</div>
+        </div>
+
+      </div>
+
+      <!-- Cloud Chart Area -->
+      <div class="grid grid-cols-1 gap-4">
+        <div class="rounded-xl border border-gray-700 bg-gray-800/80 p-4 shadow-xl">
+          <div class="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+            <span>Energy Analysis Target</span>
+            <span x-text="cloudLoading ? 'Querying Cloud API...' : (cloudData && !cloudFlowSummary.hasData && !cloudFlowSummary.isDetailed ? 'No historical data for this time span' : 'Ready')"></span>
+          </div>
+          <div id="chart-mount" x-ignore class="relative w-full aspect-[2/1] min-h-[300px]">
+            <!-- Chart.js canvas is dynamically injected here by JS to prevent Alpine JS DOM pointer rot -->
+          </div>
+          
+          <div id="chart-soc-mount" x-show="cloudType === '1' || cloudType === '1_5m'" x-ignore class="relative w-full h-[120px] mt-2 border-t border-gray-700/50 pt-2">
+            <!-- Secondary Chart.js canvas for SOC tracking -->
+          </div>
+          
+          <!-- Debug Raw Output Area -->
+          <div class="mt-4 border border-gray-700/60 rounded-xl bg-gray-800/40 p-4" x-data="{showRawAPI: false}">
+            <div class="flex justify-between items-center cursor-pointer group" @click="showRawAPI = !showRawAPI">
+               <span class="text-xs font-bold text-gray-400 group-hover:text-gray-200 transition-colors flex items-center gap-2">
+                 <i class="fas" :class="showRawAPI ? 'fa-chevron-up' : 'fa-chevron-down'"></i> API Diagnostics (Raw JSON)
+               </span>
+               <button @click.stop="downloadCloudData()" class="px-3 py-1 bg-gray-700 hover:bg-white hover:text-black rounded text-xs text-gray-200 transition-colors shadow font-bold" :disabled="!cloudData">
+                 <i class="fas fa-download mr-1"></i> Export
+               </button>
+            </div>
+            <div x-show="showRawAPI" x-transition class="mt-4">
+              <pre class="bg-gray-950 border border-gray-800 rounded-lg p-4 text-[10px] text-gray-400 font-mono overflow-x-auto max-h-[400px] shadow-inner" x-text="cloudData ? JSON.stringify(cloudData, null, 2) : 'No data fetched'"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div> <!-- End Cloud view -->
+
+    <!-- [2] TAB: ENERGY FLOW (SANKEY) -->
+    <div x-show="currentView === 'energy_flow'" class="space-y-4 animate-fade-in" style="display:none;">
+
+      <!-- Controls: reuse cloudDate / cloudType (shared with Cloud Reporting) -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-gray-800/80 border border-gray-700 rounded-xl p-3">
+        <!-- Period type -->
+        <div class="flex items-center gap-1 bg-gray-900 p-1 rounded-lg">
+          <template x-for="opt in [
+              { val: '1_5m', label: 'Day (5-Min)' },
+              { val: '1',    label: 'Day (Hourly)' },
+              { val: '2',    label: 'Week' },
+              { val: '3',    label: 'Month' },
+              { val: '4',    label: 'Year' },
+          ]" :key="opt.val">
+            <button @click="cloudType = opt.val"
+                    class="px-3 py-1 text-xs font-bold rounded capitalize transition-all"
+                    :class="cloudType === opt.val
+                      ? 'bg-amber-500 text-white shadow-lg'
+                      : 'text-gray-400 hover:text-white hover:bg-white/10'"
+                    x-text="opt.label">
+            </button>
+          </template>
+        </div>
+        <!-- Date nav + Load -->
+        <div class="flex items-center gap-2">
+          <button @click="sankeyPrevDate()" id="reporting-prev-date"
+                  class="bg-gray-800 border border-gray-700 hover:bg-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 transition-colors">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+          <input type="date" x-model="cloudDate" :max="new Date().toISOString().split('T')[0]"
+                 class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+          <button @click="sankeyNextDate()" id="reporting-next-date"
+                  class="bg-gray-800 border border-gray-700 hover:bg-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 transition-colors"
+                  :disabled="cloudDate >= new Date().toISOString().split('T')[0]"
+                  :class="cloudDate >= new Date().toISOString().split('T')[0] ? 'opacity-40 cursor-not-allowed' : ''">
+            <i class="fas fa-chevron-right"></i>
+          </button>
+          <button @click="loadSankey()" id="reporting-ef-load"
+                  class="bg-amber-600 hover:bg-amber-500 text-white rounded-lg px-4 py-1.5 text-xs font-bold transition-colors flex items-center gap-2 ml-1">
+            <i class="fas fa-sync-alt" :class="sankeyLoading ? 'fa-spin' : ''"></i> Load
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading -->
+      <template x-if="sankeyLoading">
+        <div class="rounded-xl border border-gray-700 bg-gray-800/80 flex items-center justify-center gap-3 py-16 text-gray-400 shadow-xl">
+          <i class="fas fa-circle-notch fa-spin"></i>
+          <span>Querying Cloud API…</span>
+        </div>
+      </template>
+
+      <!-- Empty -->
+      <template x-if="!sankeyLoading && !sankeyData">
+        <div class="rounded-xl border border-gray-700 bg-gray-800/80 flex flex-col items-center justify-center gap-3 py-16 text-center shadow-xl">
+          <i class="fas fa-project-diagram text-4xl text-gray-600 mb-4"></i>
+          <div class="text-gray-300 font-medium">Select a period and click Load.</div>
+          <div class="text-xs text-gray-500">Energy flow data is fetched on demand — no background polling.</div>
+        </div>
+      </template>
+
+      <!-- Charts + breakdown cards -->
+      <template x-if="!sankeyLoading && sankeyData">
+        <div class="space-y-4">
+
+          <!-- Breakdown summary cards (clickable — filter Sankey to focused view) -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+
+            <!-- Solar card -->
+            <button @click="focusCard('solar')"
+                    id="ef-card-solar"
+                    :class="sankeyFocus === 'solar'
+                      ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-gray-900 scale-[1.02]'
+                      : 'hover:ring-1 hover:ring-yellow-600/50'"
+                    class="rounded-xl border border-yellow-700/40 bg-gray-800 p-4 shadow-lg text-left w-full flex flex-col transition-all duration-150 focus:outline-none">
+              <div class="flex items-start justify-between gap-2 mb-1">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-yellow-400 flex-shrink-0"></span>
+                  <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Solar Production</div>
+                </div>
+                <span x-show="sankeyFocus === 'solar'" class="text-[9px] font-black text-amber-400 uppercase tracking-widest">Focused ✕</span>
+              </div>
+              <div class="text-2xl font-black text-yellow-400 mb-3" x-text="(flowSummary.solar.total || 0).toFixed(2) + ' kWh'"></div>
+              <div class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8594; Home Load</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.solar.toHome || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8594; Battery</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.solar.toBattery || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8594; Grid Export</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.solar.toGrid || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+              </div>
+            </button>
+
+            <!-- Battery Flows card -->
+            <button @click="focusCard('battery')"
+                    id="ef-card-battery"
+                    :class="sankeyFocus === 'battery'
+                      ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-gray-900 scale-[1.02]'
+                      : 'hover:ring-1 hover:ring-emerald-600/50'"
+                    class="rounded-xl border border-emerald-700/40 bg-gray-800 p-4 shadow-lg text-left w-full flex flex-col transition-all duration-150 focus:outline-none">
+              <div class="flex items-start justify-between gap-2 mb-1">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 flex-shrink-0"></span>
+                  <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Battery Flows</div>
+                </div>
+                <span x-show="sankeyFocus === 'battery'" class="text-[9px] font-black text-amber-400 uppercase tracking-widest">Focused ✕</span>
+              </div>
+              <div class="text-2xl font-black text-emerald-400 mb-3" x-text="(flowSummary.battery.total || 0).toFixed(2) + ' kWh'"></div>
+              <div class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+                <!-- Discharge outflows -->
+                <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest pt-0.5">Discharge</div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8594; Home Load</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.battery.toHome || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8594; Grid Export</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.battery.toGrid || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <!-- Charge inflows -->
+                <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest pt-1">Charge</div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8592; Solar Charge</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.battery.fromSolar || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8592; Grid Charge</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.battery.fromGrid || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+              </div>
+            </button>
+
+            <!-- Grid Flows card -->
+            <button @click="focusCard('grid')"
+                    id="ef-card-grid"
+                    :class="sankeyFocus === 'grid'
+                      ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-gray-900 scale-[1.02]'
+                      : 'hover:ring-1 hover:ring-indigo-600/50'"
+                    class="rounded-xl border border-indigo-700/40 bg-gray-800 p-4 shadow-lg text-left w-full flex flex-col transition-all duration-150 focus:outline-none">
+              <div class="flex items-start justify-between gap-2 mb-1">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-indigo-400 flex-shrink-0"></span>
+                  <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Grid Flows</div>
+                </div>
+                <span x-show="sankeyFocus === 'grid'" class="text-[9px] font-black text-amber-400 uppercase tracking-widest">Focused ✕</span>
+              </div>
+              <div class="text-2xl font-black text-indigo-400 mb-3" x-text="(flowSummary.grid.total || 0).toFixed(2) + ' kWh'"></div>
+              <div class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+                <!-- Import inflows -->
+                <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest pt-0.5">Import</div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8594; Battery Import</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.grid.toBattery || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8594; Home Load</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.grid.toHome || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <!-- Export outflows -->
+                <div class="text-[9px] font-black text-gray-600 uppercase tracking-widest pt-1">Export</div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8592; Battery Export</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.grid.exportFromBattery || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8592; Solar Export</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.grid.exportFromSolar || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+              </div>
+            </button>
+
+            <!-- Home Load card -->
+            <button @click="focusCard('home')"
+                    id="ef-card-home"
+                    :class="sankeyFocus === 'home'
+                      ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-gray-900 scale-[1.02]'
+                      : 'hover:ring-1 hover:ring-sky-600/50'"
+                    class="rounded-xl border border-sky-700/40 bg-gray-800 p-4 shadow-lg text-left w-full flex flex-col transition-all duration-150 focus:outline-none">
+              <div class="flex items-start justify-between gap-2 mb-1">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-sky-400 flex-shrink-0"></span>
+                  <div class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Home Load</div>
+                </div>
+                <span x-show="sankeyFocus === 'home'" class="text-[9px] font-black text-amber-400 uppercase tracking-widest">Focused ✕</span>
+              </div>
+              <div class="text-2xl font-black text-sky-400 mb-3" x-text="(flowSummary.home.total || 0).toFixed(2) + ' kWh'"></div>
+              <div class="space-y-1 border-t border-gray-700/60 pt-2 text-[11px]">
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8592; Solar</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.solar.toHome || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8592; Battery</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.battery.toHome || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+                <div class="flex justify-between text-gray-400">
+                  <span>&#8592; Grid</span>
+                  <span class="font-bold text-gray-200" x-text="(flowSummary.grid.toHome || 0).toFixed(2) + ' kWh'"></span>
+                </div>
+              </div>
+            </button>
+
+          </div> <!-- /breakdown cards -->
+
+
+          <!-- Sankey chart -->
+          <div class="rounded-xl border border-gray-700 bg-gray-800/80 p-4 shadow-xl">
+            <div class="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex justify-between items-center">
+              <div class="flex items-center gap-3">
+                <span>Energy Flow Sankey</span>
+                <!-- Focus label -->
+                <template x-if="sankeyFocus">
+                  <span class="flex items-center gap-1.5 text-amber-400">
+                    <span x-text="{
+                      solar: '— Solar Focus',
+                      battery: '— Battery Focus',
+                      grid: '— Grid Focus',
+                      home: '— Home Load Focus'
+                    }[sankeyFocus] || ''"></span>
+                    <button @click="focusCard(sankeyFocus)"
+                            class="text-[9px] text-amber-500 hover:text-amber-300 border border-amber-700/50 rounded px-1 py-0.5 transition-colors"
+                            title="Clear focus — show all flows">✕ Clear</button>
+                  </span>
+                </template>
+              </div>
+              <span class="text-amber-400 font-bold" x-show="sankeyReady">&#10003; Rendered</span>
+            </div>
+            <div id="reporting-sankey-mount" x-ignore class="relative w-full" style="min-height: 460px;">
+              <!-- chartjs-chart-sankey canvas injected here -->
+            </div>
+          </div>
+
+        </div>
+      </template>
+
+    </div> <!-- End Energy Flow view -->
+
+    <!-- [4] TAB: POWER HISTORY (Batch Q — Bridge-inspired timeline) -->
+    <div x-show="currentView === 'power_history'" class="space-y-4 animate-fade-in" style="display:none;">
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-gray-800/80 border border-gray-700 rounded-xl p-3">
+         <div class="flex items-center gap-2">
+            <span class="text-[10px] font-black uppercase tracking-widest text-gray-400">Window:</span>
+            <template x-for="opt in [{v:'1h',l:'1h'},{v:'6h',l:'6h'},{v:'24h',l:'24h'},{v:'7d',l:'7d'}]" :key="opt.v">
+               <button @click="phWindow = opt.v; loadPowerHistory()"
+                       class="px-3 py-1.5 text-xs font-bold rounded-lg transition-all"
+                       :class="phWindow === opt.v ? 'bg-emerald-600 text-white shadow' : 'text-gray-400 hover:text-white hover:bg-white/10'"
+                       x-text="opt.l"></button>
+            </template>
+         </div>
+         <div class="flex items-center gap-3">
+            <span class="text-[10px] font-mono" style="color:var(--text-muted)"
+                  x-text="phRows.length + ' rows'"></span>
+            <label class="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest cursor-pointer text-gray-400">
+               <input type="checkbox" x-model="phShowStale" class="rounded text-amber-500 bg-gray-900 border-gray-700 focus:ring-amber-500 focus:ring-offset-0">
+               <span>Show stale drops</span>
+            </label>
+            <button @click="loadPowerHistory()" :disabled="phLoading"
+                    class="px-4 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs font-bold text-gray-100 hover:bg-gray-700 flex items-center gap-2">
+              <i class="fa-solid fa-arrows-rotate" :class="phLoading ? 'fa-spin' : ''"></i> Refresh
+            </button>
+         </div>
+      </div>
+
+      <!-- Chart card -->
+      <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-4">
+         <div class="flex items-center justify-between mb-2">
+            <div>
+               <h3 class="text-sm font-bold text-gray-100">Power History</h3>
+               <p class="text-[10px] text-gray-500">
+                  Battery / Grid / Home / Solar (kW) — SoC on secondary axis. Mode transitions annotated below.
+               </p>
+            </div>
+            <div class="text-[9px] font-mono text-gray-500" x-text="phRows.length === 0 ? '' : `${phRows[0]?.ts} → ${phRows[phRows.length-1]?.ts}`"></div>
+         </div>
+         <div class="relative" style="height: 380px;">
+            <canvas id="phChart"></canvas>
+            <div x-show="!phLoading && phRows.length === 0"
+                 class="absolute inset-0 flex items-center justify-center text-xs text-gray-500 italic font-bold uppercase tracking-widest">
+               No telemetry in this window for the selected gateway.
+            </div>
+         </div>
+      </div>
+
+      <!-- Mode transitions strip -->
+      <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-4"
+           x-show="phModeTransitions.length > 0" x-cloak>
+         <h3 class="text-sm font-bold text-gray-100 mb-2 flex items-center gap-2">
+            <i class="fa-solid fa-diagram-project text-[10px] text-purple-400"></i>
+            Mode Transitions
+            <span class="text-[9px] font-mono text-gray-500" x-text="`(${phModeTransitions.length})`"></span>
+         </h3>
+         <div class="overflow-x-auto">
+            <table class="w-full text-left text-[11px] font-mono">
+               <thead>
+                  <tr class="text-[9px] font-black uppercase tracking-widest text-gray-500">
+                     <th class="px-3 py-2">Timestamp</th>
+                     <th class="px-3 py-2">From</th>
+                     <th class="px-3 py-2">→</th>
+                     <th class="px-3 py-2">To</th>
+                  </tr>
+               </thead>
+               <tbody class="divide-y divide-white/5">
+                  <template x-for="t in phModeTransitions" :key="t.ts + t.to">
+                     <tr class="hover:bg-white/5">
+                        <td class="px-3 py-2 text-gray-400" x-text="t.ts"></td>
+                        <td class="px-3 py-2 text-gray-300" x-text="t.from"></td>
+                        <td class="px-3 py-2 text-purple-400">→</td>
+                        <td class="px-3 py-2 text-gray-100 font-bold" x-text="t.to"></td>
+                     </tr>
+                  </template>
+               </tbody>
+            </table>
+         </div>
+      </div>
+
+      <!-- Stale drops strip -->
+      <div class="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4"
+           x-show="phShowStale && phStaleRows.length > 0" x-cloak>
+         <h3 class="text-sm font-bold text-amber-300 mb-2 flex items-center gap-2">
+            <i class="fa-solid fa-cloud-bolt text-[10px]"></i>
+            Cloud Stale-Window Drops (Batch I)
+            <span class="text-[9px] font-mono text-amber-500/70" x-text="`(${phStaleRows.length})`"></span>
+         </h3>
+         <p class="text-[10px] text-amber-500/70 mb-2">
+            These polls were dropped by <span class="font-mono">gateway_service._normalise_stats</span> because the FranklinWH cloud returned all-zero data. Not persisted to gateway_metrics; shown here for forensic visibility from container logs.
+         </p>
+      </div>
+    </div> <!-- End Power History view -->
+
+    <div x-show="currentView === 'telemetry'" class="space-y-6 animate-fade-in" style="display:none;">
+      
+      <!-- Old right side sub-header -->
+      <div class="flex items-center justify-between mb-2 relative z-50">
+        <div class="text-[10px] font-black text-gray-500 uppercase tracking-widest px-1">Raw Database Snapshots</div>
+        <div class="flex items-center gap-2">
+          <button class="bg-gray-800 border border-gray-700 hover:bg-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-100 transition-colors" @click="load()" id="btn-metrics-refresh">
+            <i class="fas fa-sync-alt" :class="loading ? 'fa-spin' : ''"></i> Refresh
+          </button>
+          <span class="text-[10px] font-semibold text-gray-500 ml-2" x-text="rows.length + ' records'"></span>
+          
+          <!-- Field chooser -->
+          <div class="relative ml-2" x-data="{open:false}">
+            <button class="bg-gray-800 border border-gray-700 hover:bg-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-100 transition-colors flex items-center gap-2" @click="open=!open" @click.outside="open=false">
+              <i class="fas fa-cog"></i> Fields
+            </button>
+            <div x-show="open" class="absolute right-0 top-full mt-2 bg-gray-800 border border-gray-700 rounded-xl p-4 z-50 w-72 shadow-2xl max-h-[60vh] overflow-y-auto hidden" :class="{'hidden': !open}">
+              <div class="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Active Columns</div>
+              <template x-for="(fieldKey, idx) in selectedFields.filter(k => availableFields.find(f => f.key === k))" :key="fieldKey">
+                <div class="flex items-center justify-between bg-gray-700/50 border border-gray-600/50 rounded-lg p-2 mb-1">
+                  <label class="flex items-center gap-2 text-[11px] text-gray-200 flex-1 cursor-pointer">
+                    <input type="checkbox" :value="fieldKey" x-model="selectedFields" @change="saveFields()" class="accent-blue-500">
+                    <span x-text="(availableFields.find(f => f.key === fieldKey) || {label: fieldKey}).label"></span>
+                  </label>
+                  <div class="flex gap-1">
+                    <button class="text-gray-400 hover:text-gray-200 text-[10px] px-1" @click.stop="moveField(idx, -1)" :disabled="idx === 0"><i class="fas fa-arrow-up"></i></button>
+                    <button class="text-gray-400 hover:text-gray-200 text-[10px] px-1" @click.stop="moveField(idx, 1)" :disabled="idx === selectedFields.length - 1"><i class="fas fa-arrow-down"></i></button>
+                  </div>
+                </div>
+              </template>
+              <div class="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-4 mb-2">Available Columns (<span x-text="availableFields.filter(x => !selectedFields.includes(x.key)).length"></span>)</div>
+              <template x-for="f in availableFields.filter(x => !selectedFields.includes(x.key))" :key="f.key">
+                <label class="flex items-center gap-2 text-[11px] text-gray-400 p-2 rounded-lg cursor-pointer hover:bg-gray-700/30 transition-colors">
+                  <input type="checkbox" :value="f.key" x-model="selectedFields" @change="saveFields()" class="accent-blue-500">
+                  <span x-text="f.label" class="break-all font-mono"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Loading -->
+      <template x-if="loading && rows.length === 0">
+        <div class="rounded-xl border border-gray-700 bg-gray-800/80 flex items-center justify-center gap-3 py-12 text-gray-400 shadow-xl mb-6">
+          <i class="fas fa-circle-notch fa-spin"></i>
+          <span>Loading telemetry…</span>
+        </div>
+      </template>
+
+      <!-- No data -->
+      <template x-if="rows.length === 0 && !loading">
+        <div class="rounded-xl border border-gray-700 bg-gray-800/80 flex flex-col items-center justify-center gap-3 py-16 text-center shadow-xl mb-6">
+          <i class="fas fa-satellite-dish text-4xl text-gray-600 mb-4"></i>
+          <div class="text-gray-300 font-medium">No telemetry records yet.</div>
+          <div class="text-xs text-gray-500">Records are written on each successful Cloud API poll.</div>
+        </div>
+      </template>
+
+      <!-- Latest snapshot -->
+      <template x-if="rows.length > 0 && latest">
+        <div>
+          <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between mb-3 px-1">
+            <span>Latest Snapshot</span>
+            <span class="text-gray-500 font-mono" x-text="latest.short_id + ' — ' + latest.timestamp"></span>
+          </div>
+          <!-- Power flow cards -->
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6" id="metrics-power-cards">
+            <template x-for="(field, index) in powerFields" :key="index">
+              <div class="rounded-xl border border-gray-700 bg-gray-800 p-4 text-center shadow-lg">
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1" x-text="field.label"></div>
+                <div class="text-xl font-[100] text-gray-100"
+                     x-text="getVal(latest.data, field.path) != null ? getVal(latest.data, field.path) + ' ' + (field.unit || '') : '—'">
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Raw JSON toggle -->
+          <div class="rounded-xl border border-gray-700 bg-gray-800/80 p-4 mb-6 shadow-xl" x-data="{showRaw: false}">
+            <div class="cursor-pointer flex items-center justify-between text-sm font-bold text-gray-400 hover:text-gray-200 transition-colors" @click="showRaw = !showRaw">
+              <span class="flex items-center gap-2"><i class="fas fa-file-code"></i> Raw JSON</span>
+              <i class="fas" :class="showRaw ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+            </div>
+            <template x-if="showRaw">
+              <pre class="mt-4 text-[10px] sm:text-xs overflow-auto max-h-80 text-gray-300 font-mono bg-gray-900 border border-gray-700 rounded-lg p-3"
+                   x-text="JSON.stringify(latest.data, null, 2)"></pre>
+            </template>
+          </div>
+
+          <!-- Recent records table -->
+          <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 px-1">Recent Records</div>
+          <div class="rounded-xl border border-gray-700 bg-gray-800/80 overflow-hidden shadow-xl">
+            <div class="overflow-x-auto max-h-[45vh] overflow-y-auto">
+              <table class="w-full text-xs text-left" id="metrics-table">
+                <thead class="bg-gray-800 border-b border-gray-700 text-[9px] font-black uppercase tracking-widest text-gray-500 sticky top-0 z-10">
+                  <tr>
+                    <th class="px-4 py-3">Gateway</th>
+                    <th class="px-4 py-3">Timestamp</th>
+                    <template x-for="(fieldKey, idx) in selectedFields" :key="idx">
+                      <th class="px-4 py-3" x-text="(availableFields.find(f => f.key === fieldKey) || {label: fieldKey}).label"></th>
+                    </template>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(r, i) in rows.slice(0, 30)" :key="i">
+                    <tr class="border-b border-gray-700/30 hover:bg-gray-700/30 transition-colors" :class="i % 2 === 1 ? 'bg-gray-800/20' : ''">
+                      <td class="px-4 py-2.5 font-bold text-gray-200 whitespace-nowrap" x-text="r.short_id"></td>
+                      <td class="px-4 py-2.5 text-gray-500 font-mono whitespace-nowrap" x-text="r.timestamp"></td>
+                      <template x-for="fieldKey in selectedFields" :key="fieldKey">
+                        <td class="px-4 py-2.5 text-gray-300 whitespace-nowrap font-mono" x-text="formatField(r.data, fieldKey)"></td>
+                      </template>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </template>
+
+    </div> <!-- end telemetry -->
+  </div> <!-- row expansion -->
+</div>

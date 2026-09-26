@@ -1,0 +1,1399 @@
+<!-- automations v2 — Edge Automation Rule Builder -->
+<style>
+@keyframes pulse-glow-purple {
+    0%   { box-shadow: 0 0 0 0 rgba(168,85,247,.4); }
+    70%  { box-shadow: 0 0 0 6px rgba(168,85,247,0); }
+    100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
+}
+@keyframes pulse-glow-red {
+    0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.4); }
+    70%  { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+    100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+}
+</style>
+
+<div x-data="automationsTab()" x-init="initTab()" class="max-w-7xl">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#bot"/></svg>
+        Automations
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Automate tasks and schedule as one-off or re-occuring execution.</p>
+    </div>
+  </div>
+
+  <!-- Unlock Modal -->
+  <div x-show="showUnlockModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-md border-2 border-[rgba(168,85,247,.5)]">
+      <div class="bg-[rgba(168,85,247,.15)] px-6 py-4 border-b border-[var(--border)]">
+        <h3 class="font-bold flex items-center gap-2 text-[color:#a855f7]">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#lock"/></svg> Automation Access Control
+        </h3>
+      </div>
+      <div class="p-3">
+        <p class="text-[var(--text-secondary)] text-sm mb-4">Edge automations directly control physical hardware. Enter the shown PIN to unlock.</p>
+        <div class="bg-[var(--surface-1)] border border-[var(--border)] rounded-xl text-center py-8 mb-4">
+          <div class="text-xs text-[var(--text-muted)] uppercase tracking-widest mb-2">Enter this PIN</div>
+          <div class="text-5xl font-extrabold tracking-[0.2em]" style="color:#a855f7" x-text="unlockChallenge"></div>
+        </div>
+        <div class="form-group mb-4">
+          <label>Unlock PIN</label>
+          <input class="form-control text-center text-xl tracking-widest font-bold" type="text" inputmode="numeric" maxlength="4"
+                 x-model="userUnlockPin" @keyup.enter="confirmUnlock()" placeholder="_ _ _ _">
+        </div>
+        <div class="text-xs text-[var(--text-muted)]">Session valid for 24 hours. Edge automation rules persist across restarts.</div>
+      </div>
+      <div class="p-3 flex justify-end gap-2 bg-[var(--surface-1)] border-t border-[var(--border)]">
+        <button class="btn btn-secondary" @click="cancelUnlock()">Cancel</button>
+        <button class="btn btn-primary" @click="confirmUnlock()">Unlock Automations</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sub-tabs -->
+  <div class="flex gap-1 border-b border-[var(--border)] mb-6" x-show="!showUnlockModal">
+    <template x-for="tab in [{id:'rules',icon:'list',label:'Automation Rules'},{id:'queue',icon:'clock',label:'Execution Queue'},{id:'history',icon:'history',label:'History Log'},{id:'audit',icon:'shield',label:'Audit Ledger'}]" :key="tab.id">
+      <button @click="view = tab.id; if(tab.id==='history') fetchHistory(); if(tab.id==='audit') fetchAudit();"
+              class="px-6 py-3 font-bold rounded-t-lg transition-all -mb-px border"
+              :class="view === tab.id ? 'text-[var(--accent)] bg-[var(--surface-0)] border-[var(--border)] border-t-[var(--accent)] border-t-4 border-b-[var(--surface-0)] text-[15px]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] border-transparent text-sm bg-transparent'">
+        <svg class="icon mr-1" aria-hidden="true" viewBox="0 0 24 24"><use :href="'#' + tab.icon"/></svg>
+        <span x-text="tab.label"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- ══ RULES ══ -->
+  <div x-show="view === 'rules' && !showUnlockModal" x-cloak>
+    <!-- Toolbar -->
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div class="flex items-center gap-2 flex-1 min-w-56">
+        <input type="text" x-model="searchRules" placeholder="Filter by name, tag, or state…" class="form-control flex-1">
+        <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+          <button type="button" class="form-control flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-[var(--text-secondary)] bg-[var(--surface-0)] border border-[var(--border)] rounded cursor-pointer" @click="open = !open">
+            <span>Columns</span>
+            <svg class="icon w-3 h-3 text-[var(--text-muted)] transition-transform duration-200" :class="open ? 'rotate-180' : ''" aria-hidden="true" viewBox="0 0 24 24"><use href="#chevron-down"/></svg>
+          </button>
+          <div x-show="open" x-cloak class="absolute right-0 mt-1 z-30 w-44 bg-[var(--surface-1)] border border-[var(--border)] rounded shadow-lg p-2 flex flex-col gap-1.5">
+            <label class="flex items-center gap-2 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] p-1 rounded cursor-pointer">
+              <input type="checkbox" x-model="visibleColumns.name" @change="saveColumnPreferences()" class="rounded text-[var(--accent)] focus:ring-[var(--accent)] border-[var(--border)]">
+              <span>Rule Name</span>
+            </label>
+            <label class="flex items-center gap-2 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] p-1 rounded cursor-pointer">
+              <input type="checkbox" x-model="visibleColumns.tags" @change="saveColumnPreferences()" class="rounded text-[var(--accent)] focus:ring-[var(--accent)] border-[var(--border)]">
+              <span>Tags</span>
+            </label>
+            <label class="flex items-center gap-2 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] p-1 rounded cursor-pointer">
+              <input type="checkbox" x-model="visibleColumns.logic" @change="saveColumnPreferences()" class="rounded text-[var(--accent)] focus:ring-[var(--accent)] border-[var(--border)]">
+              <span>Logic / Trigger</span>
+            </label>
+            <label class="flex items-center gap-2 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] p-1 rounded cursor-pointer">
+              <input type="checkbox" x-model="visibleColumns.payload" @change="saveColumnPreferences()" class="rounded text-[var(--accent)] focus:ring-[var(--accent)] border-[var(--border)]">
+              <span>Action Payload</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <label class="text-sm text-[var(--text-muted)]">Retention</label>
+        <select x-model="retentionDays" @change="saveSettings()" class="form-control w-36">
+          <option value="7">7 Days</option>
+          <option value="14">14 Days</option>
+          <option value="30">30 Days</option>
+          <option value="90">90 Days</option>
+        </select>
+        <button class="btn btn-primary" @click="openNewRuleBuilder()" id="btn-new-automation">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#plus"/></svg> New Automation
+        </button>
+      </div>
+    </div>
+
+    <!-- Loading / empty -->
+    <template x-if="loading && jobs.length === 0">
+      <div class="card flex items-center justify-center gap-3 py-12 text-[var(--text-muted)]">
+        <svg class="icon fa-spin" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg> Loading rules…
+      </div>
+    </template>
+    <template x-if="!loading && jobs.length === 0">
+      <div class="card flex flex-col items-center justify-center gap-4 py-16 text-center">
+        <div class="text-4xl">🤖</div>
+        <h3 class="text-lg font-bold text-[var(--text-primary)]">No Automations Defined</h3>
+        <p class="text-sm text-[var(--text-secondary)] max-w-sm">The edge execution engine is idle. Create a rule to orchestrate hardware based on local conditions.</p>
+        <button class="btn btn-primary" @click="openNewRuleBuilder()">Create Rule</button>
+      </div>
+    </template>
+
+    <!-- Rules table -->
+    <div class="card p-0 overflow-hidden" x-show="jobs.length > 0">
+      <table class="data-table text-[11px]">
+        <thead>
+          <tr>
+            <th class="w-10 text-center">State</th>
+            <th class="text-right w-24">Control</th>
+            <th x-show="visibleColumns.name">Rule Name</th>
+            <th x-show="visibleColumns.tags">Tags</th>
+            <th x-show="visibleColumns.logic">Logic / Trigger</th>
+            <th x-show="visibleColumns.payload">Action Payload</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="job in filteredJobs" :key="job.id">
+            <tr :class="!job.enabled ? 'opacity-60' : ''">
+              <!-- Toggle -->
+              <td class="text-center">
+                <button @click="toggleJob(job.id, !job.enabled)" :title="job.enabled ? 'Enabled — click to pause' : 'Paused — click to enable'">
+                  <svg class="icon text-2xl" :class="job.enabled ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" aria-hidden="true" viewBox="0 0 24 24">
+                    <use :href="job.enabled ? '#toggle-right' : '#toggle-left'"/>
+                  </svg>
+                </button>
+              </td>
+              <!-- Controls -->
+              <td class="text-right">
+                <div class="flex gap-1 justify-end flex-wrap">
+                  <button class="icon-btn" @click="executeJobNow(job)" title="Run now" :disabled="job.owner === 'system'">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#play"/></svg>
+                  </button>
+                  <button class="icon-btn" @click="editJob(job)" title="Edit" :disabled="job.owner === 'system'">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#pencil"/></svg>
+                  </button>
+                  <button class="icon-btn text-[var(--danger)]" @click="deleteJob(job.id)" title="Delete" :disabled="job.owner === 'system'">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#trash-2"/></svg>
+                  </button>
+                </div>
+              </td>
+              <!-- Name -->
+              <td x-show="visibleColumns.name">
+                <div class="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
+                  <span x-text="job.name"></span>
+                  <span x-show="job.owner === 'system'" class="chip muted text-xs">system</span>
+                </div>
+                <div class="text-xs text-[var(--text-muted)] mt-0.5" x-text="'Created: ' + formatDate(job.created_at)"></div>
+              </td>
+              <!-- Tags -->
+              <td x-show="visibleColumns.tags">
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="t in (job.tags || [])">
+                    <span class="text-white text-xs px-2 py-0.5 rounded" :style="'background:' + getTagColor(t)" x-text="t"></span>
+                  </template>
+                </div>
+              </td>
+              <!-- Logic -->
+              <td x-show="visibleColumns.logic" class="max-w-xs">
+                <div class="text-[0.75rem] text-[var(--text-secondary)] font-semibold mb-1 flex items-center gap-1">
+                  <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#clock"/></svg>
+                  <template x-if="job.run_at"><span>One-Off Execution: <span x-text="formatDate(job.run_at)"></span></span></template>
+                  <template x-if="!job.run_at"><span x-text="(!job.cron || job.cron === '*/1 * * * *') ? 'Evaluated Continuously (1m)' : 'Schedule: ' + describeCron(job.cron) + ' (' + job.cron + ')'"></span></template>
+                </div>
+                <template x-if="job.conditions && job.conditions.length > 0">
+                  <div class="font-mono text-[0.75rem] bg-[var(--surface-0)] px-2 py-1 rounded border border-[var(--border)] inline-block text-[var(--text-secondary)]">
+                    <template x-for="(c, idx) in job.conditions" :key="idx">
+                      <span>
+                        <span x-show="idx > 0" class="text-[#3b82f6] font-bold" x-text="' ' + (job.condition_logic || 'AND') + ' '"></span>
+                        <span x-text="c.metric"></span>
+                        <span class="text-[var(--danger)]" x-text="' ' + c.operator + ' '"></span>
+                        <span class="text-[var(--ok)]" x-text="c.value"></span>
+                      </span>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="job.duration_secs > 0">
+                  <div class="text-[0.75rem] text-[#3b82f6] mt-1 flex items-center gap-1">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#timer"/></svg>
+                    Maintained continuously for <span class="font-bold" x-text="formatDuration(job.duration_secs)"></span>
+                  </div>
+                </template>
+                <template x-if="!job.conditions || job.conditions.length === 0">
+                    <div class="text-[0.75rem] text-[var(--text-muted)] italic mt-0.5">No sensory conditions bound. Executing natively on schedule.</div>
+                </template>
+              </td>
+              <!-- Actions -->
+              <td x-show="visibleColumns.payload" class="max-w-xs">
+                <template x-for="act in job.actions" :key="act.type">
+                  <div class="text-xs">
+                    <span class="font-bold text-[var(--text-primary)]" x-text="act.type"></span>
+                    <span class="text-[var(--text-muted)]" x-text="' ' + JSON.stringify(act.payload)"></span>
+                  </div>
+                </template>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══ QUEUE ══ -->
+  <div x-show="view === 'queue' && !showUnlockModal" x-cloak>
+    <div class="card p-0 overflow-hidden">
+      <div class="px-5 py-3 bg-[var(--surface-1)] border-b border-[var(--border)] flex justify-between items-center font-semibold text-sm">
+        Execution Queue
+        <button class="btn btn-secondary py-1 px-2 text-xs" @click="fetchJobs()">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg>
+        </button>
+      </div>
+      <div class="overflow-y-auto max-h-[500px]">
+        <table class="data-table text-[11px] w-full relative">
+          <thead class="sticky top-0 bg-[var(--surface-1)] z-10 shadow-sm"><tr><th>ID</th><th>Name</th><th>Trigger</th><th>Gateway</th><th>Status</th></tr></thead>
+          <tbody>
+            <template x-for="job in jobs" :key="job.id">
+              <tr>
+                <td class="font-mono text-xs text-[var(--text-muted)]" x-text="job.id"></td>
+                <td class="font-semibold" x-text="job.name"></td>
+                <td class="text-xs" x-text="job.cron || 'one-off'"></td>
+                <td class="font-mono text-xs" x-text="job.gateway_serial || 'ALL'"></td>
+                <td><span class="chip text-xs" :class="job.enabled ? 'ok' : 'muted'" x-text="job.enabled ? 'active' : 'paused'"></span></td>
+              </tr>
+            </template>
+            <template x-if="jobs.length === 0">
+              <tr><td colspan="5" class="text-center py-12 text-[var(--text-muted)]">No jobs in queue.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ HISTORY ══ -->
+  <div x-show="view === 'history' && !showUnlockModal" x-cloak>
+    <div class="flex justify-between items-center mb-4">
+      <input type="text" x-model="searchHistory" placeholder="Filter history…" class="form-control flex-1 max-w-sm">
+      <span class="text-sm text-[var(--text-muted)]" x-text="filteredHistory.length + ' records'"></span>
+    </div>
+    <div class="card p-0 overflow-hidden">
+      <div class="overflow-y-auto max-h-[500px]">
+        <table class="data-table text-[11px] w-full relative">
+          <thead class="sticky top-0 bg-[var(--surface-1)] z-10 shadow-sm"><tr><th>Timestamp</th><th>Rule</th><th>Action</th><th>Status</th><th>Approver</th><th>Detail</th><th class="text-right">Actions</th></tr></thead>
+          <tbody>
+            <template x-if="historyLoading">
+              <tr><td colspan="7" class="text-center py-8 text-[var(--text-muted)]"><svg class="icon fa-spin mr-2" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>Loading…</td></tr>
+            </template>
+            <template x-for="(r, i) in filteredHistory" :key="i">
+              <tr>
+                <td class="text-xs text-[var(--text-muted)] whitespace-nowrap" x-text="formatDate(r.timestamp)"></td>
+                <td class="font-semibold text-xs" x-text="r.rule_name || r.rule_id"></td>
+                <td class="font-mono text-xs" x-text="r.action_type"></td>
+                <td><span class="chip text-xs" :class="r.status === 'success' || r.status === 'executed' ? 'ok' : (r.status === 'skipped' ? 'warn' : 'danger')" x-text="r.status"></span></td>
+                <td class="text-xs" x-text="r.ha_user_id || '—'" :title="r.request_id"></td>
+                <td class="text-xs text-[var(--text-muted)] max-w-xs truncate" x-text="r.detail || '—'" :title="r.detail"></td>
+                <td class="text-right">
+                  <button class="icon-btn text-[var(--accent)] hover:text-white" @click="cloneHistoricalJob(r)" title="Clone / Resubmit Payload">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#copy"/></svg>
+                  </button>
+                </td>
+              </tr>
+            </template>
+            <template x-if="!historyLoading && filteredHistory.length === 0">
+              <tr><td colspan="6" class="text-center py-12 text-[var(--text-muted)]">No history records.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ AUDIT LEDGER ══ -->
+  <div x-show="view === 'audit' && !showUnlockModal" x-cloak>
+    <div class="flex justify-between items-center mb-4">
+      <input type="text" x-model="searchAudit" placeholder="Filter audit log…" class="form-control flex-1 max-w-sm">
+      <span class="text-sm text-[var(--text-muted)]" x-text="filteredAudit.length + ' entries'"></span>
+    </div>
+    <div class="card p-0 overflow-hidden">
+      <div class="overflow-y-auto max-h-[500px]">
+        <table class="data-table text-[11px] w-full relative">
+          <thead class="sticky top-0 bg-[var(--surface-1)] z-10 shadow-sm"><tr><th>Timestamp</th><th>Action</th><th>Source</th><th>Details</th></tr></thead>
+          <tbody>
+            <template x-for="(r, i) in filteredAudit" :key="i">
+              <tr>
+                <td class="text-xs text-[var(--text-muted)] whitespace-nowrap" x-text="formatDate(r.timestamp)"></td>
+                <td><span class="chip text-xs px-2 rounded" :style="getAuditColor(r.action)" x-text="r.action"></span></td>
+                <td class="text-xs" x-text="r.source || '—'"></td>
+                <td class="text-xs text-[var(--text-muted)] max-w-sm truncate" x-text="r.details || '—'" :title="r.details"></td>
+              </tr>
+            </template>
+            <template x-if="filteredAudit.length === 0 && !auditLoading">
+              <tr><td colspan="4" class="text-center py-12 text-[var(--text-muted)]">No audit entries.</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ RULE BUILDER MODAL ══ -->
+  <div x-show="showBuilder" x-cloak class="modal-backdrop" x-transition.opacity style="max-height:100vh;overflow-y:auto;padding-top:40px;padding-bottom:40px;">
+        <div class="modal-panel" 
+             :style="builderSize === 'max' ? 'max-width: 98vw; width: 98vw; resize: both; overflow: auto;' : (builderSize === 'mid' ? 'max-width: 950px; width: 950px; resize: both; overflow: auto;' : 'max-width: 650px; width: 650px; resize: both; overflow: auto;')"
+             style="min-width: 450px; min-height: 400px; resize: both; overflow: auto; transition: width 0.3s ease, max-width 0.3s ease;">
+            <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="font-weight: 800; font-size: 1.25rem; color: var(--text-primary);"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#help-circle"/></svg> Automation Builder</h3>
+                <div style="display:flex; align-items:center; gap:8px; margin-left:auto; margin-right:12px;">
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 0.75rem;" @click="builderSize = 'default'" :style="builderSize === 'default' ? 'border-color:var(--primary);color:var(--primary);font-weight:600;' : ''">Min</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 0.75rem;" @click="builderSize = 'mid'" :style="builderSize === 'mid' ? 'border-color:var(--primary);color:var(--primary);font-weight:600;' : ''">Mid</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 0.75rem;" @click="builderSize = 'max'" :style="builderSize === 'max' ? 'border-color:var(--primary);color:var(--primary);font-weight:600;' : ''">Max</button>
+                </div>
+                <button type="button" class="icon-btn" @click="showBuilder = false"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg></button>
+            </div>
+            
+            <form @submit.prevent="submitRule()">
+                <div class="modal-body" style="padding:24px;display:flex;flex-direction:column;gap:20px;max-height:70vh;overflow-y:auto">
+                    
+                    <!-- Rule Template Generator -->
+                    <div class="form-group bg-[var(--surface-1)] p-4 rounded-xl border border-[var(--border)] mb-2" x-show="!editingJobId">
+                        <label class="flex items-center gap-2 text-[var(--primary)] font-bold mb-2">
+                            <svg class="icon w-4 h-4" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg> Generate from Template
+                        </label>
+                        <select class="form-input font-medium" @change="applyTemplate($event.target.value)">
+                            <option value="">-- Select a Smart Dispatch Template --</option>
+                            <option value="demand_charge">1. Demand Charge Avoidance</option>
+                            <option value="negative_export">2. Negative Export Avoidance</option>
+                            <option value="price_spike">3. Price Spike Response</option>
+                            <option value="force_export">4. Force Export / Grid Discharge</option>
+                            <option value="export_bonus">5. Export Bonus / FiT Window</option>
+                            <option value="earnings_target">6. Earnings Target (Daily/Monthly)</option>
+                            <option value="force_charge">7. Force Charge / Negative Price</option>
+                        </select>
+                        <p class="text-xs text-[var(--text-muted)] mt-2">Selecting a template will auto-fill the rule conditions, actions, and priority for Smart Dispatch.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Rule Name</label>
+                        <input x-ref="ruleNameInput" type="text" x-model="builder.name" class="form-input" placeholder="e.g. Storm Prep Backup Expansion" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Rule Priority (1 is highest precedence)</label>
+                        <input type="number" x-model.number="builder.priority" class="form-input" placeholder="e.g. 25" min="1" max="999">
+                    </div>
+
+                    <div class="form-group" style="margin-bottom:12px">
+                        <label>Tags (Comma separated, optional)</label>
+                        <input type="text" x-model="builder.tags" class="form-input" placeholder="e.g. Battery Operations, Relay, Support Rule">
+                    </div>
+
+                    <div class="form-group" style="position:relative" x-data="compactMultiSelect()">
+                        <label>Target Gateways</label>
+                        <button type="button" @click="open = !open" 
+                                class="form-input" style="display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;cursor:pointer">
+                            <div>
+                                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#network"/></svg>
+                                <span x-show="selected.length === 0" style="color:var(--text-muted)">Select target physical gateways...</span>
+                                <span x-show="selected.length > 0 && selected.includes('ALL')" style="font-weight:600">All Gateways (Wildcard Broadcast)</span>
+                                <span x-show="selected.length > 0 && !selected.includes('ALL')" x-text="selected.length + ' Gateway(s) Selected'"></span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px">
+                                <span x-show="selected.length > 0" @click.stop="selected = []; builder.gateway_serial = ''" style="color:var(--text-muted);font-size:1.2rem;line-height:1;border-radius:100%;padding:0 4px" class="hover-bg-surface-2">&times;</span>
+                                <svg class="icon" aria-hidden="true" style="color:var(--text-muted)" viewBox="0 0 24 24"><use :href="open ? '#chevron-up' : '#chevron-down'"/></svg>
+                            </div>
+                        </button>
+                        
+                        <div x-show="open" @click.away="open = false" 
+                             style="position:absolute;z-index:50;width:100%;margin-top:4px;background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:0 10px 15px -3px rgba(0,0,0,0.5)">
+                            <div style="padding:8px;border-bottom:1px solid var(--border)">
+                                <input type="text" x-model="search" placeholder="Search aGate serial..." class="form-input" style="width:100%;height:32px;font-size:0.85rem">
+                            </div>
+                            <div class="max-h-56 overflow-y-auto padding-4">
+                                <label style="display:flex;align-items:center;padding:8px;cursor:pointer;border-radius:4px" 
+                                       class="hover-bg-surface-2">
+                                    <input type="checkbox" value="ALL" :checked="selected.includes('ALL')" @change="toggleAll($event)" style="margin-right:10px">
+                                    <span style="font-size:0.9rem;font-weight:600">All Gateways (Wildcard Broadcast)</span>
+                                </label>
+                                <template x-for="gw in filteredGateways" :key="gw.full_serial">
+                                    <label style="display:flex;align-items:center;padding:8px;cursor:pointer;border-radius:4px" 
+                                           class="hover-bg-surface-2">
+                                        <input type="checkbox" :value="gw.full_serial" :checked="selected.includes(gw.full_serial)" @change="toggleGw($event, gw.full_serial)" style="margin-right:10px">
+                                        <div style="display:flex;flex-direction:column">
+                                            <span style="font-size:0.9rem;font-weight:600" x-text="gw.name ? gw.name + ' · ' + gw.short_id : gw.full_serial"></span>
+                                            <span style="font-size:0.75rem;color:var(--text-secondary)" x-text="'Serial: ' + gw.full_serial"></span>
+                                        </div>
+                                    </label>
+                                </template>
+                            </div>
+                        </div>
+                        <div x-show="selected.includes('ALL')" style="color:var(--danger);font-weight:700;font-size:0.8rem;margin-top:6px;">
+                            WARNING: Be very careful using the 'All' gateways option - unexpected consequences can result!
+                        </div>
+                    </div>
+                    
+
+                    <div style="background:var(--surface-0);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px">
+                            <label style="font-weight:600;color:var(--text-primary);margin:0">
+                                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#cpu"/></svg> Trigger Type
+                            </label>
+                        </div>
+                        
+                        <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px">
+                            <select x-model="builder.trigger_type" class="form-input">
+                                <option value="condition">Always Evaluate (Sensor conditions)</option>
+                                <option value="schedule">Scheduled Time Event (Repeating Pattern)</option>
+                                <option value="one-off">Specific Date/Time (One-off Execution)</option>
+                            </select>
+                        </div>
+                        
+                        <template x-if="builder.trigger_type === 'schedule'">
+                            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;background:var(--surface-1);padding:12px;border-radius:6px;border:1px solid var(--border)">
+                                <label style="font-size:0.85rem;color:var(--text-secondary)">Execution Frequency (Cron)</label>
+                                <select x-model="cronSelection" class="form-input">
+                                    <option value="*/5 * * * *">Every 5 Minutes</option>
+                                    <option value="*/10 * * * *">Every 10 Minutes</option>
+                                    <option value="*/15 * * * *">Every 15 Minutes</option>
+                                    <option value="*/30 * * * *">Every 30 Minutes</option>
+                                    <option value="* * * * *">Every Minute</option>
+                                    <option value="0 * * * *">Every Hour</option>
+                                    <option value="0 0 * * *">Every Day (Midnight)</option>
+                                    <option value="0 8 * * *">Every Day (Morning 8am)</option>
+                                    <option value="0 0 * * 0">Every Week (Sunday Midnight)</option>
+                                    <option value="0 0 1 * *">Every Month (1st Day)</option>
+                                    <option value="0 0 1 */3 *">Quarterly (Jan, Apr, Jul, Oct)</option>
+                                    <option value="0 0 1 */6 *">Six Monthly</option>
+                                    <option value="0 0 1 1 *">Annually (Jan 1st)</option>
+                                    <option value="custom">Custom Cron Expression...</option>
+                                </select>
+                                
+                                <div x-show="cronSelection === 'custom'" style="margin-top:8px">
+                                    <input type="text" x-model="builder.cron" class="form-input w-full" placeholder="e.g. */5 8-17 * * 1-5" style="width:100%">
+                                    <div style="font-size:0.75rem;margin-top:4px" :style="cronValidation.valid ? 'color:var(--ok)' : 'color:var(--danger)'" x-text="cronValidation.message"></div>
+                                </div>
+                                
+                                <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                                    <input type="checkbox" id="has_conditions_cron" x-model="builder.has_conditions">
+                                    <label for="has_conditions_cron" style="font-size:0.85rem;margin:0">Only execute if specific sensor conditions are met</label>
+                                </div>
+                            </div>
+                        </template>
+
+                        <template x-if="builder.trigger_type === 'one-off'">
+                            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;background:var(--surface-1);padding:12px;border-radius:6px;border:1px solid var(--border)">
+                                <label style="font-size:0.85rem;color:var(--text-secondary)">Execution Date & Time</label>
+                                <input type="datetime-local" x-model="builder.run_at" class="form-input" required>
+                                
+                                <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                                    <input type="checkbox" id="has_conditions_oneoff" x-model="builder.has_conditions">
+                                    <label for="has_conditions_oneoff" style="font-size:0.85rem;margin:0">Only execute if specific sensor conditions are met</label>
+                                </div>
+                            </div>
+                        </template>
+
+
+                        <template x-if="builder.trigger_type === 'condition' || builder.has_conditions">
+                            <div style="margin-top:12px">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                                    <label style="font-weight:600;font-size:0.9rem;margin:0">Logic Conditions</label>
+                                    <div style="display:flex;gap:8px">
+                                        <button type="button" class="btn btn-secondary" style="padding:4px 12px;font-size:0.8rem;font-weight:700;display:flex;align-items:center;gap:6px;transition:all 0.3s ease" :style="getTestButtonStyles()" @click="verifyLogic()" :disabled="verifyingLogic">
+                                            <i class="fas" :class="verifyingLogic ? 'fa-spinner fa-spin' : (logicTestResult && !logicTestResult.error && logicTestResult.evaluations?.every(ev => ev.matched) ? 'fa-check' : 'fa-flask')"></i> <span x-text="verifyingLogic ? 'Testing...' : (logicTestResult && !logicTestResult.error && logicTestResult.evaluations?.every(ev => ev.matched) ? 'Successfully Verified' : 'Test Verification')"></span>
+                                        </button>
+                                        <button type="button" class="btn btn-secondary" style="padding:4px 8px;font-size:0.75rem" @click="addCondition()">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#plus"/></svg> Add Condition
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <div x-show="logicTestResult" style="margin-bottom:12px;padding:12px;border-radius:6px;background:var(--surface-0);border:1px solid var(--border);font-size:0.85rem">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                                        <strong style="color:var(--text-primary)"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#help-circle"/></svg> Live Gateway Verification</strong>
+                                        <button type="button" class="icon-btn" @click="logicTestResult = null"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg></button>
+                                    </div>
+                                    <template x-if="logicTestResult && logicTestResult.error">
+                                        <div style="color:var(--danger)"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-circle"/></svg> <span x-text="logicTestResult.error"></span></div>
+                                    </template>
+                                    <template x-if="logicTestResult && logicTestResult.evaluations">
+                                        <div style="display:flex;flex-direction:column;gap:8px">
+                                            <template x-for="ev in logicTestResult.evaluations" :key="ev.gateway">
+                                                <div style="padding:16px;border-radius:8px;border:1px solid" :style="ev.matched ? 'border-color:var(--ok);background:rgba(16,185,129,0.05)' : 'border-color:var(--danger);background:rgba(239,68,68,0.05)'">
+                                                    <div style="display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px">
+                                                        <span style="font-size:0.95rem;color:var(--text-primary)"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#cpu"/></svg> <span x-text="ev.name ? (ev.name + ' (' + ev.gateway + ')') : ev.gateway"></span></span>
+                                                        <span :style="ev.matched ? 'color:var(--ok); font-size:0.95rem' : 'color:var(--danger); font-size:0.95rem'">
+                                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use :href="ev.matched ? '#circle-check' : '#circle-x'"/></svg> <span x-text="ev.matched ? 'Passed' : 'Failed'"></span>
+                                                        </span>
+                                                    </div>
+                                                    <template x-if="!ev.matched && ev.reasons && ev.reasons.length">
+                                                        <div style="background:var(--surface-0);border:1px solid rgba(0,0,0,0.08);border-radius:6px;padding:10px 14px;color:var(--text-secondary);font-size:0.85rem;line-height:1.4;margin-top:4px">
+                                                            <template x-for="r in ev.reasons">
+                                                                <div style="display:flex;gap:8px;margin-bottom:4px;word-break:break-word">
+                                                                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#info"/></svg>
+                                                                    <span x-text="r"></span>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <template x-if="builder.conditions.length > 1">
+                                    <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
+                                        <span style="font-size:0.85rem;color:var(--text-secondary)">Match</span>
+                                        <select x-model="builder.condition_logic" class="form-input" style="width:80px;height:28px;padding:2px 8px;font-size:0.8rem">
+                                            <option value="AND">ALL</option>
+                                            <option value="OR">ANY</option>
+                                        </select>
+                                        <span style="font-size:0.85rem;color:var(--text-secondary)">of the following conditions:</span>
+                                    </div>
+                                </template>
+
+                            <div style="display:flex;flex-direction:column;gap:12px">
+                            <template x-for="(cond, idx) in builder.conditions" :key="idx">
+                                <div style="display:flex;flex-direction:row;gap:8px;align-items:flex-start;background:var(--surface-1);padding:12px;border-radius:6px;border:1px solid var(--border)"
+                                     :class="cond.enabled === false ? 'opacity-50' : ''">
+
+                                    <!-- Left: condition fields column -->
+                                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
+                                        <div x-data="{
+    open: false,
+    search: '',
+    options: [],
+    homeLoadsLoading: false,
+    init() {
+        const sel = this.$refs.select;
+        Array.from(sel.children).forEach(g => {
+            if(g.tagName === 'OPTGROUP') {
+                const items = Array.from(g.children).map(o => ({val: o.value, txt: o.text}));
+                this.options.push({label: g.label, items});
+            } else if(g.tagName === 'OPTION') {
+                this.options.push({label: '', items: [{val: g.value, txt: g.text}]});
+            }
+        });
+        // Augment with the Home Loads catalog scoped to the current rule's
+        // gateway. See AB exposure §5. window.__ABHomeLoads is registered by
+        // automations_tab.js at module load so any inline picker can use it.
+        const hl = window.__ABHomeLoads;
+        if (!hl) return;
+        const builderGw = (typeof builder !== 'undefined' && builder && builder.gateway_serial) || 'ALL';
+        const scope = hl.scopeFromRuleGateway(builderGw);
+        this.homeLoadsLoading = true;
+        hl.load(scope).then(catalog => {
+            const groups = hl.optgroupsForPicker(catalog);
+            if (groups.length) this.options.push(...groups);
+        }).catch(e => console.error('home-loads picker init failed', e))
+          .finally(() => { this.homeLoadsLoading = false; });
+    },
+    get filtered() {
+        let opts = JSON.parse(JSON.stringify(this.options));
+        const myJobs = this.jobs || [];
+        const macros = myJobs.filter(j => j.actions && j.actions[0] && j.actions[0].type === 'base_condition').map(j => ({
+            val: 'base.' + j.name.toLowerCase().replace(/ /g, '_'),
+            txt: `Base Condition: ${j.name}`
+        }));
+        if (macros.length > 0) {
+            opts.push({label: 'Base Conditions (Macros)', items: macros});
+        }
+        if(!this.search) return opts;
+        const kw = this.search.toLowerCase();
+        return opts.map(g => ({
+            label: g.label,
+            items: g.items.filter(i => i.txt.toLowerCase().includes(kw) || i.val.toLowerCase().includes(kw))
+        })).filter(g => g.items.length > 0);
+    },
+    get currentText() {
+        for(let g of this.options) {
+            let f = g.items.find(i => i.val === cond.metric);
+            if(f) return f.txt;
+        }
+        const myJobs = this.jobs || [];
+        for(let j of myJobs) {
+            const key = 'base.' + j.name.toLowerCase().replace(/ /g, '_');
+            if(key === cond.metric) {
+                return `Base Condition: ${j.name}`;
+            }
+        }
+        return cond.metric || 'Select Metric...';
+    }
+}" style="position:relative">
+    <button type="button" @click="open = !open" class="form-input" style="text-align:left;display:flex;justify-content:space-between;align-items:center;width:100%;padding:8px 12px;height:auto;min-height:38px">
+        <span x-text="currentText" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;font-size:0.85rem"></span>
+        <svg class="icon" aria-hidden="true" style="flex-shrink:0;color:var(--text-muted)" viewBox="0 0 24 24"><use :href="open ? '#chevron-up' : '#chevron-down'"/></svg>
+    </button>
+    <div x-show="open" @click.away="open = false" style="position:absolute;z-index:50;width:100%;min-width:300px;margin-top:4px;background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:0 10px 15px -3px rgba(0,0,0,0.5)">
+        <div style="padding:8px;border-bottom:1px solid var(--border)">
+            <input type="text" x-model="search" placeholder="Search metric..." class="form-input" style="width:100%;height:32px;font-size:0.85rem" @click.stop>
+        </div>
+        <div class="max-h-56 overflow-y-auto" style="padding:4px">
+            <template x-for="g in filtered">
+                <div>
+                    <div x-show="g.label" x-text="g.label" style="font-size:0.7rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;padding:6px 8px 2px"></div>
+                    <template x-for="item in g.items">
+                        <div @click="cond.metric = item.val; open = false; if(cond.metric === 'pricing.sd_signal' && ['<','>','<=','>='].includes(cond.operator)) { cond.operator = '==' }; search = ''" 
+                             class="hover:bg-[var(--surface-2)] transition-colors"
+                             style="padding:6px 8px;font-size:0.8rem;cursor:pointer;border-radius:4px"
+                             :style="cond.metric === item.val ? 'background:var(--surface-2);color:var(--primary);font-weight:600' : ''"
+                             x-text="item.txt"></div>
+                    </template>
+                </div>
+            </template>
+            <div x-show="filtered.length === 0" style="padding:12px;text-align:center;font-size:0.8rem;color:var(--text-muted)">No matches found</div>
+            <div x-show="homeLoadsLoading" style="padding:6px 12px;font-size:0.7rem;color:var(--text-muted);border-top:1px solid var(--border)">Loading Home Loads catalog…</div>
+        </div>
+    </div>
+    <select x-ref="select" style="display:none">','<=','>='].includes(cond.operator)) { cond.operator = '==' }">
+                                            <optgroup label="Primary Metrics">
+                                                <option value="grid.status">Grid Status — "Connected" / "Outage" / "SimulatedOffGrid" / "NotGridTied"</option>
+                                                <option value="battery.soc">Battery SOC (%)</option>
+                                                <option value="battery.mode">Operating Mode — "Time-of-Use" / "Self-Consumption" / "Emergency Backup"</option>
+                                                <option value="battery.status">Run Status — "Standby" / "Charging" / "Discharging" / "Off-Grid Standby" / "VPP mode"</option>
+                                                <option value="battery.run_status_int">Run Status (raw int) — 0=Standby 1=Chg 2=Dis 5=OG-Stby 9=VPP</option>
+                                                <option value="solar.power">Solar Power (kW)</option>
+                                                <option value="solar_today">Solar Daily Production (kWh)</option>
+                                                <option value="grid.power">Grid Power (kW)</option>
+                                                <option value="home.load">Home Power (kW)</option>
+                                                <option value="storm_hedge.enabled">Storm Hedge</option>
+                                                <option value="system.time">System Time (HH:MM:SS)</option>
+                                                <option value="grid.offgrid_status">Off-Grid Status</option>
+                                                <option value="agate.ambient_temp">Ambient Temperature (°C)</option>
+                                            </optgroup>
+                                            <optgroup label="Smart Dispatch Pricing">
+                                                <option value="pricing.export_price_c_kwh">Export Price / Feed-In (c/kWh)</option>
+                                                <option value="pricing.import_price_c_kwh">Import Price (c/kWh)</option>
+                                                <option value="pricing.daily_earnings">Daily Earnings Target ($)</option>
+                                                <option value="pricing.monthly_earnings">Monthly Earnings Target ($)</option>
+                                                <option value="pricing.spike_status">Spike Status</option>
+                                                <option value="pricing.descriptor">Price Descriptor</option>
+                                            </optgroup>
+                                            <optgroup label="Smart Dispatch Constraints">
+                                                <option value="dispatch.min_soc_limit">Min SOC Limit (%)</option>
+                                                <option value="dispatch.max_soc_limit">Max SOC Limit (%)</option>
+                                                <option value="dispatch.solar_pv_active">Solar PV Active (bool)</option>
+                                            </optgroup>
+                                            <optgroup label="Virtual Site Meter (Multi-Gateway)">
+                                                <option value="site.p_fhp">Site: Net Battery (kW)</option>
+                                                <option value="site.p_uti">Site: Net Grid (kW)</option>
+                                                <option value="site.p_sun">Site: Total Solar (kW)</option>
+                                                <option value="site.p_ld">Site: Total Load (kW)</option>
+                                                <option value="site.soc_avg">Site: Average SoC (%)</option>
+                                                <option value="site.soc_min">Site: Lowest SoC (%)</option>
+                                                <option value="site.soc_max">Site: Highest SoC (%)</option>
+                                                <option value="site.gw_count">Site: Active Gateways Count</option>
+                                            </optgroup>
+                                            <optgroup label="Gateway Context">
+                                                <option value="gateway.has_solar">Solar Installed (bool)</option>
+                                                <option value="gateway.grid_connected">Grid Connected (bool)</option>
+                                                <option value="gateway.battery_soc">Battery SOC — gateway namespace (%)</option>
+                                                <option value="pricing.demand_window_active">Demand Window — Provider API (live, bool)</option>
+                                            </optgroup>
+                                            <optgroup label="Smart Dispatch Engine">
+                                                <option value="pricing.sd_signal">SD Signal — GRID_EXPORT / GRID_CHARGE / HOLD / RESUME_SC</option>
+                                            </optgroup>
+                                            <optgroup label="Solar Forecast">
+                                                <option value="solar_forecast.today_kwh">Projected Solar Today (kWh)</option>
+                                                <option value="solar_forecast.remaining_kwh">Remaining Projected Solar Today (kWh)</option>
+                                                <option value="solar_forecast.tomorrow_kwh">Projected Solar Tomorrow (kWh)</option>
+                                            </optgroup>
+                                            <optgroup label="Weather">
+                                                <option value="weather.temp">Weather Temperature (°C)</option>
+                                                <option value="weather.humidity">Weather Humidity (%)</option>
+                                                <option value="weather.condition">Weather Condition — "Clear", "Clouds", "Rain", "Snow", etc.</option>
+                                                <option value="weather.active_storm_count">Active Storm Count</option>
+                                                <option value="weather.active_storm_warning">Active Storm Warning (bool)</option>
+                                            </optgroup>
+                                            <optgroup label="Hardware Relays">
+                                                <option value="relay.grid1">Grid Relay 1</option>
+                                                <option value="relay.grid2">Grid Relay 2</option>
+                                                <option value="relay.solar_1">Solar Relay 1</option>
+                                                <option value="relay.solar_2">Solar Relay 2</option>
+                                                <option value="relay.generator">Generator Relay</option>
+                                                <option value="relay.blackstart">Blackstart Relay</option>
+                                                <option value="relay.smart_circuit_1">Smart Circuit 1</option>
+                                                <option value="relay.smart_circuit_2">Smart Circuit 2</option>
+                                                <option value="relay.smart_circuit_3">Smart Circuit 3</option>
+                                            </optgroup>
+                                            <optgroup label="Advanced Nodes (Raw get_stats)">
+                                                <option value="v2l_power">V2L Power (W)</option>
+                                                <option value="mppt_status">MPPT Status</option>
+                                                <option value="mppt_all_power">MPPT All Power</option>
+                                                <option value="mppt_active_power">MPPT Active Power</option>
+                                                <option value="mpan_pv1_power">MPAN PV1 Power</option>
+                                                <option value="mpan_pv2_power">MPAN PV2 Power</option>
+                                                <option value="apbox_remote_solar">APBox Remote Solar</option>
+                                                <option value="remote_solar_enabled">Remote Solar Enabled</option>
+                                                <option value="remote_solar_pv1">Remote Solar PV1</option>
+                                                <option value="remote_solar_pv2">Remote Solar PV2</option>
+                                                <option value="grid_voltage1">Grid Voltage 1</option>
+                                                <option value="grid_voltage2">Grid Voltage 2</option>
+                                                <option value="grid_current1">Grid Current 1</option>
+                                                <option value="grid_current2">Grid Current 2</option>
+                                                <option value="grid_frequency">Grid Frequency (Hz)</option>
+                                                <option value="generator_voltage">Generator Voltage</option>
+                                                <option value="alarms_count">Active Alarms Count</option>
+                                                <option value="mobile_signal">Mobile Signal</option>
+                                                <option value="wifi_signal">WiFi Signal</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                        <select x-model="cond.operator" class="form-input">
+                                            <option value="==">is (=)</option>
+                                            <option value="!=">is not (!=)</option>
+                                            <option value=">">greater than (&gt;)</option>
+                                            <option value="<">less than (&lt;)</option>
+                                            <option value=">=">&gt;=</option>
+                                            <option value="<=">&lt;=</option>
+                                            <option value="is_true">is TRUE</option>
+                                            <option value="is_false">is FALSE</option>
+                                            <option value="is_empty">is EMPTY</option>
+                                        </select>
+                                        <!-- RHS Value / Lookup segmented control -->
+                                        <div x-show="!['is_true', 'is_false', 'is_empty'].includes(cond.operator)"
+                                             style="display:flex;flex-direction:column;gap:6px">
+
+                                            <!-- Segment pills: [ Value ] [ Lookup ↓ ] -->
+                                            <div style="display:flex;border-radius:6px;border:1px solid var(--border);overflow:hidden;width:fit-content;font-size:0.75rem;font-weight:600">
+                                                <button type="button"
+                                                        @click="cond.value_mode = 'literal'; cond.value_ref = ''"
+                                                        style="padding:4px 20px;cursor:pointer;border:none;transition:all 0.15s;border-right:1px solid var(--border)"
+                                                        :style="cond.value_mode !== 'ref'
+                                                            ? 'background:var(--ok);color:#fff'
+                                                            : 'background:var(--surface-1);color:var(--text-muted)'">
+                                                    Value
+                                                </button>
+                                                <button type="button"
+                                                        @click="cond.value_mode = 'ref'; cond.value = ''"
+                                                        style="padding:4px 20px;cursor:pointer;border:none;transition:all 0.15s"
+                                                        :style="cond.value_mode === 'ref'
+                                                            ? 'background:#8b5cf6;color:#fff'
+                                                            : 'background:var(--surface-1);color:var(--text-muted)'">
+                                                    Lookup
+                                                </button>
+                                            </div>
+
+                                            <!-- Literal value input -->
+                                            <input type="text" x-model="cond.value" class="form-input"
+                                                   placeholder="Enter a value…"
+                                                   x-show="cond.value_mode !== 'ref'">
+
+                                            <!-- Lookup dropdown -->
+                                            <select x-model="cond.value_ref" class="form-input"
+                                                    x-show="cond.value_mode === 'ref'"
+                                                    style="border-color:#8b5cf6;color:#a78bfa;background:rgba(139,92,246,0.08)"
+                                                    @change="cond.value = ''">
+                                                <option value="">— select a live parameter —</option>
+                                                <optgroup label="Smart Dispatch Config">
+                                                    <option value="dispatch.min_soc_limit">Min SOC Limit (%)</option>
+                                                    <option value="dispatch.max_soc_limit">Max SOC Limit (%)</option>
+                                                    <option value="dispatch.min_peak_window_soc">Min Peak Window SOC (%)</option>
+                                                    <option value="dispatch.max_peak_window_soc">Max Peak Window SOC (%)</option>
+                                                    <option value="dispatch.min_export_price">Min Export Price (¢/kWh)</option>
+                                                    <option value="dispatch.max_charge_price">Max Charge Price (¢/kWh) — stop grid charge above this</option>
+                                                </optgroup>
+                                                <optgroup label="Live Pricing">
+                                                    <option value="pricing.import_price_c_kwh">Import Price (¢/kWh)</option>
+                                                    <option value="pricing.export_price_c_kwh">Export / FiT Price (¢/kWh)</option>
+                                                    <option value="pricing.daily_earnings">Daily Earnings ($)</option>
+                                                    <option value="pricing.monthly_earnings">Monthly Earnings ($)</option>
+                                                </optgroup>
+                                                <optgroup label="SD Engine Signal">
+                                                    <option value="pricing.sd_signal">SD Signal (GRID_EXPORT / GRID_CHARGE / HOLD…)</option>
+                                                </optgroup>
+                                                <optgroup label="Virtual Site Meter">
+                                                    <option value="site.soc_avg">Site: Average SoC (%)</option>
+                                                    <option value="site.soc_min">Site: Lowest SoC (%)</option>
+                                                    <option value="site.soc_max">Site: Highest SoC (%)</option>
+                                                </optgroup>
+                                                <optgroup label="Solar Forecast">
+                                                    <option value="solar_forecast.today_kwh">Projected Solar Today (kWh)</option>
+                                                    <option value="solar_forecast.remaining_kwh">Remaining Projected Solar Today (kWh)</option>
+                                                    <option value="solar_forecast.tomorrow_kwh">Projected Solar Tomorrow (kWh)</option>
+                                                </optgroup>
+                                                <optgroup label="Weather">
+                                                    <option value="weather.temp">Weather Temperature (°C)</option>
+                                                    <option value="weather.humidity">Weather Humidity (%)</option>
+                                                    <option value="weather.active_storm_count">Active Storm Count</option>
+                                                </optgroup>
+                                            </select>
+                                        </div>
+                                        <!-- Validation status -->
+                                        <div style="display:flex;align-items:center;gap:6px;min-height:20px">
+                                            <template x-if="getConditionResultStatus(idx) === 'All Passed'">
+                                                <span style="color:var(--ok);font-size:.75rem;display:flex;align-items:center;gap:4px" title="Passed live validation">
+                                                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#check-circle"/></svg> Passed
+                                                </span>
+                                            </template>
+                                            <template x-if="getConditionResultStatus(idx) === 'All Failed'">
+                                                <span style="color:var(--danger);font-size:.75rem;display:flex;align-items:center;gap:4px" title="Failed live validation">
+                                                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x-circle"/></svg> Failed
+                                                </span>
+                                            </template>
+                                            <template x-if="getConditionResultStatus(idx) === 'Mixed'">
+                                                <span style="color:var(--warning);font-size:.75rem;display:flex;align-items:center;gap:4px" title="Mixed results across gateways">
+                                                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg> Mixed
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </div><!-- end left column -->
+
+                                    <!-- Right: controls column -->
+                                    <div style="display:flex;flex-direction:column;gap:4px;align-items:center;flex-shrink:0;padding-top:2px">
+                                        <button type="button" class="icon-btn" style="font-size:.8rem;padding:5px" :style="cond.enabled === false ? 'color:var(--text-muted)' : 'color:var(--ok)'" :title="cond.enabled === false ? 'Enable condition' : 'Disable condition'" @click="toggleCondition(idx)">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use :href="cond.enabled === false ? '#toggle-left' : '#toggle-right'"/></svg>
+                                        </button>
+                                        <button type="button" class="icon-btn" style="color:var(--text-muted);font-size:0.8rem;padding:5px" @click="moveConditionUp(idx)" :disabled="idx === 0" :style="idx === 0 ? 'opacity:0.3' : ''" title="Move Up">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#chevron-up"/></svg>
+                                        </button>
+                                        <button type="button" class="icon-btn" style="color:var(--text-muted);font-size:0.8rem;padding:5px" @click="moveConditionDown(idx)" :disabled="idx === builder.conditions.length - 1" :style="idx === builder.conditions.length - 1 ? 'opacity:0.3' : ''" title="Move Down">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#chevron-down"/></svg>
+                                        </button>
+                                        <button type="button" class="icon-btn" style="color:var(--danger);font-size:.8rem;padding:5px" @click="removeCondition(idx)" x-show="builder.conditions.length > 1" title="Remove">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                            </div>
+                            
+                            <div style="margin-top:16px;padding:12px;background:var(--surface-1);border-radius:6px;border:1px solid var(--border)">
+                                <div style="display:flex;align-items:center;gap:12px">
+                                    <label style="font-size:0.85rem;font-weight:600;color:var(--text-primary);margin:0;min-width:140px">
+                                        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#help-circle"/></svg> Duration (HH:MM:SS)
+                                    </label>
+                                    <input type="text" x-model="builder.duration_str" class="form-input" style="width:120px" placeholder="00:00:00" @change="builder.duration_str = autoFormatDuration(builder.duration_str)">
+                                    <span style="font-size:0.75rem;color:var(--text-secondary)">Condition must remain true continuously for this duration before executing.</span>
+                                </div>
+                            </div>
+                        </div>
+                        </template>
+                    </div>
+                    
+                    <div style="background:var(--surface-0);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px">
+                                <label style="font-weight:600;color:var(--text-primary);margin:0">
+                                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg> Action Execution Pipeline
+                            </label>
+                            <button type="button" class="btn btn-secondary" style="padding:4px 8px;font-size:0.75rem" @click="addAction()">
+                                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#plus"/></svg> Add Action
+                            </button>
+                        </div>
+
+                           <div style="display:flex;flex-direction:column;gap:16px">
+                            <template x-for="(act, idx) in builder.actions" :key="idx">
+                                <!-- Outer card: flex-row — content left, controls right. No position:absolute anywhere. -->
+                                <div style="display:flex;flex-direction:row;gap:8px;align-items:flex-start;background:var(--surface-1);padding:12px;border-radius:6px;border:1px solid var(--border)"
+                                     :class="act.enabled === false ? 'opacity-50' : ''">
+
+                                    <!-- Left: action content column -->
+                                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
+                                        <!-- Action type select -->
+                                        <select x-model="act.type" class="form-input">
+                                            <option value="set_smart_circuit">Toggle Smart Circuit</option>
+                                            <option value="set_mode">Change Operating Mode</option>
+                                            <option value="force_charge">Force TOU Grid Charge</option>
+                                            <option value="force_discharge">Force TOU Grid Export</option>
+                                            <option value="force_standby">Force TOU Battery to Standby</option>
+                                            <option value="set_offgrid">Go Off-Grid (Islanding)</option>
+                                            <option value="set_storm_edge">Storm Hedge</option>
+                                            <option value="set_apower_led">aPower LED</option>
+                                            <option value="record_bms">Record BMS Metrics (Background)</option>
+                                            <option value="base_condition">Base Condition Macro (Return Value)</option>
+                                            <option disabled>── Notifications ──</option>
+                                            <option value="send_notification">Send Notification</option>
+                                            <option value="send_actionable_notification">Send Actionable Notification</option>
+                                            <option disabled>── Smart Dispatch Delegate Actions ──</option>
+                                            <option value="smart_dispatch.force_charge">Smart Dispatch: Force Charge</option>
+                                            <option value="smart_dispatch.force_discharge">Smart Dispatch: Force Discharge</option>
+                                            <option value="smart_dispatch.curtail_solar">Smart Dispatch: Curtail Solar</option>
+                                            <option value="smart_dispatch.solar_mode">Smart Dispatch: Set SOLAR Mode</option>
+                                            <option value="smart_dispatch.home_mode">Smart Dispatch: Set HOME Mode</option>
+                                            <option disabled>── Accessory Actions ──</option>
+                                            <option value="start_generator">⚠ Generator: Set Operating Mode</option>
+                                            <option value="start_v2l">⚠ V2L: Set Output Mode</option>
+                                            <option value="stop_all_smart_circuits">⚠ Stop All Smart Circuits</option>
+                                        </select>
+
+                                        <!-- Conditional parameter fields -->
+                                        <template x-if="act.type === 'set_smart_circuit'">
+                                            <div style="display:flex;gap:12px">
+                                                <input type="number" x-model.number="act.payload.id" class="form-input" placeholder="Circuit ID (1-3)" required min="1" max="3">
+                                                <select x-model="act.payload.state" class="form-input">
+                                                    <option value="on">Turn ON</option>
+                                                    <option value="off">Turn OFF</option>
+                                                </select>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="act.type === 'set_apower_led'">
+                                            <div style="display:flex;gap:12px">
+                                                <select x-model="act.payload.enabled" class="form-input" style="width:200px">
+                                                    <option value="true">Turn ON</option>
+                                                    <option value="false">Turn OFF</option>
+                                                </select>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="act.type === 'set_mode'">
+                                            <div>
+                                                <select x-model.number="act.payload.mode" class="form-input">
+                                                    <option value="1">Time-of-Use (Load Shifting)</option>
+                                                    <option value="2">Self-Consumption</option>
+                                                    <option value="4">Emergency Backup (Standby)</option>
+                                                </select>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="act.type === 'set_offgrid' || act.type === 'set_storm_edge'">
+                                            <div style="display:flex;gap:12px">
+                                                <select x-model="act.payload.enabled" class="form-input" style="width:200px">
+                                                    <option value="true">Turn ON</option>
+                                                    <option value="false">Turn OFF</option>
+                                                </select>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="act.type === 'smart_dispatch.solar_mode' || act.type === 'smart_dispatch.home_mode'">
+                                            <div style="display:flex;flex-direction:column;gap:8px">
+                                                <div style="font-size:.75rem;color:var(--text-secondary);padding:6px 8px;background:var(--surface-0);border-radius:4px;border:1px solid var(--border)">
+                                                    <span x-show="act.type === 'smart_dispatch.solar_mode'">☀️ Sets the gateway to <strong>SOLAR</strong> mode — optimises for solar self-consumption priority (dispatchId 3). No parameters required.</span>
+                                                    <span x-show="act.type === 'smart_dispatch.home_mode'">🏠 Sets the gateway to <strong>HOME</strong> mode — returns to Time-of-Use scheduling (dispatchId 1). No parameters required.</span>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="act.type === 'smart_dispatch.force_charge' || act.type === 'smart_dispatch.force_discharge' || act.type === 'smart_dispatch.curtail_solar'">
+                                            <div style="display:flex;flex-direction:column;gap:8px">
+                                                <div style="display:flex;gap:12px;align-items:flex-start">
+                                                    <!-- Duration -->
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Duration (minutes)</label>
+                                                        <input type="number" x-model.number="act.payload.duration_mins" class="form-input" min="1" max="1440" placeholder="Optional" title="How long to enforce this state">
+                                                    </div>
+                                                    <!-- Target SOC: Value / Lookup toggle -->
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Target SOC (%)</label>
+                                                        <!-- Segment pills -->
+                                                        <div style="display:flex;border-radius:6px;border:1px solid var(--border);overflow:hidden;width:fit-content;font-size:0.7rem;font-weight:600;margin-bottom:4px">
+                                                            <button type="button"
+                                                                    @click="act.payload.target_soc_mode = 'value'; act.payload.target_soc_ref = ''"
+                                                                    style="padding:3px 14px;cursor:pointer;border:none;transition:all 0.15s;border-right:1px solid var(--border)"
+                                                                    :style="act.payload.target_soc_mode !== 'ref' ? 'background:var(--ok);color:#fff' : 'background:var(--surface-1);color:var(--text-muted)'">Value</button>
+                                                            <button type="button"
+                                                                    @click="act.payload.target_soc_mode = 'ref'; act.payload.target_soc = null"
+                                                                    style="padding:3px 14px;cursor:pointer;border:none;transition:all 0.15s"
+                                                                    :style="act.payload.target_soc_mode === 'ref' ? 'background:#8b5cf6;color:#fff' : 'background:var(--surface-1);color:var(--text-muted)'">Lookup</button>
+                                                        </div>
+                                                        <input type="number" x-show="act.payload.target_soc_mode !== 'ref'"
+                                                               x-model.number="act.payload.target_soc" class="form-input" min="0" max="100"
+                                                               :placeholder="act.type === 'smart_dispatch.force_charge' ? '100' : '0'">
+                                                        <select x-show="act.payload.target_soc_mode === 'ref'"
+                                                                x-model="act.payload.target_soc_ref" class="form-input"
+                                                                style="border-color:#8b5cf6;color:#a78bfa;background:rgba(139,92,246,0.08)">
+                                                            <option value="">-- select SD parameter --</option>
+                                                            <option value="min_soc_limit">Min SOC Limit (%)</option>
+                                                            <option value="max_soc_limit">Max SOC Limit (%)</option>
+                                                            <option value="min_peak_window_soc">Min Peak Window SOC (%)</option>
+                                                            <option value="max_peak_window_soc">Max Peak Window SOC (%)</option>
+                                                            <option value="notification.response_value">Actionable Notification Response</option>
+                                                        </select>
+                                                    </div>
+                                                    <!-- Power Limit: Value / Lookup toggle -->
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Power Limit (kW)</label>
+                                                        <!-- Segment pills -->
+                                                        <div style="display:flex;border-radius:6px;border:1px solid var(--border);overflow:hidden;width:fit-content;font-size:0.7rem;font-weight:600;margin-bottom:4px">
+                                                            <button type="button"
+                                                                    @click="act.payload.power_limit_mode = 'value'; act.payload.power_limit_ref = ''"
+                                                                    style="padding:3px 14px;cursor:pointer;border:none;transition:all 0.15s;border-right:1px solid var(--border)"
+                                                                    :style="act.payload.power_limit_mode !== 'ref' ? 'background:var(--ok);color:#fff' : 'background:var(--surface-1);color:var(--text-muted)'">Value</button>
+                                                            <button type="button"
+                                                                    @click="act.payload.power_limit_mode = 'ref'; act.payload.power_limit_kw = null"
+                                                                    style="padding:3px 14px;cursor:pointer;border:none;transition:all 0.15s"
+                                                                    :style="act.payload.power_limit_mode === 'ref' ? 'background:#8b5cf6;color:#fff' : 'background:var(--surface-1);color:var(--text-muted)'">Lookup</button>
+                                                        </div>
+                                                        <input type="number" x-show="act.payload.power_limit_mode !== 'ref'"
+                                                               x-model.number="act.payload.power_limit_kw" class="form-input" min="0" step="0.1" placeholder="Max">
+                                                        <select x-show="act.payload.power_limit_mode === 'ref'"
+                                                                x-model="act.payload.power_limit_ref" class="form-input"
+                                                                style="border-color:#8b5cf6;color:#a78bfa;background:rgba(139,92,246,0.08)">
+                                                            <option value="">-- select SD parameter --</option>
+                                                            <option value="min_soc_limit">Min SOC Limit (%)</option>
+                                                            <option value="max_soc_limit">Max SOC Limit (%)</option>
+                                                            <option value="min_peak_window_soc">Min Peak Window SOC (%)</option>
+                                                            <option value="max_peak_window_soc">Max Peak Window SOC (%)</option>
+                                                            <option value="notification.response_value">Actionable Notification Response</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div style="font-size:.7rem;color:var(--text-muted);padding:6px 8px;background:var(--surface-0);border-radius:4px;border:1px solid var(--border)">
+                                                    ℹ <strong>Duration</strong> is critical if using an Event trigger (Cron/One-off). <strong>Power Limit</strong> overrides default inverter speed. <strong>Lookup</strong> resolves the SD parameter value at rule execution time.
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Notification UI -->
+                                        <template x-if="act.type === 'send_notification' || act.type === 'send_actionable_notification'">
+                                            <div style="display:flex;flex-direction:column;gap:12px;padding-top:4px">
+                                                <div style="display:flex;flex-direction:column;gap:4px">
+                                                    <label style="font-size:.75rem;color:var(--text-secondary)">Title</label>
+                                                    <input type="text" x-model="act.payload.title" class="form-input" placeholder="Notification Title">
+                                                </div>
+                                                <div style="display:flex;flex-direction:column;gap:4px">
+                                                    <label style="font-size:.75rem;color:var(--text-secondary)">Message</label>
+                                                    <textarea x-model="act.payload.message" class="form-input" rows="2" placeholder="Notification Message..."></textarea>
+                                                </div>
+                                                
+                                                <template x-if="act.type === 'send_actionable_notification'">
+                                                    <div style="display:flex;flex-direction:column;gap:12px;padding:12px;background:var(--surface-0);border-radius:6px;border:1px solid var(--border)">
+                                                        <div style="display:flex;gap:16px">
+                                                            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+                                                                <label style="font-size:.75rem;color:var(--text-secondary)">Response Type</label>
+                                                                <select x-model="act.payload.response_type" class="form-input">
+                                                                    <option value="yes_no">Yes / No Buttons</option>
+                                                                    <option value="input">Text / Number Input</option>
+                                                                </select>
+                                                            </div>
+                                                            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+                                                                <label style="font-size:.75rem;color:var(--text-secondary)">Timeout (Minutes)</label>
+                                                                <input type="number" x-model.number="act.payload.timeout_mins" class="form-input" min="1" max="60" placeholder="1">
+                                                            </div>
+                                                        </div>
+                                                        <div style="display:flex;flex-direction:column;gap:4px">
+                                                            <label style="font-size:.75rem;color:var(--text-secondary)">If user doesn't respond</label>
+                                                            <div style="display:flex;gap:16px">
+                                                                <select x-model="act.payload.no_reply_action" class="form-input" style="flex:2">
+                                                                    <option value="skip">Abort pipeline (Skip remaining actions)</option>
+                                                                    <option value="execute">Continue pipeline (Execute remaining actions)</option>
+                                                                </select>
+                                                                <template x-if="act.payload.no_reply_action === 'execute'">
+                                                                    <input type="text" x-model="act.payload.default_reply_value" class="form-input" style="flex:1" placeholder="Default value...">
+                                                                </template>
+                                                            </div>
+                                                        </div>
+                                                        <div class="mt-2" x-data="{showDetails:false}">
+                                                            <button type="button" @click="showDetails = !showDetails" class="text-sm text-primary underline" x-text="showDetails ? 'Hide Details' : 'Show Details'"></button>
+                                                            <pre x-show="showDetails" class="mt-1 p-2 bg-[var(--surface-2)] border border-[var(--border)] rounded text-xs overflow-x-auto text-[var(--text-primary)]" x-text="JSON.stringify(act.payload, null, 2)"></pre>
+                                                        </div>
+                                                        <div style="font-size:.7rem;color:var(--text-muted)">
+                                                            ℹ The automation thread will wait up to the timeout for a response. The user's response will be saved as <code>notification.response_value</code> for subsequent actions.
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </template>
+
+
+                                        <template x-if="act.type === 'record_bms'">
+                                            <div style="display:flex;flex-direction:column;gap:8px">
+                                                <div>
+                                                    <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Target Battery</label>
+                                                    <select x-model="act.payload.battery_sn" class="form-input" required
+                                                            x-init="act.payload.battery_sn = act.payload.battery_sn || 'ALL'">
+                                                        <option value="ALL">ALL Batteries (Parallel Sweep)</option>
+                                                        <template x-for="gw in targetGateways()" :key="gw.full_serial">
+                                                            <template x-for="bat in getGatewayBatteries(gw.full_serial)" :key="bat.short_id">
+                                                                <option :value="bat.full_serial" x-text="bat.name + ' [' + bat.full_serial + ']'"></option>
+                                                            </template>
+                                                        </template>
+                                                    </select>
+                                                </div>
+                                                <div style="display:flex;gap:12px;align-items:flex-end">
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Samples</label>
+                                                        <input type="number" x-model.number="act.payload.samples" class="form-input" min="1" max="20" placeholder="5"
+                                                               x-init="act.payload.samples = act.payload.samples || 5">
+                                                    </div>
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Interval (seconds)</label>
+                                                        <input type="number" x-model.number="act.payload.interval_secs" class="form-input" min="10" max="300" placeholder="30"
+                                                               x-init="act.payload.interval_secs = act.payload.interval_secs || 30">
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Session Name (optional — auto-generated if blank)</label>
+                                                    <input type="text" x-model="act.payload.session_name" class="form-input" placeholder="e.g. Pre-storm BMS snapshot">
+                                                </div>
+                                                <div style="font-size:.7rem;color:var(--text-muted);padding:6px 8px;background:var(--surface-0);border-radius:4px;border:1px solid var(--border)">
+                                                    ℹ Runs in the background — does <strong>not</strong> block the automation or affect hardware. Session saved to Battery tab automatically.
+                                                    <span x-text="'Total duration: ~' + ((act.payload.samples || 5) * (act.payload.interval_secs || 30)) + 's'"></span>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Base Condition Macro (Return Value) -->
+                                        <template x-if="act.type === 'base_condition'">
+                                            <div style="display:flex;flex-direction:column;gap:8px">
+                                                <div style="display:flex;gap:12px;align-items:center">
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Value when TRUE</label>
+                                                        <input type="text" x-model="act.payload.return_value_true" class="form-input" placeholder="e.g. true or 1 or peak" required
+                                                               x-init="act.payload.return_value_true = act.payload.return_value_true || 'true'">
+                                                    </div>
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Value when FALSE</label>
+                                                        <input type="text" x-model="act.payload.return_value_false" class="form-input" placeholder="e.g. false or 0 or off-peak" required
+                                                               x-init="act.payload.return_value_false = act.payload.return_value_false || 'false'">
+                                                    </div>
+                                                </div>
+                                                <div style="font-size:.7rem;color:var(--text-muted);padding:6px 8px;background:var(--surface-0);border-radius:4px;border:1px solid var(--border)">
+                                                    ℹ This rule acts as a reusable macro. Other rules can refer to its evaluation outcome using:
+                                                    <code class="text-[var(--primary)] font-mono">base.&lt;rule_name_slug&gt;</code> or
+                                                    <code class="text-[var(--primary)] font-mono">base.&lt;rule_id&gt;</code>.
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Generator: Set Operating Mode -->
+                                        <template x-if="act.type === 'start_generator'">
+                                            <div style="display:flex;flex-direction:column;gap:8px">
+                                                <div style="display:flex;gap:12px">
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">Generator Mode</label>
+                                                        <select x-model.number="act.payload.mode" class="form-input">
+                                                            <option value="1">1 — Auto-Schedule (FranklinWH app configured)</option>
+                                                            <option value="2">2 — Manual (enable now)</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div style="font-size:.7rem;color:#f59e0b;padding:6px 8px;background:rgba(245,158,11,.08);border-radius:4px;border:1px solid rgba(245,158,11,.3)">
+                                                    ⚠ Generator must be configured in the FranklinWH app first. This action only switches between Auto-schedule and Manual mode via
+                                                    <code>updateIotGenerator</code>. Verified API (see <em>docs/GENERATOR_V2L_API.md</em>).
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- V2L: Set Output Mode -->
+                                        <template x-if="act.type === 'start_v2l'">
+                                            <div style="display:flex;flex-direction:column;gap:8px">
+                                                <div style="display:flex;gap:12px">
+                                                    <div style="flex:1">
+                                                        <label style="font-size:.75rem;color:var(--text-secondary);display:block;margin-bottom:3px">V2L Output State</label>
+                                                        <select x-model="act.payload.mode" class="form-input">
+                                                            <option value="on">Enable V2L output (vehicle-to-load)</option>
+                                                            <option value="off">Disable V2L output</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div style="font-size:.7rem;color:#f59e0b;padding:6px 8px;background:rgba(245,158,11,.1);border-radius:4px;border:1px solid rgba(245,158,11,.35)">
+                                                    ⚠️ <strong>Speculative API</strong> — V2L control endpoint is unverified. The action will be attempted but may have no effect.
+                                                    If you own a V2L module, please verify and update <em>docs/GENERATOR_V2L_API.md</em>.
+                                                    Runtime warnings are emitted to the application log.
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Stop All Smart Circuits -->
+                                        <template x-if="act.type === 'stop_all_smart_circuits'">
+                                            <div style="font-size:.7rem;color:#f59e0b;padding:6px 8px;background:rgba(245,158,11,.08);border-radius:4px;border:1px solid rgba(245,158,11,.3)">
+                                                ⚠ <strong>Turns OFF Smart Circuits 1, 2, and 3 simultaneously.</strong>
+                                                Use this for emergency load-shedding (e.g. peak demand events). No parameters required — action fires immediately.
+                                            </div>
+                                        </template>
+
+                                    </div><!-- end left content column -->
+
+                                    <!-- Right: controls column — pure flex, no position:absolute -->
+                                    <div style="display:flex;flex-direction:column;gap:4px;align-items:center;flex-shrink:0;padding-top:2px">
+                                        <button type="button" class="icon-btn"
+                                                style="font-size:.8rem;padding:5px"
+                                                :style="act.enabled === false ? 'color:var(--text-muted)' : 'color:var(--ok)'"
+                                                :title="act.enabled === false ? 'Enable action' : 'Disable action'"
+                                                @click="toggleAction(idx)">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use :href="act.enabled === false ? '#toggle-left' : '#toggle-right'"/></svg>
+                                        </button>
+                                        <button type="button" class="icon-btn"
+                                                style="font-size:.8rem;padding:5px"
+                                                :style="idx === 0 ? 'opacity:0.3;color:var(--text-muted)' : 'color:var(--text-muted)'"
+                                                :disabled="idx === 0"
+                                                title="Move Up"
+                                                @click="moveActionUp(idx)">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#chevron-up"/></svg>
+                                        </button>
+                                        <button type="button" class="icon-btn"
+                                                style="font-size:.8rem;padding:5px"
+                                                :style="idx === builder.actions.length - 1 ? 'opacity:0.3;color:var(--text-muted)' : 'color:var(--text-muted)'"
+                                                :disabled="idx === builder.actions.length - 1"
+                                                title="Move Down"
+                                                @click="moveActionDown(idx)">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#chevron-down"/></svg>
+                                        </button>
+                                        <button type="button" class="icon-btn"
+                                                style="font-size:.8rem;padding:5px;color:var(--danger)"
+                                                x-show="builder.actions.length > 1"
+                                                title="Remove"
+                                                @click="removeAction(idx)">
+                                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg>
+                                        </button>
+                                    </div><!-- end controls column -->
+
+                                </div><!-- end action card -->
+                            </template>
+                        </div>           </div>
+                    
+                </div>
+                
+                <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;padding:16px 24px;background:var(--surface-1);border-top:1px solid var(--border)">
+                    <div style="font-size:0.75rem;color:var(--text-secondary);max-width:320px;line-height:1.3;border-left:3px solid var(--danger);padding-left:12px">
+                        <strong>Warning:</strong> Automations are extremely powerful and flexible. With great power comes great responsibility. You <strong>MUST</strong> test and consider the impact of your automations. This software is provided AS IS and no responsibility is taken by the authors and/or FranklinWH.
+                    </div>
+                    <div style="display:flex;gap:12px;align-items:center">
+                        <button type="button" class="btn btn-secondary" @click="showBuilder = false; editingJobId = null">Cancel</button>
+                        <button type="submit" class="btn btn-danger" :disabled="saving" style="min-width:140px;display:flex;justify-content:center;gap:8px">
+                            <span x-show="!saving" x-text="editingJobId ? 'Update Rule' : 'Deploy Rule'"></span>
+                            <svg class="icon" aria-hidden="true" x-show="!saving" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+                            <svg class="icon fa-spin" aria-hidden="true" x-show="saving" viewBox="0 0 24 24"><use href="#loader"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div x-show="jobToDelete !== null" x-cloak class="modal-backdrop" x-transition.opacity @click.self="jobToDelete = null">
+    <div class="modal-panel max-w-md">
+      <div class="modal-header bg-[rgba(239,68,68,.1)] border-b-[rgba(239,68,68,.2)]">
+        <h3 class="font-bold text-[var(--danger)]">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg> Confirm Deletion
+        </h3>
+      </div>
+      <div class="modal-body p-4">
+        <p class="text-sm mb-2">Delete rule <strong x-text="jobToDelete?.name"></strong>?</p>
+        <p class="text-xs text-[var(--text-muted)]">This action cannot be undone and will immediately drop this rule from the scheduler.</p>
+      </div>
+      <div class="modal-footer flex justify-end gap-2 p-3 bg-[var(--surface-1)] border-t border-[var(--border)]">
+        <button class="btn btn-secondary" @click="jobToDelete = null">Cancel</button>
+        <button class="btn" style="background:var(--danger);color:white" @click="confirmDeleteJob()">Delete Rule</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Execute Result Modal -->
+  <div x-show="showExecuteModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel" style="max-width:650px">
+      <div class="modal-header flex justify-between items-start p-6 pb-2">
+        <div class="flex flex-col gap-1">
+          <h3 class="font-bold text-lg text-[var(--text-primary)]"><svg class="icon mr-1" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg> Automation Run Trace</h3>
+          <span class="text-sm text-[var(--text-secondary)] font-medium" x-text="executingJob?.name || '—'"></span>
+          <div class="flex items-center gap-2 mt-1">
+            <span class="text-[10px] font-mono text-[var(--text-muted)] bg-[var(--surface-0)] px-1.5 py-0.5 rounded" x-text="'ID: ' + (executingJob?.id || '—')"></span>
+            <span class="text-[10px] font-mono text-[var(--text-muted)] bg-[var(--surface-0)] px-1.5 py-0.5 rounded" x-text="'Gateway: ' + (executingJob?.gateway_serial || 'ALL')"></span>
+            <span class="text-[10px] font-mono text-[var(--accent)] bg-[var(--surface-0)] px-1.5 py-0.5 rounded border border-[var(--accent)]" x-text="'Elapsed: ' + formatDuration(executeSeconds)"></span>
+          </div>
+        </div>
+        <button class="icon-btn mt-1" @click="showExecuteModal = false" x-show="executeResult && executeResult.status !== 'loading'">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg>
+        </button>
+      </div>
+      <div class="modal-body p-6" style="max-height:65vh; overflow-y:auto;">
+        <template x-if="executeResult?.status === 'loading'">
+          <div class="flex flex-col items-center gap-3 py-12 text-[var(--text-muted)]">
+            <svg class="icon fa-spin fa-3x mb-2" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+            <span class="font-bold">Interrogating Edge Gateway...</span>
+            <span class="text-xs">Evaluating conditions and preparing action pipeline.</span>
+          </div>
+        </template>
+
+        <template x-if="executeResult?.status === 'success'">
+          <div class="flex flex-col gap-4">
+            
+            <!-- Empty state (No records found in history for this execution) -->
+            <template x-if="!executeResult.data || executeResult.data.length === 0">
+                <div class="text-sm text-[var(--text-muted)] bg-[var(--surface-0)] rounded-lg p-8 text-center border border-[var(--border)]">
+                    <svg class="icon fa-3x mb-3 opacity-40 text-[var(--warning)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg><br>
+                    <strong class="text-[var(--text-primary)] text-lg">No execution trail found.</strong><br>
+                    <span class="text-sm mt-2 block opacity-75">The automation may have skipped evaluation because the gateway is offline, or no history was recorded. Check the System Logs for low-level scheduler errors.</span>
+                </div>
+            </template>
+
+            <!-- Execution Steps Timeline -->
+            <template x-if="executeResult.data && executeResult.data.length > 0">
+                <div class="relative flex flex-col gap-4 pl-6 border-l-2 border-[var(--border)] ml-2">
+                    <template x-for="(step, idx) in [...executeResult.data].reverse()" :key="idx">
+                        <div class="relative">
+                            <!-- Timeline dot -->
+                            <div class="absolute -left-[33px] top-1.5 w-4 h-4 rounded-full border-2 bg-[var(--surface-1)]"
+                                 :class="step.status === 'success' || step.status === 'executed' ? 'border-[var(--ok)]' : (step.status === 'skipped' ? 'border-[var(--warning)]' : 'border-[var(--danger)]')">
+                            </div>
+                            
+                            <div class="bg-[var(--surface-1)] border border-[var(--border)] rounded-xl overflow-hidden">
+                                <div class="px-4 py-3 border-b border-[var(--border)] flex justify-between items-center bg-[var(--surface-0)]">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs font-black uppercase tracking-wider text-[var(--text-muted)]" x-text="'Step ' + (idx + 1)"></span>
+                                        <span class="text-sm font-bold text-[var(--text-primary)]" x-text="step.action_type === 'condition_check' ? '🔍 Condition Evaluation' : '⚡ Action: ' + step.action_type"></span>
+                                    </div>
+                                    <span class="chip text-[10px] px-2 py-0.5" 
+                                          :class="step.status === 'success' || step.status === 'executed' ? 'ok' : (step.status === 'skipped' ? 'warn' : 'danger')" 
+                                          x-text="step.status"></span>
+                                </div>
+                                <div class="p-4">
+                                    <!-- Detail / Reason -->
+                                    <div class="text-sm text-[var(--text-secondary)] leading-relaxed">
+                                        <template x-if="step.action_type === 'condition_check' && step.status === 'skipped'">
+                                            <div class="flex flex-col gap-2">
+                                                <div class="font-semibold text-[var(--danger)] flex items-center gap-2">
+                                                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x-circle"/></svg>
+                                                    Evaluation Blocked
+                                                </div>
+                                                <div class="bg-[rgba(239,68,68,0.05)] border border-[rgba(239,68,68,0.2)] rounded-lg p-3 text-xs font-mono whitespace-pre-wrap" x-text="step.detail"></div>
+                                            </div>
+                                        </template>
+                                        <template x-if="step.action_type !== 'condition_check' || step.status !== 'skipped'">
+                                            <div class="flex flex-col gap-2">
+                                                <div x-text="step.detail || 'No detailed output provided by engine.'"></div>
+                                                <template x-if="step.action_payload">
+                                                    <details class="mt-1">
+                                                        <summary class="text-[10px] text-[var(--text-muted)] cursor-pointer hover:text-[var(--text-primary)]">View Payload</summary>
+                                                        <pre class="text-[10px] mt-2 p-2 bg-[var(--surface-0)] rounded border border-[var(--border)] overflow-x-auto" x-text="typeof step.action_payload === 'string' ? JSON.stringify(JSON.parse(step.action_payload), null, 2) : JSON.stringify(step.action_payload, null, 2)"></pre>
+                                                    </details>
+                                                </template>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    
+                                    <div class="flex items-center gap-4 mt-3 pt-3 border-t border-[var(--border)] opacity-60">
+                                        <div class="flex items-center gap-1.5 text-[10px] font-mono">
+                                            <svg class="icon w-3 h-3" aria-hidden="true" viewBox="0 0 24 24"><use href="#cpu"/></svg>
+                                            <span x-text="step.gateway_serial"></span>
+                                        </div>
+                                        <div class="flex items-center gap-1.5 text-[10px] font-mono">
+                                            <svg class="icon w-3 h-3" aria-hidden="true" viewBox="0 0 24 24"><use href="#clock"/></svg>
+                                            <span x-text="new Date(step.timestamp + (step.timestamp.includes('Z') ? '' : 'Z')).toLocaleTimeString()"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <div class="text-center mt-4">
+                <template x-if="executeResult.data?.some(h => h.status === 'running')">
+                    <div class="flex items-center justify-center gap-2 text-xs text-[var(--primary)] font-bold animate-pulse py-2 bg-[var(--surface-0)] rounded-full border border-[var(--primary)] max-w-xs mx-auto mb-2">
+                        <svg class="icon fa-spin" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+                        <span>Executing remaining actions...</span>
+                    </div>
+                </template>
+                <p class="text-[10px] text-[var(--text-muted)] italic" x-show="executeResult.data && executeResult.data.length > 0">
+                    Trace records are fetched from the live automation history ledger.
+                </p>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="executeResult?.status === 'error'">
+          <div class="bg-[rgba(239,68,68,0.1)] border-l-4 border-[var(--danger)] rounded-xl p-6">
+            <div class="flex items-center gap-3 text-[var(--danger)] font-bold mb-2">
+                <svg class="icon w-6 h-6" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+                <span class="text-lg">Critical Execution Failure</span>
+            </div>
+            <p class="text-sm text-[var(--text-secondary)] mb-4">The automation engine encountered an unhandled exception while attempting to run this rule.</p>
+            <div class="bg-[var(--surface-0)] rounded-lg p-4 font-mono text-xs text-[var(--danger)] border border-[rgba(239,68,68,0.2)]"
+                 x-text="executeResult.detail || 'Unknown internal error'"></div>
+          </div>
+        </template>
+      </div>
+      <div class="modal-footer flex justify-between items-center p-6 bg-[var(--surface-1)] border-t border-[var(--border)]"
+           x-show="executeResult && executeResult.status !== 'loading'">
+        <button class="btn btn-secondary flex items-center gap-2" @click="showExecuteModal = false; view = 'history'; fetchHistory()">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#history"/></svg> Full History
+        </button>
+        <div class="flex gap-3">
+            <button class="btn btn-secondary" @click="showExecuteModal = false">Close Trace</button>
+            <button class="btn btn-primary" @click="executeJobNow(executingJob)" :disabled="executeResult?.status === 'loading'">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg> Re-Run Rule
+            </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

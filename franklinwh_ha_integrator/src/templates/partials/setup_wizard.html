@@ -1,0 +1,372 @@
+<!-- ── First-run setup wizard (GH #1) ─────────────────────────────────────────
+     Until this existed the app referred to a wizard it did not have: the
+     startup log said "Awaiting Setup Wizard completion", gateway discovery
+     answered "Complete the setup wizard first", and a first-time user had to
+     know to visit Gateways, then HA Entities, then MQTT Admin, in that order.
+
+     Three steps, one of which is the only unavoidable input. Under the
+     Supervisor the other two configure themselves, so they are shown as
+     findings rather than asked as questions — per the zero-input principle in
+     CONTRIBUTING.md. -->
+<div x-data="setupWizard()" x-init="init()" x-show="open" x-cloak
+     class="fixed inset-0 z-[10000] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+     @keydown.escape.window="skip()">
+  <div class="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
+      <div>
+        <h3 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-wand-magic-sparkles text-primary-light"></i>Set up FranklinWH
+        </h3>
+        <p class="text-[11px] text-gray-500 mt-0.5">
+          <span x-text="contextLabel"></span> · step <span x-text="step"></span> of 5
+        </p>
+      </div>
+      <!-- "Skip" in small grey text reads as "skip this step", not "leave the
+           wizard", and there was no other way out — reported as being unable to
+           exit at all. A close control that looks like one, plus the word. -->
+      <div class="flex items-center gap-3 flex-shrink-0">
+        <button @click="skip()" class="text-xs text-gray-400 hover:text-gray-200 transition">
+          Close setup
+        </button>
+        <button @click="skip()" aria-label="Close setup"
+                class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400
+                       hover:text-gray-100 hover:bg-gray-800 transition text-base leading-none">
+          &times;
+        </button>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="flex items-center gap-1 px-6 py-3 border-b border-gray-800 shrink-0">
+      <template x-for="(label, i) in ['Account', 'Hardware', 'Home Assistant', 'Naming', 'Ready']" :key="i">
+        <div class="flex items-center gap-1 flex-1">
+          <span class="w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0"
+                :class="(i + 1) < step ? 'bg-emerald-500/20 text-emerald-400'
+                        : (i + 1) === step ? 'bg-primary/20 text-primary-light'
+                        : 'bg-gray-800 text-gray-600'">
+            <span x-show="(i + 1) < step">&check;</span>
+            <span x-show="(i + 1) >= step" x-text="i + 1"></span>
+          </span>
+          <span class="text-[10px] font-semibold truncate"
+                :class="(i + 1) <= step ? 'text-gray-300' : 'text-gray-600'" x-text="label"></span>
+        </div>
+      </template>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-6 py-5">
+      <template x-if="error">
+        <div class="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400"
+             x-text="error"></div>
+      </template>
+
+      <!-- ── 1. Account ──────────────────────────────────────────────────── -->
+      <div x-show="step === 1" class="space-y-4">
+        <p class="text-xs text-gray-400 leading-relaxed">
+          Sign in with the account you use in the FranklinWH app. This is the one
+          thing the integration cannot work out for itself — everything else is
+          detected.
+        </p>
+
+        <template x-if="state.steps?.gateway?.done">
+          <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-400">
+            <span x-text="state.steps.gateway.gateway_count"></span> gateway(s) already registered
+            <span x-show="state.steps.gateway.account_email"
+                  x-text="'· ' + state.steps.gateway.account_email" class="text-gray-500"></span>
+          </div>
+        </template>
+
+        <template x-if="!state.steps?.gateway?.done">
+          <div class="space-y-3">
+            <div>
+              <label class="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">Email</label>
+              <input type="email" autocomplete="username" x-model="email"
+                     @keydown.enter.prevent="signIn()"
+                     class="w-full bg-gray-950 border border-gray-700 focus:border-primary/60 rounded-lg px-3 py-2 text-sm text-gray-100 outline-none"
+                     placeholder="you@example.com">
+            </div>
+            <div>
+              <label class="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">Password</label>
+              <input type="password" autocomplete="current-password" x-model="password"
+                     @keydown.enter.prevent="signIn()"
+                     class="w-full bg-gray-950 border border-gray-700 focus:border-primary/60 rounded-lg px-3 py-2 text-sm text-gray-100 outline-none">
+            </div>
+            <p class="text-[10px] text-gray-600">
+              Stored on this device and used only to reach the FranklinWH cloud.
+            </p>
+
+            <template x-if="gateways.length > 0">
+              <div class="space-y-2 pt-2 border-t border-gray-800">
+                <!-- Sits above the picker, not inside a step gate: the wizard
+                     pre-ticks every gateway it finds, so the warning has to be
+                     read before the tick, not after. Same rule and same wording
+                     as the Gateways tab. -->
+                <template x-if="installerWarning">
+                  <div class="rounded-lg border-l-4 border-amber-500 bg-amber-500/10 p-3 mb-3">
+                    <div class="text-xs font-bold text-gray-200 mb-1">
+                      <span x-show="installerWarning === 'confirmed'">This looks like an installer account</span>
+                      <span x-show="installerWarning === 'suspected'">More than one site on this account</span>
+                    </div>
+                    <p class="text-[11px] text-gray-400 leading-relaxed">
+                      This integration is meant for your own system. It is
+                      <strong>not intended for installer or fleet accounts</strong>.
+                      If any of these sites belong to a customer, do not register
+                      their gateway without their express permission — enrolling it
+                      here streams their telemetry into this Home Assistant and can
+                      issue control commands to their battery. Permission to operate
+                      is not permission to monitor.
+                    </p>
+                    <p x-show="installerWarningReasons.length"
+                       class="text-[10px] text-gray-500 mt-1.5">
+                      Why we think so: <span x-text="installerWarningReasons.join('; ')"></span>.
+                    </p>
+                  </div>
+                </template>
+                <p class="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                  Gateways found
+                  <span x-show="hasMultipleSites" class="text-gray-600 font-normal normal-case tracking-normal"
+                        x-text="'· ' + gatewaysBySite.length + ' sites'"></span>
+                </p>
+                <!-- Grouped by site. A multi-site account otherwise shows every
+                     gateway in one undifferentiated list, and two sites can
+                     reasonably name a gateway the same thing. The heading is
+                     hidden for a single site, where it would be noise. -->
+                <template x-for="group in gatewaysBySite" :key="group.site_id">
+                  <div class="space-y-1">
+                    <p x-show="hasMultipleSites"
+                       class="text-[10px] font-bold text-primary-light pt-1" x-text="group.site"></p>
+                    <template x-for="gw in group.gateways" :key="gw.serial">
+                      <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer"
+                             :class="hasMultipleSites ? 'pl-3' : ''">
+                        <input type="checkbox" class="accent-primary" :value="gw.serial"
+                               x-model="selected">
+                        <span x-text="gw.name || gw.serial"></span>
+                        <span class="text-gray-600 font-mono text-[10px]" x-text="(gw.serial || '').slice(-8)"></span>
+                        <!-- Discovery already returns the model and the online
+                             state; showing only a serial fragment made the user
+                             identify their own hardware from eight digits. -->
+                        <span x-show="gw.model" class="text-[10px] text-gray-500" x-text="gw.model"></span>
+                        <span x-show="gw.online === false"
+                              class="text-[10px] text-amber-400">offline</span>
+                        <span x-show="gw.online === false" class="text-amber-500 text-[10px]">offline</span>
+                      </label>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- ── 2. Home Assistant ───────────────────────────────────────────── -->
+      <!-- Step 2 — what the cloud says is installed. A read of what
+           registration already hydrated, not a second discovery, and shown as
+           confirmation rather than a choice: almost every site is one gateway
+           with one or two aPowers, and approving a list you did not compile is
+           a delay, not a decision. -->
+      <div x-show="step === 2" class="space-y-3">
+        <p class="text-xs text-gray-400 leading-relaxed">
+          Found on your account. Check it matches what is installed.
+        </p>
+        <template x-for="hw in (state.steps?.hardware?.gateways || [])" :key="hw.short_id">
+          <div class="rounded-xl border border-gray-800 p-3 space-y-2">
+            <div class="flex items-baseline gap-2 flex-wrap">
+              <span class="text-xs font-bold text-gray-200" x-text="hw.name || hw.short_id"></span>
+              <span class="text-[10px] text-gray-500" x-text="hw.model"></span>
+              <span x-show="hw.sku" class="font-mono text-[10px] text-gray-600" x-text="hw.sku"></span>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <i class="fas fa-battery-three-quarters text-[10px] text-emerald-400"></i>
+              <span class="text-gray-300">
+                <span x-text="hw.apower_count"></span>
+                <span x-text="hw.apower_count === 1 ? 'aPower' : 'aPowers'"></span>
+              </span>
+              <span x-show="hw.apower_kwh" class="text-gray-500 text-[10px]"
+                    x-text="hw.apower_kwh + ' kWh · ' + hw.apower_kw + ' kW'"></span>
+              <span x-show="!hw.apower_count" class="text-amber-400 text-[10px]">none reported</span>
+            </div>
+            <!-- The same accessory icons and relay chips the dashboard row
+                 renders, from the same hydrated fields. This step used to
+                 derive its own answer and showed four question marks about a
+                 site the Gateways tab described correctly. -->
+            <div class="flex items-center gap-3 flex-wrap">
+              <div class="flex items-center gap-1.5 text-[var(--text-muted)]">
+                <template x-if="hw.solar_kw > 0 || hw.accessories?.includes('solar')">
+                  <span class="flex items-center gap-1 text-[10px] text-[var(--solar)]">
+                    <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#sun"/></svg>
+                    Solar
+                  </span>
+                </template>
+                <template x-if="hw.accessories?.includes('smart_circuits')">
+                  <span class="flex items-center gap-1 text-[10px]">
+                    <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#power"/></svg>
+                    Smart circuits
+                  </span>
+                </template>
+                <template x-if="hw.accessories?.includes('generator')">
+                  <span class="flex items-center gap-1 text-[10px]">
+                    <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#ev-station"/></svg>
+                    Generator
+                  </span>
+                </template>
+                <template x-if="hw.accessories?.includes('apbox')">
+                  <span class="flex items-center gap-1 text-[10px]">
+                    <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#server"/></svg>
+                    aPBox
+                  </span>
+                </template>
+                <template x-if="hw.accessories?.includes('ahub')">
+                  <span class="flex items-center gap-1 text-[10px]">
+                    <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#server"/></svg>
+                    aHub
+                  </span>
+                </template>
+                <template x-if="!hw.accessories?.length && !(hw.solar_kw > 0)">
+                  <span class="text-[10px]">No accessories reported</span>
+                </template>
+              </div>
+
+              <div class="flex gap-2 font-mono text-[10px]">
+                <span :class="$store.app.relayClass(hw.grid_relay1, 'text-[var(--ok)]')"
+                      :title="$store.app.relayTitle('GRD', hw.grid_relay1)">GRD:<span
+                      x-text="$store.app.relayLabel(hw.grid_relay1)"></span></span>
+                <span :class="$store.app.relayClass(hw.generator_relay, 'text-[var(--warn)]')"
+                      :title="$store.app.relayTitle('GEN', hw.generator_relay)">GEN:<span
+                      x-text="$store.app.relayLabel(hw.generator_relay)"></span></span>
+                <span :class="$store.app.relayClass(hw.solar_relay1, 'text-[var(--solar)]')"
+                      :title="$store.app.relayTitle('SOL', hw.solar_relay1)">SOL:<span
+                      x-text="$store.app.relayLabel(hw.solar_relay1)"></span></span>
+              </div>
+            </div>
+        </template>
+        <p x-show="!(state.steps?.hardware?.gateways || []).length"
+           class="text-xs text-amber-400">Nothing registered yet — go back and add a gateway.</p>
+        <p class="text-[10px] text-gray-600 leading-relaxed">
+          Accessories and relay states are read live from the gateway — the same
+          source the Gateways tab uses. GRD, GEN and SOL are the contactors.
+        </p>
+      </div>
+
+      <div x-show="step === 3" class="space-y-4">
+        <!-- Under the Supervisor both of these configure themselves. Asking
+             would be two questions with one answer. -->
+        <template x-if="state.install_context === 'ha_addon'">
+          <p class="text-xs text-gray-400 leading-relaxed">
+            Running as a Home Assistant add-on, so the connection and the MQTT
+            broker configure themselves. Nothing to enter here.
+          </p>
+        </template>
+        <template x-if="state.install_context !== 'ha_addon'">
+          <p class="text-xs text-gray-400 leading-relaxed">
+            Set the Home Assistant URL and a long-lived access token on the
+            <span class="text-gray-300">HA Entities</span> tab after finishing.
+            Entity discovery works without it; only service calls need it.
+          </p>
+        </template>
+
+        <div class="space-y-2">
+          <template x-for="row in checks" :key="row.key">
+            <div class="flex items-center justify-between rounded-lg border px-3 py-2.5"
+                 :class="row.done ? 'border-emerald-500/25 bg-emerald-500/5' : 'border-amber-500/25 bg-amber-500/5'">
+              <div>
+                <p class="text-xs font-bold" :class="row.done ? 'text-emerald-400' : 'text-amber-400'"
+                   x-text="row.label"></p>
+                <p class="text-[10px] text-gray-500" x-text="row.detail"></p>
+              </div>
+              <i class="fas text-xs" :class="row.done ? 'fa-check text-emerald-400' : 'fa-circle-exclamation text-amber-400'"></i>
+            </div>
+          </template>
+        </div>
+
+        <button @click="refresh()" :disabled="busy"
+                class="text-[10px] font-bold text-gray-400 border border-gray-700 hover:border-gray-600 px-3 py-1.5 rounded transition disabled:opacity-40">
+          <i class="fas fa-rotate-right text-[9px] mr-1" :class="busy ? 'animate-spin' : ''"></i>Re-check
+        </button>
+      </div>
+
+      <!-- ── 3. Ready ────────────────────────────────────────────────────── -->
+      <!-- Step 3 — entity prefix. Asked here because Home Assistant assigns an
+           entity id once, at creation, and keeps it: choosing afterwards means
+           renaming every entity and rewriting every dashboard that used the old
+           ids. One click here, or an afternoon later. -->
+      <div x-show="step === 4" class="space-y-4">
+        <p class="text-xs text-gray-400 leading-relaxed">
+          How entities are named in Home Assistant. This is fixed once entities
+          are published &mdash; changing it later means renaming every one.
+        </p>
+        <template x-for="choice in (state.steps?.prefix?.choices || [])" :key="choice.key">
+          <label class="flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition"
+                 :class="prefixTemplate === choice.template
+                         ? 'border-primary bg-primary/5' : 'border-gray-800 hover:border-gray-700'">
+            <input type="radio" class="mt-1 accent-primary"
+                   :value="choice.template" x-model="prefixTemplate">
+            <span class="min-w-0">
+              <span class="block text-xs font-bold text-gray-200" x-text="choice.label"></span>
+              <span class="block text-[11px] text-gray-500 leading-relaxed" x-text="choice.detail"></span>
+              <span class="block mt-1 font-mono text-[10px] text-emerald-400 truncate"
+                    x-text="choice.example"></span>
+            </span>
+          </label>
+        </template>
+      </div>
+
+      <div x-show="step === 5" class="space-y-4">
+        <div class="rounded-xl border border-gray-800 p-4 space-y-2">
+          <p class="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1">What is configured</p>
+          <template x-for="row in checks" :key="row.key">
+            <div class="flex items-center gap-2 text-xs">
+              <i class="fas text-[10px]" :class="row.done ? 'fa-check text-emerald-400' : 'fa-minus text-gray-600'"></i>
+              <span :class="row.done ? 'text-gray-300' : 'text-gray-600'" x-text="row.label"></span>
+              <span class="text-gray-600 text-[10px]" x-text="row.detail"></span>
+            </div>
+          </template>
+        </div>
+        <p class="text-xs text-gray-400 leading-relaxed">
+          Schedules and cost tracking need your electricity plan, which is set on
+          the <span class="text-gray-300">Pricing</span> tab. The integration
+          reports and controls the battery without it.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-800 shrink-0">
+      <button @click="step = Math.max(1, step - 1)" x-show="step > 1"
+              class="text-xs font-bold text-gray-400 hover:text-gray-200 px-3 py-2">Back</button>
+      <span x-show="step === 1"></span>
+      <div class="flex gap-2 ml-auto">
+        <template x-if="step === 1 && !state.steps?.gateway?.done && gateways.length === 0">
+          <button @click="signIn()" :disabled="busy"
+                  class="text-xs font-bold text-white bg-primary hover:bg-primary-light px-4 py-2 rounded-lg transition disabled:opacity-50">
+            <span x-text="busy ? 'Signing in…' : 'Sign in'"></span>
+          </button>
+        </template>
+        <template x-if="step === 1 && gateways.length > 0">
+          <button @click="registerSelected()" :disabled="busy || selected.length === 0"
+                  class="text-xs font-bold text-white bg-primary hover:bg-primary-light px-4 py-2 rounded-lg transition disabled:opacity-50">
+            <span x-text="busy ? 'Adding…' : 'Add ' + selected.length + ' gateway(s)'"></span>
+          </button>
+        </template>
+        <template x-if="step === 1 && state.steps?.gateway?.done">
+          <button @click="next()" class="text-xs font-bold text-white bg-primary hover:bg-primary-light px-4 py-2 rounded-lg transition">Next</button>
+        </template>
+        <!-- 2 hardware · 3 connection · 4 naming · 5 finish -->
+        <template x-if="step === 2 || step === 3">
+          <button @click="next()" class="text-xs font-bold text-white bg-primary hover:bg-primary-light px-4 py-2 rounded-lg transition">Next</button>
+        </template>
+        <template x-if="step === 4">
+          <button @click="savePrefix()" :disabled="busy || !prefixTemplate"
+                  class="text-xs font-bold text-white bg-primary hover:bg-primary-light px-4 py-2 rounded-lg transition disabled:opacity-50">
+            <span x-text="busy ? 'Saving…' : 'Continue'"></span>
+          </button>
+        </template>
+        <template x-if="step === 5">
+          <button @click="finish()" :disabled="busy"
+                  class="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded-lg transition disabled:opacity-50">
+            Finish
+          </button>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>

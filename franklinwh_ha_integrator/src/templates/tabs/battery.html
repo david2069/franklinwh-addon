@@ -1,0 +1,808 @@
+<!-- ── Battery Tab v2 ── BMS Telemetry ────────────────── -->
+<style>
+@keyframes cellHighPulse {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(248,113,113,0.5); opacity: 1; }
+  50%       { box-shadow: 0 0 10px 4px rgba(248,113,113,0.9); opacity: 0.75; }
+}
+</style>
+<div x-data="batteryTab()" x-init="init()" class="space-y-5 max-w-6xl">
+
+  <!-- Header + Selectors -->
+  <div class="flex flex-wrap items-start gap-4">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#battery"/></svg>
+        Battery
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">aPower units, BMS telemetry &amp; cell data</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-3 ml-auto">
+      <!-- Gateway selector -->
+      <select x-model="selectedGw" @change="load()"
+              class="bg-gray-800 border border-gray-700 text-gray-200 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary transition">
+        <option value="">— select gateway —</option>
+        <template x-for="gw in gateways" :key="gw.short_id">
+          <option :value="gw.short_id" x-text="gw.name + ' [' + gw.short_id + ']'"></option>
+        </template>
+      </select>
+      <!-- Battery selector -->
+      <select x-model="selectedBatterySn"
+              class="bg-gray-800 border border-gray-700 text-gray-200 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary transition">
+        <option value="">— select battery —</option>
+        <template x-for="bat in batteries" :key="bat.short_id">
+          <option :value="bat.full_serial || bat.short_id"
+                  x-text="(bat.mpptAppVer?'aPower S Hybrid':'aPower') + ' [' + (bat.full_serial||bat.short_id) + ']'"></option>
+        </template>
+      </select>
+      <!-- Show BMS button -->
+      <button @click="loadBms()" :disabled="fetchingBms"
+              class="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-600 bg-gray-800 text-xs font-bold text-gray-200 hover:border-primary/60 hover:bg-primary/5 transition disabled:opacity-50">
+        <i class="fas text-xs" :class="fetchingBms?'fa-sync-alt animate-spin':'fa-search'"></i>
+        <span x-text="fetchingBms?'Fetching…':'Show BMS Info'"></span>
+      </button>
+      <span x-show="bmsError" x-text="bmsError" class="text-xs font-bold text-red-400" x-transition.opacity></span>
+    </div>
+  </div>
+
+  <!-- ── Sub-tab navigation ──────────────────────────────────────── -->
+  <div class="flex gap-1 border-b border-gray-700/60 pb-0">
+    <button @click="activeSubTab='telemetry'"
+            class="flex items-center gap-2 px-5 py-2.5 text-sm font-black border-b-2 -mb-px transition"
+            :class="activeSubTab==='telemetry'
+              ? 'border-primary text-primary-light'
+              : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-microchip text-xs"></i>BMS Telemetry
+    </button>
+    <button @click="activeSubTab='charts'; if(selectedGw && allSessions.length===0 && !loadingAllSessions) loadAllSessions()"
+            class="flex items-center gap-2 px-5 py-2.5 text-sm font-black border-b-2 -mb-px transition"
+            :class="activeSubTab==='charts'
+              ? 'border-amber-400 text-amber-300'
+              : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-chart-line text-xs"></i>Charts
+      <span x-show="allSessions.length" class="ml-1 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[9px] font-black" x-text="allSessions.length"></span>
+    </button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       CHARTS SUB-TAB — Inline session browser
+  ══════════════════════════════════════════════════════════════ -->
+  <div x-show="activeSubTab === 'charts'" x-transition class="space-y-4">
+
+    <!-- No gateway selected -->
+    <template x-if="!selectedGw">
+      <div class="rounded-xl border border-dashed border-gray-700 bg-gray-800/30 p-16 text-center">
+        <i class="fas fa-chart-line text-4xl text-gray-700 mb-4"></i>
+        <p class="text-sm text-gray-500">Select a gateway above to browse chart sessions.</p>
+      </div>
+    </template>
+
+    <template x-if="selectedGw">
+      <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+
+        <!-- ── Left: Session list ─────────────────────────────── -->
+        <div class="lg:col-span-2 rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+          <!-- Header row -->
+          <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between gap-3">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-400">Recorded Sessions</p>
+            <button @click="loadAllSessions()"
+                    class="flex items-center gap-1 px-2 py-1 rounded-lg border border-gray-700 bg-gray-800/80 text-[9px] font-bold text-gray-400 hover:border-gray-500 transition">
+              <i class="fas" :class="loadingAllSessions ? 'fa-sync-alt animate-spin' : 'fa-sync-alt'"></i>Refresh
+            </button>
+          </div>
+          <!-- Serial filter -->
+          <div class="px-3 py-2 border-b border-gray-700/50">
+            <select x-model="filterBatterySn"
+                    class="w-full bg-gray-800 border border-gray-700 text-gray-300 rounded-lg px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-primary transition">
+              <option value="">— All aPower Units —</option>
+              <template x-for="sn in allSessionSerials()" :key="sn">
+                <option :value="sn" x-text="sn.length > 16 ? sn.substring(sn.length-8) : sn"></option>
+              </template>
+            </select>
+          </div>
+          <!-- Session list -->
+          <div class="overflow-y-auto max-h-[480px]">
+            <!-- Loading -->
+            <div x-show="loadingAllSessions" class="py-10 text-center text-xs text-gray-500">
+              <i class="fas fa-sync-alt animate-spin mr-1"></i>Loading sessions…
+            </div>
+            <!-- Empty -->
+            <div x-show="!loadingAllSessions && filteredSessions().length === 0"
+                 class="py-10 text-center text-xs text-gray-500 border-dashed">
+              <i class="fas fa-inbox text-3xl text-gray-700 mb-3 block"></i>
+              No sessions recorded yet.
+            </div>
+            <!-- Session items -->
+            <template x-for="s in filteredSessions()" :key="s.session_id">
+              <div class="flex items-center px-3 py-2.5 border-b border-gray-700/50 cursor-pointer transition group"
+                   :class="selectedInlineSessionId===s.session_id
+                     ? 'bg-primary/10 border-l-2 border-l-primary'
+                     : 'hover:bg-gray-700/30'"
+                   @click="loadInlineSession(s.session_id, s.session_name||'Auto-Session', s.battery_sn)">
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold text-gray-200 truncate" x-text="s.session_name || 'Auto-Session'"></p>
+                  <p class="text-[9px] text-gray-500 mt-0.5 truncate"
+                     x-text="s.created_at + ' · ' + s.record_count + ' samples @' + s.interval_sec + 's'"></p>
+                  <p class="text-[9px] font-mono text-gray-600 mt-0.5 truncate"
+                     x-text="s.battery_sn.length > 12 ? '…'+s.battery_sn.substring(s.battery_sn.length-8) : s.battery_sn"></p>
+                </div>
+                <button @click.stop="deleteInlineSession(s.session_id)"
+                        class="ml-2 px-2 py-1 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 text-[9px] opacity-0 group-hover:opacity-100 transition hover:bg-red-500/20">
+                  <i class="fas fa-trash-alt"></i>
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- ── Right: Inline chart viewer ────────────────────── -->
+        <div class="lg:col-span-3 rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden flex flex-col min-h-[420px]">
+          <!-- No session selected -->
+          <div x-show="!selectedInlineSessionId && !inlineChartLoading"
+               class="flex-1 flex flex-col items-center justify-center py-16 text-center">
+            <i class="fas fa-hand-pointer text-3xl text-gray-700 mb-3"></i>
+            <p class="text-sm font-bold text-gray-500">Select a session</p>
+            <p class="text-xs text-gray-600 mt-1">Click any session on the left to render its chart.</p>
+          </div>
+          <!-- Loading -->
+          <div x-show="inlineChartLoading"
+               class="flex-1 flex items-center justify-center py-16">
+            <i class="fas fa-sync-alt animate-spin text-primary-light mr-2"></i>
+            <span class="text-sm text-gray-400">Loading session…</span>
+          </div>
+          <!-- Chart content -->
+          <template x-if="selectedInlineSessionId && !inlineChartLoading">
+            <div class="flex flex-col flex-1">
+              <!-- Chart header -->
+              <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p class="text-xs font-bold text-gray-200 truncate max-w-xs" x-text="inlineChartTitle"></p>
+                  <p class="text-[9px] font-mono text-gray-500 mt-0.5 truncate" x-text="inlineChartSerial"></p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[9px] font-mono text-gray-500" x-text="inlineChartTimes.length + ' snapshots'"></span>
+                  <button @click="exportInlineCSV()"
+                          class="flex items-center gap-1 px-2 py-1 rounded-lg border border-gray-700 bg-gray-800/80 text-[9px] font-bold text-gray-400 hover:border-gray-500 transition">
+                    <i class="fas fa-download"></i>CSV
+                  </button>
+                </div>
+              </div>
+              <!-- Chart mode tabs -->
+              <div class="flex gap-0.5 px-4 pt-3 border-b border-gray-700/50 bg-gray-900/40">
+                <template x-for="tab in [{k:'VOLTAGE',icon:'fa-bolt',label:'Voltage'},{k:'TEMPERATURE',icon:'fa-thermometer-half',label:'Temperature'},{k:'COMPARISON',icon:'fa-list',label:'Comparison (Δ)'}]" :key="tab.k">
+                  <button @click="inlineChartTab=tab.k; renderInlineChart()"
+                          class="flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-b-2 -mb-px transition"
+                          :class="inlineChartTab===tab.k ? 'border-amber-400 text-amber-300' : 'border-transparent text-gray-500 hover:text-gray-300'">
+                    <i class="fas text-[9px]" :class="tab.icon"></i>
+                    <span x-text="tab.label"></span>
+                  </button>
+                </template>
+              </div>
+              <!-- Canvas (Voltage / Temperature) -->
+              <div x-show="!inlineChartEmpty && inlineChartTab !== 'COMPARISON'" class="p-4 flex-1" style="min-height:320px;">
+                <canvas id="bmsCanvasInline"></canvas>
+              </div>
+              <!-- Comparison (delta) table -->
+              <div x-show="!inlineChartEmpty && inlineChartTab === 'COMPARISON'" class="p-4 flex-1 overflow-auto">
+                <template x-if="inlineChartTimes.length >= 2">
+                  <div class="rounded-xl border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-2.5 bg-gray-800 border-b border-gray-700">
+                      <p class="text-[9px] font-black uppercase tracking-widest text-gray-600">Cell Voltages (mV) — Previous vs Current snapshot</p>
+                    </div>
+                    <div class="grid grid-cols-4 px-4 py-2 border-b border-gray-700 text-[9px] font-bold text-gray-600">
+                      <div>Cell</div><div class="text-right">Previous</div><div class="text-right">Current</div><div class="text-right">Δ mV</div>
+                    </div>
+                    <template x-for="i in 16">
+                      <div class="grid grid-cols-4 px-4 py-2 border-b border-gray-700/50 text-xs">
+                        <div class="text-gray-500" x-text="i"></div>
+                        <div class="text-right font-mono text-gray-300" x-text="inlineChartVoltages[inlineChartVoltages.length-2]?.[i-1]"></div>
+                        <div class="text-right font-mono font-bold text-gray-100" x-text="inlineChartVoltages[inlineChartVoltages.length-1]?.[i-1]"></div>
+                        <div class="text-right font-mono font-bold"
+                             :class="(inlineChartVoltages[inlineChartVoltages.length-1]?.[i-1]-inlineChartVoltages[inlineChartVoltages.length-2]?.[i-1])>0?'text-emerald-400':((inlineChartVoltages[inlineChartVoltages.length-1]?.[i-1]-inlineChartVoltages[inlineChartVoltages.length-2]?.[i-1])<0?'text-red-400':'text-gray-500')"
+                             x-text="((v=>(v>0?'▲ +':'▼ ')+(v||0))(inlineChartVoltages[inlineChartVoltages.length-1]?.[i-1]-inlineChartVoltages[inlineChartVoltages.length-2]?.[i-1]))"
+                        ></div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="inlineChartTimes.length < 2">
+                  <div class="py-12 text-center text-sm text-gray-500">Need at least 2 snapshots to calculate Δ comparison.</div>
+                </template>
+              </div>
+              <div x-show="inlineChartEmpty" class="flex-1 flex flex-col items-center justify-center py-12">
+                <i class="fas fa-inbox text-3xl text-gray-700 mb-3"></i>
+                <p class="text-sm font-bold text-gray-500">Session is empty</p>
+              </div>
+            </div>
+          </template>
+        </div>
+
+      </div>
+    </template>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       BMS TELEMETRY SUB-TAB (existing content, gated by activeSubTab)
+  ══════════════════════════════════════════════════════════════ -->
+  <div x-show="activeSubTab === 'telemetry'" x-transition class="space-y-4">
+
+  <!-- No gateway selected -->
+  <template x-if="!selectedGw">
+    <div class="rounded-xl border border-dashed border-gray-700 bg-gray-800/30 p-16 text-center">
+      <i class="fas fa-battery-three-quarters text-4xl text-gray-700 mb-4"></i>
+      <p class="text-sm text-gray-500">Select a gateway above to view batteries.</p>
+    </div>
+  </template>
+
+  <!-- Select battery hint -->
+  <template x-if="selectedGw && batteries.length > 0 && !activeBmsSn">
+    <div class="rounded-xl border border-dashed border-gray-700 bg-gray-800/30 p-12 text-center">
+      <i class="fas fa-battery-half text-3xl text-gray-600 mb-3"></i>
+      <p class="text-sm font-bold text-gray-400">Select an aPower Unit</p>
+      <p class="text-xs text-gray-600 mt-1">Choose a battery and click 'Show BMS Info' to inspect telemetry.</p>
+    </div>
+  </template>
+
+  <!-- BMS Telemetry Display -->
+  <template x-if="bmsUnits.length > 0 && activeBmsSn">
+    <div class="space-y-5">
+      <template x-for="(unit, idx) in bmsUnits.filter(u => u.serial === activeBmsSn || u.serial.includes(activeBmsSn) || (activeBmsSn && activeBmsSn.includes(u.serial)))" :key="unit.serial || idx">
+        <div class="space-y-4">
+
+          <!-- BMS Header Card -->
+          <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-5 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+            <div class="flex items-center gap-4">
+              <div class="w-11 h-11 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <i class="fas fa-microchip text-primary-light text-sm"></i>
+              </div>
+              <div>
+                <p class="text-base font-bold text-gray-100">Battery Management System</p>
+                <div class="flex flex-wrap gap-2 mt-1.5 text-[10px] font-mono">
+                  <span class="bg-gray-700 text-gray-400 px-2 py-0.5 rounded">SN: <span x-text="unit.serial"></span></span>
+                  <button @click="openApowerModal(unit.serial)"
+                          class="bg-primary/10 text-primary-light px-2 py-0.5 rounded border border-primary/20 hover:bg-primary/20 transition">
+                    Firmware <span class="font-mono text-[9px]" x-text="unit.firmware || 'V11R50B03D00'"></span> <i class="fas fa-info-circle text-[9px] ml-0.5"></i>
+                  </button>
+                  <span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold">
+                    Mode: <span x-text="decodeRunMode(unit.run_mode)"></span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <!-- Balancing pill: red=inactive, green=active (non-zero raw). Click for decode modal -->
+            <button @click="openBalancingModal(unit)"
+                    class="flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition hover:opacity-80"
+                    :class="unit.balan_state ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'">
+              <span class="text-gray-400 font-bold tracking-widest text-[9px]">BALANCING</span>
+              <i class="fas fa-circle text-[8px]" :class="unit.balan_state ? 'text-emerald-400' : 'text-red-400'"></i>
+              <span :class="unit.balan_state ? 'text-emerald-300' : 'text-red-400'"
+                    x-text="unit.balan_state ? 'Active' : 'Inactive'"></span>
+              <i class="fas fa-info-circle text-[8px] text-gray-600"></i>
+            </button>
+          </div>
+
+          <!-- Info + Electrical Row -->
+          <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+            <!-- Battery Info (2 cols) -->
+            <div class="lg:col-span-2 rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+              <div class="px-4 py-2.5 border-b border-gray-700 bg-gray-800">
+                <p class="text-[9px] font-black uppercase tracking-widest text-gray-400">Battery Information</p>
+              </div>
+              <!-- Single horizontal row: Capacity | Power | Status/State -->
+              <div class="flex divide-x divide-gray-700">
+                <div class="flex-1 p-3 flex flex-col justify-start">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">Capacity</p>
+                  <p class="text-sm font-black text-gray-100">
+                    <span x-text="remainingKwh(unit.serial, unit.soc)"></span>
+                    <span class="text-[9px] text-gray-500 font-normal"> / </span>
+                    <span x-text="safelyGetApowerInfo(unit.serial,'ratedCapacity','13.6')"></span>
+                    <span class="text-[9px] text-gray-500 font-normal ml-0.5">kWh</span>
+                  </p>
+                </div>
+                <div class="flex-1 p-3 flex flex-col justify-start">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">Power (Rated)</p>
+                  <p class="text-sm font-black text-gray-100">
+                    <span x-text="safelyGetApowerInfo(unit.serial,'ratedPower','5.0')"></span>
+                    <span class="text-[9px] text-gray-500 font-normal ml-0.5">kW</span>
+                  </p>
+                </div>
+                <div class="flex-1 p-3 flex flex-col justify-start min-w-0">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">Status</p>
+                  <p class="text-sm font-black leading-tight" :class="safelyGetApowerInfo(unit.serial,'status',0)==0?'text-emerald-400':'text-red-400'"
+                     x-text="safelyGetApowerInfo(unit.serial,'status',0)==0?'Normal':'Abnormal'"></p>
+                  <p class="text-[10px] font-semibold text-gray-400 mt-0.5 leading-tight truncate"
+                     x-text="unit.current>0.5?'↑ Charging':(unit.current<-0.5?'↓ Discharging':'– Standby')"></p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Electrical Summary (3 cols) -->
+            <div class="lg:col-span-3 rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+              <div class="px-4 py-2.5 border-b border-gray-700 bg-gray-800">
+                <p class="text-[9px] font-black uppercase tracking-widest text-gray-400">Electrical Summary</p>
+              </div>
+              <div class="grid grid-cols-5 divide-x divide-gray-700">
+                <div class="p-3 flex flex-col">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">State of Charge</p>
+                  <p class="text-lg font-black text-gray-100">
+                    <span x-text="unit.soc||'—'"></span><span class="text-xs text-gray-500 ml-0.5">%</span>
+                  </p>
+                </div>
+                <div class="p-3 flex flex-col">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">State of Health</p>
+                  <p class="text-lg font-black text-gray-100"><span x-text="unit.soh||'—'"></span><span class="text-xs text-gray-500 ml-0.5">%</span></p>
+                </div>
+                <div class="p-3 flex flex-col">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">Voltage</p>
+                  <p class="text-lg font-black text-gray-100"><span x-text="unit.pack_voltage||'—'"></span><span class="text-xs text-gray-500 ml-0.5">V</span></p>
+                </div>
+                <div class="p-3 flex flex-col">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">Current</p>
+                  <p class="text-lg font-black text-gray-100"><span x-text="Math.abs(unit.current)||'—'"></span><span class="text-xs text-gray-500 ml-0.5">A</span></p>
+                </div>
+                <div class="p-3 flex flex-col">
+                  <p class="text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1">Frequency</p>
+                  <p class="text-lg font-black text-gray-100"><span x-text="unit.grid_freq||'—'"></span><span class="text-xs text-gray-500 ml-0.5">Hz</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- BuckBoost + Thermal -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+              <div class="px-4 py-2.5 border-b border-gray-700 bg-gray-800">
+                <p class="text-[9px] font-black uppercase tracking-widest text-gray-400">BuckBoost Converter</p>
+              </div>
+              <div class="p-4 grid grid-cols-2 gap-4">
+                <div>
+                  <p class="text-[9px] font-bold uppercase text-gray-600 mb-1">Current</p>
+                  <p class="text-lg font-black text-gray-100"><span x-text="unit.buckboost_current||'—'"></span><span class="text-xs text-gray-500 ml-1">A</span></p>
+                </div>
+                <div>
+                  <p class="text-[9px] font-bold uppercase text-gray-600 mb-1">Temperature</p>
+                  <p class="text-lg font-black text-gray-100"><span x-text="unit.buckboost_temp||'—'"></span><span class="text-xs ml-0.5">°C</span></p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+              <div class="px-4 py-2.5 border-b border-gray-700 bg-gray-800">
+                <p class="text-[9px] font-black uppercase tracking-widest text-gray-400">Thermal Sensors</p>
+              </div>
+              <div class="p-4 grid grid-cols-3 gap-3">
+                <template x-for="t in [
+                  {label:'Device', value:unit.dev_temp},
+                  {label:'Inverter', value:unit.inv_temp},
+                  {label:'LLC', value:unit.llc_temp},
+                ]" :key="t.label">
+                  <div class="bg-gray-800 rounded-lg p-3 text-center">
+                    <p class="text-[8px] font-black uppercase tracking-widest text-gray-600 mb-1" x-text="t.label"></p>
+                    <p class="text-base font-black text-gray-100"><span x-text="t.value||'—'"></span><span class="text-xs">°</span></p>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Inverter & Power Electronics -->
+          <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+            <div class="px-4 py-2.5 border-b border-gray-700 bg-gray-800">
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-400">Inverter &amp; Power Electronics</p>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 divide-gray-700" style="border-collapse:collapse">
+              <template x-for="group in [
+                {title:'Grid Voltages', rows:[{l:'L1',v:unit.grid_volt_l1+'V'},{l:'L2',v:unit.grid_volt_l2+'V'},{l:'Line',v:unit.grid_line_vol+'V'}]},
+                {title:'Inverter Lines', rows:[{l:'L1',v:unit.inv_volt_1+'V'},{l:'L2',v:unit.inv_volt_2+'V'},{l:'Line',v:unit.inv_line_vol+'V'}]},
+                {title:'DC Bus', rows:[{l:'Pos',v:unit.pos_bus_volt+'V'},{l:'Neg',v:unit.neg_bus_volt+'V'},{l:'Mid',v:unit.mid_bus_volt+'V'}]},
+                {title:'Solar Strings', rows:[{l:'A',v:unit.solar_volt_an+'V'},{l:'B',v:unit.solar_volt_bn+'V'}]},
+                {title:'Phase Power', rows:[{l:'L1 Act',v:unit.act_pwr_1+'W'},{l:'L2 Act',v:unit.act_pwr_2+'W'},{l:'L1 Rct',v:unit.react_pwr_1+'VR'}]},
+                {title:'Inv Currents', rows:[{l:'L1',v:unit.inv_curr_1+'A'},{l:'L2',v:unit.inv_curr_2+'A'}]},
+                {title:'Out Currents', rows:[{l:'L1',v:unit.out_curr_1+'A'},{l:'L2',v:unit.out_curr_2+'A'}]},
+              ]" :key="group.title">
+                <div class="p-3 border-r border-b border-gray-700">
+                  <p class="text-[8px] font-black uppercase tracking-widest text-gray-600 mb-2" x-text="group.title"></p>
+                  <template x-for="row in group.rows" :key="row.l">
+                    <div class="flex justify-between text-[10px] mb-1">
+                      <span class="text-gray-500" x-text="row.l"></span>
+                      <span class="font-bold text-gray-200 font-mono" x-text="row.v"></span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Hardware Registers -->
+          <div class="grid grid-cols-5 sm:grid-cols-10 gap-2">
+            <template x-for="reg in [
+              {label:'BMS State',  value:decodeBmsState(unit.bms_state),    ok:true},
+              {label:'Run Mode',   value:decodeRunMode(unit.run_mode),       ok:false},
+              {label:'MOS',        value:decodeMosState(unit.mos_state),    ok:true},
+              {label:'Inverter',   value:decodeInvStatus(unit.inverter_status), ok:false},
+              {label:'DCDC',       value:decodeDcdcStatus(unit.dcdc_status), ok:true},
+              {label:'Switch',     value:decodeSwitchState(unit.switch_state), ok:true},
+              {label:'Heater',     value:unit.heat_state?'ON':'OFF',        ok:false},
+              {label:'Fan',        value:unit.fan_state?'ON':'OFF',         ok:false},
+              {label:'Alarm',      value:unit.alarm_level===0?'None':'Alert', ok:unit.alarm_level===0},
+              {label:'Sampled V',  value:(unit.sampled_volt||0)+' V',      ok:false},
+            ]" :key="reg.label">
+              <div class="rounded-lg text-center p-2 border"
+                   :class="reg.ok?'bg-emerald-500/5 border-emerald-500/25':'bg-gray-800/60 border-gray-700'">
+                <p class="text-[8px] font-black uppercase tracking-wider mb-1"
+                   :class="reg.ok?'text-emerald-600':'text-gray-600'" x-text="reg.label"></p>
+                <p class="text-[9px] font-bold truncate"
+                   :class="reg.ok?'text-emerald-400':'text-gray-300'" x-text="reg.value"></p>
+              </div>
+            </template>
+          </div>
+
+          <!-- Cell Telemetry -->
+          <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-5">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+              <p class="text-xs font-bold text-gray-200 flex items-center gap-2">
+                <i class="fas fa-th text-gray-500 text-[10px]"></i>Cell Telemetry (16 Series)
+              </p>
+              <!-- High/Low header: LOW=red (danger), HIGH=blue -->
+              <div class="flex items-center gap-4 text-xs font-bold font-mono">
+                <span class="flex items-center gap-1 text-blue-400">
+                  <i class="fas fa-arrow-up text-[9px]"></i>HIGH:
+                  <span x-text="unit.highest_cell_v ? (unit.highest_cell_v/1000).toFixed(3)+'V' : '—'"></span>
+                </span>
+                <span class="flex items-center gap-1 text-red-400">
+                  <i class="fas fa-arrow-down text-[9px]"></i>LOW:
+                  <span x-text="unit.lowest_cell_v ? (unit.lowest_cell_v/1000).toFixed(3)+'V' : '—'"></span>
+                </span>
+                <span class="text-gray-400">Δ<span x-text="unit.highest_cell_v&&unit.lowest_cell_v ? (unit.highest_cell_v-unit.lowest_cell_v)+'mV' : '—'"></span></span>
+              </div>
+            </div>
+
+            <!-- Pill grid -->
+            <div class="grid grid-cols-4 sm:grid-cols-8 gap-2">
+              <template x-for="(v, idx) in unit.cell_voltages" :key="idx">
+                <div class="relative rounded-lg border p-2 flex flex-col items-center"
+                     :class="v===unit.lowest_cell_v
+                       ? 'border-red-500/60 bg-red-500/5'
+                       : (v===unit.highest_cell_v ? 'border-blue-500/60 bg-blue-500/5' : 'border-gray-700 bg-gray-800/40')">
+                  <!-- Cell number -->
+                  <span class="absolute top-1 left-1.5 text-[8px] text-gray-600" x-text="idx+1"></span>
+                  <!-- LED dot: LOWEST cell = red pulsing danger dot; HIGHEST cell = blue static -->
+                  <span class="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full transition-all duration-300"
+                        :class="v===unit.lowest_cell_v
+                          ? 'bg-red-400'
+                          : (v===unit.highest_cell_v ? 'bg-blue-400 shadow-sm shadow-blue-400/60' : 'opacity-0')"
+                        :style="v===unit.lowest_cell_v ? 'animation: cellHighPulse 2s ease-in-out infinite; box-shadow: 0 0 6px 2px rgba(248,113,113,0.7)' : ''"></span>
+                  <!-- Voltage -->
+                  <span class="text-[11px] font-black text-gray-100 mt-2 tabular-nums"
+                        x-text="(v/1000).toFixed(3)+'V'"></span>
+                  <!-- Temperature badge -->
+                  <span class="mt-1 text-[9px] font-bold px-1 py-0.5 rounded border"
+                        :class="(unit.cell_temps&&unit.cell_temps[idx]!=null)
+                          ? (unit.cell_temps[idx]<35 ? 'text-emerald-400 border-emerald-500/40'
+                          : (unit.cell_temps[idx]<45 ? 'text-amber-400 border-amber-500/40'
+                          : 'text-red-400 border-red-500/40'))
+                          : 'text-gray-600 border-gray-700'"
+                        x-text="(unit.cell_temps&&unit.cell_temps[idx]!=null) ? unit.cell_temps[idx].toFixed(1)+'°C' : '—°C'"></span>
+                </div>
+              </template>
+            </div>
+
+            <!-- Cell legend -->
+            <div class="flex flex-wrap gap-4 mt-4 text-[9px] font-bold text-gray-500 items-center">
+              <span class="flex items-center gap-1.5 text-red-400">
+                <span class="w-2 h-2 rounded-full bg-red-400 shadow shadow-red-400/50" style="animation: cellHighPulse 2s ease-in-out infinite"></span>
+                Lowest: Cell <span x-text="unit.min_cell_pos ?? '—'"></span>
+              </span>
+              <span class="flex items-center gap-1.5 text-blue-400">
+                <span class="w-2 h-2 rounded-full bg-blue-400 shadow shadow-blue-400/50"></span>
+                Highest: Cell <span x-text="unit.max_cell_pos ?? '—'"></span>
+              </span>
+              <span class="flex items-center gap-1.5">
+                <i class="fas fa-thermometer-half text-[10px]"></i>
+                Temp: <span x-text="unit.lowest_cell_t"></span>°C → <span x-text="unit.highest_cell_t"></span>°C
+                <span x-show="unit.min_temp_pos!=null">
+                  (Cells <span x-text="unit.min_temp_pos"></span> → <span x-text="unit.max_temp_pos"></span>)
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Charts & Recordings -->
+          <div class="rounded-xl border-2 border-primary/40 bg-primary/5 p-5">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center">
+                  <i class="fas fa-chart-line text-primary-light text-sm"></i>
+                </div>
+                <div>
+                  <p class="text-sm font-bold text-gray-100">Charts &amp; Historical Recordings</p>
+                  <p class="text-[9px] text-gray-500 mt-0.5">Capture BMS telemetry sessions for trend analysis</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 flex-wrap">
+                <!-- Auto-refresh controls (when not recording) -->
+                <div x-show="!recordingBms" class="flex items-center gap-2 text-[10px] text-gray-500 font-bold">
+                  AUTO:
+                  <input type="number" x-model.number="autoRefreshCount" min="1" max="100"
+                         class="w-10 text-center text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-200">
+                  × /
+                  <input type="number" x-model.number="autoRefreshInterval" min="5" max="300"
+                         class="w-10 text-center text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-200">
+                  sec
+                </div>
+                <!-- Record button -->
+                <button x-show="!recordingBms" @click="toggleBmsRecording()"
+                        class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-xs font-bold hover:bg-red-500/20 transition">
+                  <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
+                  Record Session
+                </button>
+                <!-- Recording status -->
+                <div x-show="recordingBms" class="flex items-center gap-3 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5">
+                  <span class="text-xs font-bold text-red-400 animate-pulse">
+                    REC (<span x-text="(autoRefreshCount-autoRefreshRemaining+1)"></span>/<span x-text="autoRefreshCount"></span>)
+                  </span>
+                  <span class="text-xs text-gray-400 font-mono">T-<span x-text="fmtSecs(autoRefreshRemaining*autoRefreshInterval)"></span><span class="text-gray-600"> / <span x-text="fmtSecs(autoRefreshCount*autoRefreshInterval)"></span></span></span>
+                  <button @click="toggleBmsRecording()"
+                          class="text-xs font-bold text-gray-400 hover:text-gray-200 transition">
+                    <i class="fas fa-stop-circle mr-1"></i>Stop
+                  </button>
+                </div>
+                <!-- Sessions -->
+                <button @click="sessionsModalOpen=!sessionsModalOpen; if(sessionsModalOpen) openSessionsModal()"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-300 hover:border-gray-500 transition">
+                  <i class="fas fa-history text-[9px]"></i>
+                  <span x-text="sessionsModalOpen?'Hide Sessions':'Sessions'"></span>
+                </button>
+                <!-- View Chart -->
+                <button @click="openChartModal(unit.serial)"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/30 text-primary-light text-xs font-bold hover:bg-primary/30 transition">
+                  <i class="fas fa-chart-line text-[9px]"></i>View Chart
+                </button>
+              </div>
+            </div>
+
+            <!-- Sessions panel -->
+            <div x-show="sessionsModalOpen" x-transition class="mt-5 pt-5 border-t border-gray-700 space-y-3">
+              <p class="text-xs font-bold text-gray-300">Saved Telemetry Sessions</p>
+              <div x-show="loadingSessions" class="text-center py-4 text-xs text-gray-500">
+                <i class="fas fa-sync-alt animate-spin mr-1"></i>Loading…
+              </div>
+              <div x-show="!loadingSessions && savedSessions.length === 0"
+                   class="text-center py-6 text-xs text-gray-500 border border-dashed border-gray-700 rounded-xl">
+                No sessions recorded yet.
+              </div>
+              <template x-for="session in savedSessions" :key="session.session_id">
+                <div class="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-xl px-4 py-3">
+                  <div>
+                    <p class="text-xs font-bold text-gray-200" x-text="session.session_name || 'Auto-Session'"></p>
+                    <p class="text-[9px] text-gray-500 mt-0.5"
+                       x-text="'Date: '+session.created_at+' • '+session.record_count+' records @'+session.interval_sec+'s • SN: '+session.battery_sn.substring(0,8)"></p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button @click="loadSavedSession(session.session_id, session.session_name)"
+                            class="px-3 py-1 rounded-lg bg-primary/20 text-primary-light border border-primary/30 text-[10px] font-bold hover:bg-primary/30 transition">
+                      <i class="fas fa-chart-line mr-1"></i>View
+                    </button>
+                    <button @click="deleteSession(session.session_id)"
+                            class="px-2 py-1 rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 text-[10px] hover:bg-red-500/20 transition">
+                      <i class="fas fa-trash-alt"></i>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+        </div>
+      </template>
+    </div>
+  </template>
+
+  </div><!-- /activeSubTab=telemetry -->
+
+  <!-- ═══════════ aPower Info Modal (inside x-data scope) ═══════════ -->
+  <div x-show="apowerModalOpen" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-info-circle text-primary-light"></i>aPower Unit Information
+        </h4>
+        <button @click="closeApowerModal()" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-6 space-y-5" x-show="activeApowerRecord">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Serial No.</p>
+            <p class="text-sm font-bold text-gray-100 font-mono" x-text="activeApowerRecord?.apowerSn"></p>
+          </div>
+          <div>
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Status</p>
+            <p class="text-sm font-bold" :class="activeApowerRecord?.status==0?'text-emerald-400':'text-red-400'"
+               x-text="activeApowerRecord?.status==0?'Normal Active':'Abnormal/Offline'"></p>
+          </div>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 border-b border-gray-800 pb-2 mb-3">Firmware / Software</p>
+          <div class="space-y-2">
+            <template x-for="fw in [
+              {label:'BMS Version',    key:'bmsVer'},
+              {label:'DCDC Version',   key:'dcdcVer'},
+              {label:'Inverter Ver.',  key:'invVer'},
+              {label:'FPGA Version',   key:'fpgaVer'},
+              {label:'Bootloader',     key:'blVer'},
+              {label:'Thermal Board',  key:'thVer'},
+            ]" :key="fw.label">
+              <div class="flex justify-between px-3 py-2 bg-gray-800 rounded-lg">
+                <span class="text-xs text-gray-400" x-text="fw.label"></span>
+                <span class="text-xs font-bold text-gray-100 font-mono" x-text="activeApowerRecord?.[fw.key] || '—'"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-800 flex justify-end">
+        <button @click="closeApowerModal()"
+                class="px-5 py-2 rounded-xl bg-gray-800 border border-gray-700 text-xs font-bold text-gray-300 hover:border-gray-500 transition">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ Balancing Status Modal ═══════════ -->
+  <div x-show="balancingModalOpen" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-balance-scale text-primary-light"></i>&nbsp;Cell Balancing Status
+        </h4>
+        <button @click="balancingModalOpen=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-6 space-y-5" x-show="activeBalancingUnit">
+        <!-- Raw value row -->
+        <div class="grid grid-cols-3 gap-3">
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Raw Value</p>
+            <p class="text-xl font-black text-gray-100 font-mono" x-text="activeBalancingUnit?.balan_state ?? '—'"></p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Hex</p>
+            <p class="text-xl font-black text-primary-light font-mono" x-text="activeBalancingUnit?.balan_state != null ? '0x' + (activeBalancingUnit.balan_state).toString(16).toUpperCase().padStart(4,'0') : '—'"></p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Binary (16-bit)</p>
+            <p class="text-[11px] font-black text-amber-400 font-mono tracking-wider" x-text="activeBalancingUnit?.balan_state != null ? (activeBalancingUnit.balan_state).toString(2).padStart(16,'0') : '—'"></p>
+          </div>
+        </div>
+        <!-- Per-cell breakdown — 16S1P LFP -->
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 border-b border-gray-800 pb-2 mb-3">Cell Bleed Status — 16S1P (Bit 0 = Cell 1)</p>
+          <div class="grid grid-cols-8 gap-1.5">
+            <template x-for="cellIdx in [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]" :key="cellIdx">
+              <div class="rounded-lg p-2 text-center border"
+                   :class="(activeBalancingUnit?.balan_state & (1 << (cellIdx-1))) ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-gray-800 border-gray-700'">
+                <p class="text-[8px] font-black text-gray-500 mb-0.5" x-text="'C'+cellIdx"></p>
+                <i class="fas fa-circle text-[8px]"
+                   :class="(activeBalancingUnit?.balan_state & (1 << (cellIdx-1))) ? 'text-emerald-400' : 'text-gray-700'"></i>
+              </div>
+            </template>
+          </div>
+          <p class="text-xs text-gray-500 mt-3">
+            Cells bleeding:&nbsp;
+            <span class="font-bold text-emerald-400 font-mono"
+                  x-text="activeBalancingUnit?.balan_state ? [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16].filter(i => activeBalancingUnit.balan_state & (1<<(i-1))).join(', ') || 'None' : 'None'"></span>
+          </p>
+        </div>
+        <p class="text-[10px] text-gray-600 leading-relaxed">
+          Each bit corresponds to one cell. A set bit means that cell is actively being bled (bypass resistor engaged) to bring it in line with the pack average. Zero means all cells are within balance tolerance.
+        </p>
+        <!-- Prototype disclaimer -->
+        <div class="flex items-start gap-2 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+          <i class="fas fa-flask text-amber-400 text-[10px] mt-0.5 flex-shrink-0"></i>
+          <p class="text-[9px] text-amber-400/80 leading-relaxed">
+            <span class="font-bold">Prototype decode</span> — the bit-to-cell mapping for the FranklinWH aPower 16S1P pack has not been officially confirmed.
+            This display is based on the standard LFP BMS single-byte convention (bit 0 = Cell 1) extended to uint16 for 16 cells,
+            but the actual encoding may differ. Treat as indicative only — subject to revision.
+          </p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-800 flex justify-end">
+        <button @click="balancingModalOpen=false"
+                class="px-5 py-2 rounded-xl bg-gray-800 border border-gray-700 text-xs font-bold text-gray-300 hover:border-gray-500 transition">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ Chart Modal (inside x-data scope) ═══════════ -->
+  <div x-show="chartModalOpen" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+       @click.self="closeChartModal()">
+    <div class="w-full max-w-5xl max-h-[90vh] rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl flex flex-col overflow-hidden">
+      <!-- Header -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <div class="flex items-center gap-3">
+          <i class="fas fa-chart-line text-primary-light"></i>
+          <h4 class="font-bold text-gray-100">Cell Chart</h4>
+        </div>
+        <div class="flex items-center gap-3">
+          <button @click="exportChartCSV()"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs font-bold text-gray-300 hover:border-gray-600 transition">
+            <i class="fas fa-download text-[10px]"></i>Export CSV
+          </button>
+          <button @click="refreshChart()"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs font-bold text-gray-300 hover:border-gray-600 transition">
+              <i class="fas fa-sync-alt text-[10px]"></i>Reload
+          </button>
+          <button @click="closeChartModal()" class="text-gray-500 hover:text-gray-300 transition w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-800">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+      <!-- Sub-header -->
+      <div class="px-6 py-2 bg-gray-800/60 border-b border-gray-800 flex gap-5 text-[10px] font-mono text-gray-500">
+        <span>Unit: <span class="text-gray-300" x-text="activeChartSerial"></span></span>
+        <span><span x-text="chartDataTimes.length"></span> snapshots</span>
+        <span>16S1P · LFP</span>
+      </div>
+      <!-- Tabs -->
+      <div class="flex gap-1 px-6 pt-3 border-b border-gray-800 bg-gray-900">
+        <template x-for="tab in [{k:'VOLTAGE',icon:'fa-bolt',label:'Voltage'},{k:'TEMPERATURE',icon:'fa-thermometer-half',label:'Temperature'},{k:'COMPARISON',icon:'fa-list',label:'Comparison (Δ)'}]" :key="tab.k">
+          <button @click="chartTab=tab.k; renderChart()"
+                  class="flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold border-b-2 transition"
+                  :class="chartTab===tab.k?'border-primary text-primary-light':'border-transparent text-gray-500 hover:text-gray-300'">
+            <i class="fas text-[9px]" :class="tab.icon"></i>
+            <span x-text="tab.label"></span>
+          </button>
+        </template>
+      </div>
+      <!-- Body -->
+      <div class="relative flex-1 min-h-0 bg-gray-800/40 overflow-auto">
+        <!-- Loading -->
+        <div x-show="chartLoading" class="absolute inset-0 flex items-center justify-center bg-gray-900/80 z-10">
+          <i class="fas fa-sync-alt animate-spin text-primary-light mr-2"></i>
+          <span class="text-sm text-gray-400">Loading telemetry…</span>
+        </div>
+        <!-- Empty -->
+        <div x-show="!chartLoading && chartEmpty" class="absolute inset-0 flex flex-col items-center justify-center">
+          <i class="fas fa-inbox text-3xl text-gray-700 mb-3"></i>
+          <p class="text-sm font-bold text-gray-500">Telemetry buffer empty</p>
+          <p class="text-xs text-gray-600 mt-1">Wait ~120s for the background daemon to capture a snapshot.</p>
+        </div>
+        <!-- Chart canvas -->
+        <div x-show="!chartLoading && !chartEmpty && chartTab !== 'COMPARISON'"
+             class="p-4 h-[400px]">
+          <canvas id="bmsCanvas"></canvas>
+        </div>
+        <!-- Comparison table -->
+        <div x-show="!chartLoading && !chartEmpty && chartTab === 'COMPARISON'" class="p-4">
+          <template x-if="chartDataTimes.length >= 2">
+            <div class="rounded-xl border border-gray-700 overflow-hidden">
+              <div class="px-4 py-2.5 bg-gray-800 border-b border-gray-700">
+                <p class="text-[9px] font-black uppercase tracking-widest text-gray-600">Cell Voltages (mV)</p>
+              </div>
+              <div class="grid grid-cols-4 px-4 py-2 border-b border-gray-700 text-[9px] font-bold text-gray-600">
+                <div>Cell</div><div class="text-right">Previous</div><div class="text-right">Current</div><div class="text-right">Δ mV</div>
+              </div>
+              <template x-for="i in 16">
+                <div class="grid grid-cols-4 px-4 py-2 border-b border-gray-700/50 text-xs">
+                  <div class="text-gray-500" x-text="i"></div>
+                  <div class="text-right font-mono text-gray-300" x-text="chartDataVoltages[chartDataVoltages.length-2]?.[i-1]"></div>
+                  <div class="text-right font-mono font-bold text-gray-100" x-text="chartDataVoltages[chartDataVoltages.length-1]?.[i-1]"></div>
+                  <div class="text-right font-mono font-bold"
+                       :class="(chartDataVoltages[chartDataVoltages.length-1]?.[i-1]-chartDataVoltages[chartDataVoltages.length-2]?.[i-1])>0?'text-emerald-400':((chartDataVoltages[chartDataVoltages.length-1]?.[i-1]-chartDataVoltages[chartDataVoltages.length-2]?.[i-1])<0?'text-red-400':'text-gray-500')"
+                       x-text="((v=>(v>0?'▲ +':'▼ ')+(v||0))(chartDataVoltages[chartDataVoltages.length-1]?.[i-1]-chartDataVoltages[chartDataVoltages.length-2]?.[i-1]))"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <template x-if="chartDataTimes.length < 2">
+            <div class="py-12 text-center text-sm text-gray-500">Need at least 2 snapshots to calculate Δ comparison.</div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<!-- batteryTab() loaded from admin.html head -->
