@@ -1,0 +1,323 @@
+  <header class="topbar">
+
+    <button class="icon-btn" @click="$store.app.sidebarCollapsed = !$store.app.sidebarCollapsed"
+            title="Toggle sidebar" id="sidebar-toggle"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#menu"/></svg></button>
+
+    <span class="topbar-title" x-show="!$store.app.sidebarCollapsed" x-cloak>
+      <span x-text="$store.app.activeTab.charAt(0).toUpperCase() + $store.app.activeTab.slice(1)"></span>
+    </span>
+
+    <!-- Gateway selector -->
+    <div class="gateway-selector" x-show="$store.app.gateways.length > 0" x-cloak 
+         x-data="{ open: false, search: '' }" @click.away="open = false"
+         style="display:flex;align-items:center;gap:6px;position:relative">
+      <span style="font-weight:800;font-size:0.75rem;letter-spacing:1px;color:var(--text-secondary)">GATEWAY</span>
+      <svg class="icon text-sm" aria-hidden="true" viewBox="0 0 24 24"><use href="#zap"/></svg>
+      
+      <div @click="open = !open; if(open) setTimeout(() => $refs.search.focus(), 50)" style="cursor:pointer;flex:1;display:flex;justify-content:space-between;align-items:center;font-size:0.875rem;font-weight:600">
+        <span x-text="$store.app.currentGateway ? $store.app.gatewayName($store.app.currentGateway) : 'Select Gateway...'"></span>
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#chevron-down"/></svg>
+      </div>
+
+      <!-- Searchable Dropdown -->
+      <div x-show="open" 
+           x-transition:enter="transition-enter" x-transition:enter-start="transition-enter" x-transition:enter-end="transition-enter-active"
+           class="gw-search-dropdown" style="display:none">
+        
+        <div style="padding:8px;border-bottom:1px solid var(--border)">
+          <input type="text" x-model="search" x-ref="search" placeholder="Search name or serial..." class="gw-search-input" @click.stop>
+        </div>
+        
+        <div class="gw-search-options">
+          <template x-for="gw in ($store.app.gateways || []).filter(g => ($store.app.gatewayName(g)).toLowerCase().includes(search.toLowerCase()) || (g.full_serial || '').toLowerCase().includes(search.toLowerCase()))" :key="gw.short_id">
+            <div @click="$store.app.selectGateway(gw.short_id); open = false; search = ''" class="gw-search-option" :class="$store.app.selectedGateway === gw.short_id ? 'active' : ''">
+              <div style="font-weight:600;font-size:0.85rem;color:var(--text-primary)" x-text="$store.app.gatewayName(gw)"></div>
+              <div style="font-family:'JetBrains Mono','Fira Code',monospace;font-size:0.7rem;color:var(--text-muted);margin-top:2px" x-text="gw.full_serial"></div>
+            </div>
+          </template>
+          <div x-show="($store.app.gateways || []).filter(g => ($store.app.gatewayName(g)).toLowerCase().includes(search.toLowerCase()) || (g.full_serial || '').toLowerCase().includes(search.toLowerCase())).length === 0" 
+               style="padding:16px;text-align:center;font-size:0.75rem;color:var(--text-muted);font-weight:500">
+            No matching gateways found
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ GLOBAL STATUS BAR ═══════════════════════════════════════ -->
+    <div id="global-status-bar" x-show="$store.app.currentGateway" x-cloak class="hide-mobile">
+      
+      <!-- 1. Time Stamp -->
+      <div x-data="liveClock()" style="font-size:0.75rem;font-weight:600;color:var(--text-muted);font-family:'JetBrains Mono', 'Fira Code', monospace;flex-shrink:0" x-text="timeString"></div>
+      
+      <div style="width:1px;height:16px;background:var(--border);flex-shrink:0"></div>
+
+      <!-- 2. Daemon Status -->
+      <!-- Colour from pollSeverity(), label from pollLabel(). This chip used to
+           test poll_status inline against five of the nine values the poller
+           sets, so the other four painted the chip red and matched no label —
+           a bare red dot with no explanation, reported more than once. Both
+           helpers live in the store so the globe icon below agrees with it. -->
+      <div class="chip" style="font-weight:700;flex-shrink:0"
+           :title="'Daemon State: ' + ($store.app.currentGateway?.poll_status || 'unknown')"
+           :style="{
+             ok:     'background:rgba(16,185,129,0.15);color:var(--ok);border:1px solid rgba(16,185,129,0.3)',
+             warn:   'background:rgba(245,158,11,0.15);color:var(--warn);border:1px solid rgba(245,158,11,0.3)',
+             danger: 'background:rgba(239,68,68,0.15);color:var(--danger);border:1px solid rgba(239,68,68,0.3)'
+           }[$store.app.pollSeverity($store.app.currentGateway)]">
+        <i class="fas" style="font-size:0.55rem;margin-right:6px"
+           :class="{
+             ok:     'fa-circle',
+             warn:   'fa-sync-alt fa-spin',
+             danger: 'fa-times-circle'
+           }[$store.app.pollSeverity($store.app.currentGateway)]"></i>
+        <span x-text="$store.app.pollLabel($store.app.currentGateway)"></span>
+      </div>
+
+      <!-- 3. Runtime Mode -->
+      <!-- Show whenever `activeMode` has data (i.e. we've ever seen a poll
+           populate `currentGateway.runtime_mode`). Do NOT gate on
+           `poll_status === 'running'/'ok'` — that caused the chip to
+           vanish on every transient poll flap (~every 5 min per Batch I
+           stale-window drops), leaving only the outer "🔴 Comm Error" red
+           dot in its place. Cached last-known mode is the right thing
+           to keep displaying during a short-lived poll gap. Dimmed at
+           40% opacity so the user still gets a visual cue that the
+           reading is not fresh. -->
+      <template x-if="$store.app.activeMode">
+        <div class="chip" style="font-weight:700;flex-shrink:0"
+             :title="'System Runtime Mode' + (['running','ok'].includes($store.app.currentGateway?.poll_status) ? '' : ' (stale — poll not fresh)')"
+             :style="($store.app.activeMode?.id === 1 ? 'background:rgba(59,130,246,0.15);color:#3b82f6;border:1px solid rgba(59,130,246,0.3)' :
+                    ($store.app.activeMode?.id === 3 ? 'background:rgba(239,68,68,0.15);color:var(--danger);border:1px solid rgba(239,68,68,0.3)' :
+                    ($store.app.activeMode?.id === 5 ? 'background:rgba(59,130,246,0.15);color:#3b82f6;border:1px solid rgba(59,130,246,0.3)' :
+                    'background:rgba(16,185,129,0.15);color:var(--ok);border:1px solid rgba(16,185,129,0.3)'))) + (['running','ok'].includes($store.app.currentGateway?.poll_status) ? '' : ';opacity:0.4')">
+          <span class="icon" style="font-size:0.9rem;margin-right:4px"
+                x-show="$store.app.activeMode?.id === 1">
+            <svg class="icon" aria-hidden="true" :class="$store.app.iconTheme === 'vivid' ? 'icon-primary' : ''" viewBox="0 0 24 24"><use href="#clock"/></svg>
+          </span>
+          <span class="icon" style="margin-right:4px"
+                x-show="$store.app.activeMode?.id === 3">
+            <svg class="icon icon-critical-danger" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+          </span>
+          <span class="icon" style="margin-right:4px"
+                x-show="$store.app.activeMode?.id === 5">
+            <svg class="icon" aria-hidden="true" :class="$store.app.iconTheme === 'vivid' ? 'icon-primary' : ''" viewBox="0 0 24 24"><use href="#zap"/></svg>
+          </span>
+          <span class="icon" style="margin-right:4px"
+                x-show="!$store.app.activeMode || ($store.app.activeMode.id !== 1 && $store.app.activeMode.id !== 3 && $store.app.activeMode.id !== 5)">
+            <svg class="icon" aria-hidden="true" :class="$store.app.iconTheme === 'vivid' ? 'icon-ok' : ''" viewBox="0 0 24 24"><use href="#calendar"/></svg>
+          </span>
+          <span x-text="$store.app.activeMode?.name || 'Unknown Mode'"></span>
+        </div>
+      </template>
+
+      <!-- 4. Run Status Desc -->
+      <div class="chip" style="background:var(--surface-1);border:1px solid var(--border);flex-shrink:0"
+           :style="$store.app.getBatteryStateText($store.app.currentGateway) === 'Discharging' ? 'color:var(--warn)' : ($store.app.getBatteryStateText($store.app.currentGateway) === 'Charging' ? 'color:var(--ok)' : 'color:var(--text-muted)')" title="Battery Run Status">
+        <span x-text="$store.app.getBatteryStateText($store.app.currentGateway)"></span>
+      </div>
+
+      <div style="width:1px;height:16px;background:var(--border);flex-shrink:0"></div>
+
+      <!-- 5. Network Connectivity Icons Array (Parity with FranklinWH App) -->
+      <div style="display:flex;gap:10px;font-size:1.1rem;flex-shrink:0;align-items:center">
+        
+        <!-- Ethernet -->
+        <span :title="'Ethernet: ' + ($store.app.currentGateway?.network_connection == 1 ? 'Primary' : 'None')" style="cursor:help;display:inline-flex">
+          <svg class="icon" aria-hidden="true" :class="{'icon-ok': $store.app.linkSeverity($store.app.currentGateway, 1) === 'ok' && $store.app.iconTheme === 'vivid', 'icon-critical-warn': $store.app.linkSeverity($store.app.currentGateway, 1) === 'warn'}" viewBox="0 0 24 24"><use href="#network"/></svg>
+        </span>
+        
+        <!-- Wi-Fi -->
+        <span :title="'WiFi: ' + ($store.app.currentGateway?.network_connection == 3 ? 'Primary' : ($store.app.currentGateway?.wifi_signal != null ? 'Backup (' + $store.app.currentGateway.wifi_signal + '%)' : 'Disabled'))" style="cursor:help;display:inline-flex">
+          <svg class="icon" aria-hidden="true" :class="{'icon-ok': $store.app.linkSeverity($store.app.currentGateway, 3) === 'ok' && $store.app.iconTheme === 'vivid', 'icon-critical-warn': $store.app.linkSeverity($store.app.currentGateway, 3) === 'warn'}" viewBox="0 0 24 24"><use href="#wifi"/></svg>
+        </span>
+        
+        <!-- 4G Cellular -->
+        <span :title="'4G Cellular: ' + ($store.app.currentGateway?.network_connection == 2 ? 'Primary (' + $store.app.currentGateway?.mobile_signal + '%)' : ($store.app.currentGateway?.mobile_signal != null ? 'Backup (' + $store.app.currentGateway.mobile_signal + '%)' : 'Disabled'))" style="cursor:help;display:inline-flex">
+          <svg class="icon" aria-hidden="true" :class="{'icon-ok': $store.app.linkSeverity($store.app.currentGateway, 2) === 'ok' && $store.app.iconTheme === 'vivid', 'icon-critical-warn': $store.app.linkSeverity($store.app.currentGateway, 2) === 'warn'}" viewBox="0 0 24 24"><use href="#signal"/></svg>
+        </span>
+        
+        <!-- Internet (Cloud API) -->
+        <span :title="'Internet (Cloud API): ' + ($store.app.currentGateway?.poll_status || 'unknown') + ' · Poll ' + fmt.ago($store.app.currentGateway?.last_poll_age_s)" style="cursor:help">
+          <svg class="icon" aria-hidden="true" :class="{'icon-ok': $store.app.pollSeverity($store.app.currentGateway) === 'ok' && $store.app.iconTheme === 'vivid', 'icon-critical-warn': $store.app.pollSeverity($store.app.currentGateway) === 'warn', 'icon-critical-danger': $store.app.pollSeverity($store.app.currentGateway) === 'danger'}" viewBox="0 0 24 24"><use href="#globe"/></svg>
+        </span>
+        <!-- Grid icon -->
+        <span :title="'Grid: ' + ($store.app.currentGateway?.grid_connected !== false ? 'Connected' : 'Disconnected')" style="cursor:help">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#power"/></svg>
+        </span>
+        <!-- Solar icon (Active if solar power detected) -->
+        <template x-if="$store.app.currentGateway?.solar_kw != null">
+          <span :title="'Solar Power: ' + $store.app.currentGateway.solar_kw + ' kW'" style="cursor:help">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#sun"/></svg>
+          </span>
+        </template>
+        <!-- Battery SOC icon -->
+        <template x-if="$store.app.currentGateway?.battery_soc != null">
+          <span :title="'Battery SOC: ' + $store.app.currentGateway.battery_soc + '% · ' + $store.app.getBatteryStateText($store.app.currentGateway)" style="cursor:help;display:flex;align-items:center;gap:3px;font-size:.75rem;font-weight:600">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" :class="$store.app.currentGateway.battery_soc > 20 ? 'icon-ok' : 'icon-critical-danger'"><use href="#battery"/></svg>
+            <span :class="$store.app.currentGateway.battery_soc <= 20 ? 'c-danger' : ($store.app.iconTheme === 'vivid' ? 'c-ok' : '')" x-text="Math.round($store.app.currentGateway.battery_soc) + '%'"></span>
+          </span>
+        </template>
+      </div>
+
+      <div style="width:1px;height:16px;background:var(--border);flex-shrink:0"></div>
+
+      <!-- 6. Environment Type -->
+      <div class="chip" style="background:var(--surface-1);border:1px solid var(--border);color:var(--text-secondary);flex-shrink:0;cursor:help" title="Deployment Environment">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#cpu"/></svg>
+        <span x-text="$store.app.env === 'docker' ? 'Docker' : ($store.app.env === 'ha_addon' ? 'HA Addon' : 'Standalone')"></span>
+      </div>
+
+    </div>
+    <!-- ════════════════════════════════════════════════════════════ -->
+
+    <div class="topbar-spacer"></div>
+    
+    <!-- Bold Web App Version Label Linked to GitHub Changelog -->
+    <a href="https://github.com/david2069/franklinwh-ha-integrator/blob/main/CHANGELOG.md" 
+       target="_blank" 
+       rel="noopener noreferrer" 
+       class="hover:text-primary-light transition-colors duration-200 cursor-pointer"
+       style="font-weight:800;font-size:0.85rem;margin-right:12px;color:var(--text-primary);letter-spacing:0.5px;text-decoration:none"
+       title="View Changelog on GitHub">
+        v<span x-text="$store.app.version || '0.0.0'"></span>
+    </a>
+
+    <!-- Signed-in identity + sign out.
+         Only rendered when authentication is actually enabled — on an
+         unsecured install there is no principal, and showing a fake one would
+         be worse than showing nothing. Before this the shell had no identity
+         variable at all: after enabling auth you could not tell who you were
+         signed in as, and the only logout control was buried inside the
+         Security tab. -->
+    {% if auth_enabled and username %}
+    <div class="flex items-center gap-1.5" style="margin-right:10px">
+      <span title="Signed in as {{ username }} ({{ role }})"
+            style="display:flex;align-items:center;gap:5px;font-size:0.72rem;font-weight:700;
+                   padding:3px 9px;border-radius:999px;
+                   background:var(--surface-2,rgba(120,120,140,.14));
+                   border:1px solid var(--border,rgba(120,120,140,.28));
+                   color:var(--text-primary);max-width:190px">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px;flex-shrink:0"><use href="#user"/></svg>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ username }}</span>
+        <span style="opacity:.6;font-weight:600;text-transform:uppercase;font-size:0.62rem">{{ role }}</span>
+      </span>
+      <button class="icon-btn" title="Sign out ({{ username }})" id="btn-logout"
+              @click="fetch('api/security/logout', {method:'POST'})
+                        .finally(() => window.location.href = 'login')">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#log-out"/></svg>
+      </button>
+    </div>
+    {% endif %}
+
+    <!-- Refresh -->
+    <button class="icon-btn" @click="$store.app.refresh()" title="Refresh" id="btn-refresh"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg></button>
+
+    <!-- Settings -->
+    <button class="icon-btn" @click="$store.app.showSettings = true" title="Settings" id="btn-settings"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#settings"/></svg></button>
+
+    <script>
+      function liveClock() {
+        return {
+          timeString: '',
+          init() {
+            this.tick();
+            setInterval(() => this.tick(), 1000);
+          },
+          tick() {
+            const now = new Date();
+            const parts = new Intl.DateTimeFormat('en-US', {
+              month: 'short', day: '2-digit', year: 'numeric',
+              hour: '2-digit', minute: '2-digit', second: '2-digit',
+              timeZoneName: 'short', hour12: false
+            }).formatToParts(now);
+            const p = {};
+            parts.forEach(part => p[part.type] = part.value);
+            // Format: hh:mm:ss (24-hr)
+            this.timeString = `${p.hour}:${p.minute}:${p.second}`;
+          }
+        };
+      }
+    </script>
+  <!-- ── Settings panel (slides down) ─────────────────────── -->
+  <div x-show="$store.app.showSettings" x-cloak
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 -translate-y-2"
+       x-transition:enter-end="opacity-100 translate-y-0"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100 translate-y-0"
+       x-transition:leave-end="opacity-0 -translate-y-2"
+       class="absolute top-[100%] left-0 w-full z-40 border-b border-[var(--border)] bg-[var(--surface-0)] px-6 py-4 shadow-2xl">
+
+    <div class="max-w-5xl mx-auto flex items-start justify-between gap-8 flex-wrap">
+
+      <div class="flex items-start gap-10 flex-wrap">
+
+        <!-- Appearance -->
+        <div>
+          <p class="text-[10px] font-black uppercase tracking-widest text-gray-600 mb-2.5">Appearance</p>
+          <div class="flex items-center gap-5 flex-wrap">
+
+            <!-- Theme -->
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-medium text-gray-400">Theme</span>
+              <div class="flex rounded-lg overflow-hidden border border-[var(--border)]">
+                <template x-for="opt in [{id:'light', icon:'fa-sun', label:'Light'}, {id:'dark', icon:'fa-moon', label:'Dark'}, {id:'auto', icon:'fa-desktop', label:'Auto'}]" :key="opt.id">
+                  <button @click="$store.app.setTheme(opt.id)"
+                          class="px-3 py-1.5 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                          :class="$store.app.theme === opt.id
+                            ? 'bg-primary text-white'
+                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'">
+                    <i class="fas text-[10px]" :class="opt.icon"></i>
+                    <span x-text="opt.label"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <!-- Accent colour -->
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-medium text-gray-400">Accent</span>
+              <div class="flex gap-1.5">
+                <template x-for="c in $store.app.accentColors" :key="c.id">
+                  <button @click="$store.app.setAccent(c.id)"
+                          class="w-6 h-6 rounded-full border-2 transition-all hover:scale-110"
+                          :style="'background-color:' + c.hex"
+                          :class="$store.app.accent === c.id
+                            ? 'border-white ring-2 ring-offset-1 ring-offset-gray-900 ring-white'
+                            : 'border-gray-700'"
+                          :title="c.label">
+                  </button>
+                </template>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Setup — the wizard hides itself once finished, and nothing else
+             brought it back. Reopening resets no configuration: every step
+             reads live state. -->
+        <div>
+          <p class="text-[10px] font-black uppercase tracking-widest text-gray-600 mb-2.5">Setup</p>
+          <button @click="$store.app.reopenSetup()"
+                  class="text-xs px-3 py-1.5 rounded-lg border border-[var(--border)] hover:border-gray-600 transition"
+                  style="background:var(--surface-2); color:var(--text-primary)">
+            <i class="fas fa-wand-magic-sparkles text-[10px] mr-1"></i>
+            Run setup wizard
+          </button>
+          <p class="text-[10px] text-gray-600 mt-1.5 max-w-[190px] leading-relaxed">
+            Review the hardware found and the entity naming scheme. Nothing is
+            reset.
+          </p>
+        </div>
+
+      </div>
+
+      <button @click="$store.app.showSettings = false"
+              class="text-gray-600 hover:text-gray-400 transition flex-shrink-0">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  </div>
+
+</header>

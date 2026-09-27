@@ -1,0 +1,487 @@
+<!-- Dashboard Tab — all-gateway cards + live detail panel -->
+<div class="page-header">
+  <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+    <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#layout-dashboard"/></svg>
+    Dashboard
+  </h1>
+  <span class="page-subtitle" x-text="$store.app.gateways.length + ' gateway(s) registered'"></span>
+</div>
+
+<!-- ── Empty state ─────────────────────────────────────────── -->
+<template x-if="$store.app.gateways.length === 0 && !$store.app.loading">
+  <div class="empty-state card">
+    <div class="empty-state-icon">⚡</div>
+    <div class="empty-state-title">No Gateways Registered</div>
+    <p class="empty-state-sub">Go to <strong>Gateways</strong> in the sidebar to register your first aGate device.</p>
+    <button class="btn btn-primary" @click="$store.app.setTab('gateways')">Add Gateway</button>
+  </div>
+</template>
+
+<!-- ── Loading ──────────────────────────────────────────────── -->
+<template x-if="$store.app.loading">
+  <div class="empty-state">
+    <div style="font-size:2rem;animation:spin 1s linear infinite">⟳</div>
+    <div class="empty-state-title">Loading…</div>
+  </div>
+</template>
+
+<!-- ── Gateway Cards ─────────────────────────────────────────── -->
+<template x-if="$store.app.gateways.length > 0">
+  <div>
+    <div class="section-header" style="justify-content: flex-start; gap: 16px;">
+      <span class="section-title">All Gateways</span>
+      <select class="form-input" style="width: 220px; font-size: 0.85rem;" x-model="$store.app.dashboardSiteFilter">
+        <option value="ALL">Site Filter: All Sites</option>
+        <template x-for="site in $store.app.availableSites" :key="site">
+          <option :value="site" x-text="site === 'unassigned' ? 'Site: Gateways' : 'Site ID: ' + site"></option>
+        </template>
+      </select>
+      <div style="flex-grow:1"></div>
+      <button class="btn btn-secondary btn-sm" @click="$store.app.refresh()" id="btn-refresh-gateways">↻ Refresh</button>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr; gap: 20px; align-items: start; margin-top: 15px;">
+    
+    <div style="display: flex; flex-direction: column; gap: 24px; margin-top: 0">
+      <template x-for="site in $store.app.filteredGatewaysBySite" :key="site.site_id">
+        <div style="width:100%;">
+          <!-- Site Header Bar -->
+          <div class="bg-[var(--surface-50)] px-4 py-3 border border-[var(--border)] rounded-xl flex justify-between items-center" style="margin-bottom:14px; padding: 12px 16px;">
+            <div style="display:flex; align-items:center; gap:16px;">
+              <!-- Site Name & Site ID -->
+              <div>
+                <div class="font-bold text-[0.95rem] leading-tight text-[var(--text-primary)]" 
+                     x-text="site.gateways[0]?.site_name || (site.site_id === 'unassigned' ? 'Ungrouped' : 'Site ' + site.site_id)"></div>
+                <!-- The address when we have one, the id only when we do not.
+                     With no name stored, the bold line already falls back to
+                     "Site 3447", so repeating "SITE ID: 3447" underneath said
+                     the same number twice and told the user nothing. -->
+                <div class="text-[0.7rem] leading-tight text-[var(--text-muted)] mt-0.5"
+                     :class="site.gateways[0]?.site_address ? '' : 'font-mono'"
+                     x-text="site.site_id === 'unassigned'
+                               ? 'Manual Configuration'
+                               : (site.gateways[0]?.site_address
+                                   || (site.gateways[0]?.site_name ? 'SITE ID: ' + site.site_id : ''))"></div>
+              </div>
+              
+              <!-- Group ID and Group Name (only if it exists != none or empty str) -->
+              <template x-if="site.gateways[0]?.group_id && site.gateways[0]?.group_id !== 'none' && site.gateways[0]?.group_id !== 'ungrouped' && site.gateways[0]?.group_id !== ''">
+                <div style="display:flex; flex-direction:column; border-left: 1px solid var(--border); padding-left: 16px;">
+                  <div class="font-semibold text-[0.85rem] leading-tight text-[var(--text-secondary)]" 
+                       x-text="'Group: ' + (site.gateways[0]?.group_name || site.gateways[0]?.group_id)"></div>
+                  <div class="text-[0.68rem] leading-tight text-[var(--text-muted)] font-mono mt-0.5" 
+                       x-text="'Group ID: ' + site.gateways[0]?.group_id"></div>
+                </div>
+              </template>
+            </div>
+            
+            <div class="text-[0.8rem] font-bold text-[var(--text-muted)] bg-[var(--surface-100)] px-3 py-0.5 rounded-full">
+              <span x-text="site.gateways.length"></span> Node(s)
+            </div>
+          </div>
+          <div class="gateway-cards" style="margin-top:0; margin-bottom:0;">
+            <template x-for="gw in site.gateways" :key="gw.short_id">
+              <div class="card gateway-card interactive"
+                   :class="{ 
+                     selected: $store.app.selectedGateway === gw.short_id,
+                     'high-active': ((gw.home_kw || 0) + (gw.solar_kw || 0) + Math.abs(gw.grid_kw || 0) > 8)
+                   }"
+                   @click="$store.app.selectGateway(gw.short_id)"
+                   :id="'gw-card-' + gw.short_id">
+
+          <!-- Card header — redesigned -->
+          <div class="gateway-card-header" style="align-items:flex-start">
+            <!-- Left: name / connectivity chips -->
+            <div style="flex:1;min-width:0">
+              <div class="gateway-card-name" x-text="$store.app.gatewayName(gw)"></div>
+              <!-- Connectivity: Grid status — single inline line -->
+              <div style="margin-top:3px">
+                <span style="font-size:.72rem;font-weight:600;white-space:nowrap"
+                      :style="gw.grid_relay1 ? 'color:var(--ok)' : 'color:var(--danger)'"
+                      x-text="'Grid: ' + ((gw.grid_connection_state === 'ok' || gw.grid_connection_state === 'Connected') ? 'Connected'
+                              : gw.grid_connection_state === 'Outage' ? 'Outage'
+                              : gw.grid_connection_state === 'SimulatedOffGrid' ? 'Off-Grid'
+                              : gw.grid_connection_state === 'NotGridTied' ? 'Not Grid-Tied'
+                              : gw.grid_relay1 ? 'Connected' : 'Disconnected')"></span>
+              </div>
+            </div>
+            <!-- Right: mode badge only -->
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+              <!-- Runtime mode badge — VPP overrides when dispatched -->
+              <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:.67rem;font-weight:700;border:1px solid;white-space:nowrap"
+                    :style="(gw.run_status_desc || '').toLowerCase().includes('vpp') || gw.runtime_mode === 'VPP Mode'
+                      ? 'background:hsla(180,80%,45%,.12);border-color:hsla(180,80%,45%,.35);color:var(--live)'
+                      : gw.operating_mode_id === 1
+                        ? 'background:hsla(217,90%,60%,.12);border-color:hsla(217,90%,60%,.35);color:#93c5fd'
+                        : gw.operating_mode_id === 3
+                          ? 'background:hsla(0,80%,60%,.12);border-color:hsla(0,80%,60%,.35);color:#fca5a5'
+                          : 'background:hsla(142,70%,45%,.12);border-color:hsla(142,70%,45%,.35);color:#6ee7b7'"
+                    x-text="(gw.run_status_desc || '').toLowerCase().includes('vpp') || gw.runtime_mode === 'VPP Mode'
+                      ? 'VPP Mode'
+                      : (gw.operating_mode || gw.work_mode_desc || '\u2014')">
+              </span>
+            </div>
+          </div>
+
+          <!-- SOC gauge + power bars -->
+          <div class="soc-gauge-wrap" style="gap: 12px">
+            <!-- Ring gauge -->
+            <div class="soc-ring">
+              <svg width="88" height="88" viewBox="0 0 88 88">
+                <!-- Track -->
+                <circle class="soc-ring-track" cx="44" cy="44" r="38"/>
+                <!-- Fill arc -->
+                <circle class="soc-ring-fill"
+                  cx="44" cy="44" r="38"
+                  :stroke="socBarColour(gw.battery_soc ?? null)"
+                  :stroke-dashoffset="socRingOffset(gw.battery_soc ?? null)"/>
+                <!-- Reserve SOC dot — always-present circle; stroke-opacity 0/1 to show/hide
+                     NOTE: <template x-if> cannot be used directly inside SVG (browsers reject it) -->
+                <circle cx="44" cy="44" r="38"
+                  fill="none"
+                  stroke="var(--warn)"
+                  stroke-width="9"
+                  stroke-linecap="round"
+                  stroke-dasharray="1 237.8"
+                  :stroke-dashoffset="socReserveDotOffset(gw.operating_mode_id === 1 ? (gw.tou_reserve_soc ?? 0) : gw.operating_mode_id === 2 ? (gw.self_reserve_soc ?? 0) : (gw.backup_reserve_soc ?? 0))"
+                  :stroke-opacity="(gw.operating_mode_id === 1 ? (gw.tou_reserve_soc ?? 0) : gw.operating_mode_id === 2 ? (gw.self_reserve_soc ?? 0) : (gw.backup_reserve_soc ?? 0)) > 0 ? 1 : 0"
+                  :title="(gw.operating_mode_id === 1 ? 'TOU' : gw.operating_mode_id === 3 ? 'EB' : 'SC') + ' reserve'"
+                />
+              </svg>
+              <div class="soc-ring-text" style="flex-direction:column;line-height:1"
+                   :style="'color:' + socBarColour(gw.battery_soc ?? null)">
+                <div style="font-size:.88rem;font-weight:700;line-height:1">
+                  <span x-text="fmt.soc(gw.battery_soc ?? null)"></span>%
+                </div>
+                <!-- Reserve SOC label: no arrow, just XX% in amber -->
+                <template x-if="(gw.operating_mode_id === 1 ? (gw.tou_reserve_soc ?? 0) : gw.operating_mode_id === 2 ? (gw.self_reserve_soc ?? 0) : (gw.backup_reserve_soc ?? 0)) > 0">
+                  <div style="font-size:.55rem;color:var(--warn);font-weight:700;line-height:1;opacity:.95"
+                       :title="(gw.operating_mode_id === 1 ? 'TOU' : gw.operating_mode_id === 3 ? 'EB' : 'SC') + ' reserve'"
+                       x-text="(gw.operating_mode_id === 1 ? (gw.tou_reserve_soc ?? 0) : gw.operating_mode_id === 2 ? (gw.self_reserve_soc ?? 0) : (gw.backup_reserve_soc ?? 0)) + '% rsv'">
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- Power bars -->
+            <div class="power-bars">
+              <!-- Battery row: label / kW value / state icon -->
+              <div class="power-bar-row" style="gap: 8px">
+                <span class="power-bar-label"
+                      :style="(gw.battery_kw ?? 0) > 0.05 ? 'color:var(--ok)' : (gw.battery_kw ?? 0) < -0.05 ? 'color:var(--accent)' : 'color:var(--text-muted)'">Battery</span>
+                <span class="power-bar-val" style="min-width: 58px"
+                      :style="(gw.battery_kw ?? 0) > 0.05 ? 'color:var(--ok)' : (gw.battery_kw ?? 0) < -0.05 ? 'color:var(--accent)' : 'color:var(--text-muted)'"
+                      x-text="fmt.kw(gw.battery_kw ?? null) + ' kW'"></span>
+                <!-- Status SVG Icon Column -->
+                <div style="width: 20px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                  <template x-if="(gw.battery_kw ?? 0) > 0.05">
+                    <svg class="icon text-sm" style="width: 12px; height: 12px; color: var(--ok)" aria-hidden="true" viewBox="0 0 24 24"><use href="#arrow-up"/></svg>
+                  </template>
+                  <template x-if="(gw.battery_kw ?? 0) < -0.05">
+                    <svg class="icon text-sm" style="width: 12px; height: 12px; color: var(--accent)" aria-hidden="true" viewBox="0 0 24 24"><use href="#arrow-down"/></svg>
+                  </template>
+                </div>
+              </div>
+              <!-- Solar — only shown when solar relay is active or solar is producing -->
+              <template x-if="gw.solar_relay1 || (gw.solar_kw ?? 0) > 0.05">
+                <div class="power-bar-row" style="gap: 8px">
+                  <span class="power-bar-label c-solar">Solar</span>
+                  <span class="power-bar-val c-solar" style="min-width: 58px"
+                        x-text="fmt.kw(gw.solar_kw ?? null) + ' kW'"></span>
+                  <!-- Status SVG Icon Column -->
+                  <div style="width: 20px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                    <template x-if="(gw.solar_kw ?? 0) > 0.05">
+                      <svg class="icon text-sm" style="width: 12px; height: 12px; color: #eab308" aria-hidden="true" viewBox="0 0 24 24"><use href="#arrow-up"/></svg>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <!-- Grid row: kW + Exporting / Importing / Idle state icon -->
+              <div class="power-bar-row" style="gap: 8px">
+                <span class="power-bar-label" :class="(gw.grid_kw ?? 0) > 0.05 ? 'c-danger' : 'c-ok'">Grid</span>
+                <span class="power-bar-val" style="min-width: 58px" :class="(gw.grid_kw ?? 0) > 0.05 ? 'c-danger' : 'c-ok'"
+                      x-text="fmt.kw(gw.grid_kw ?? null) + ' kW'"></span>
+                <!-- Status SVG Icon Column -->
+                <div style="width: 20px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                  <template x-if="(gw.grid_kw ?? 0) > 0.05">
+                    <svg class="icon text-sm" style="width: 12px; height: 12px; color: var(--danger)" aria-hidden="true" viewBox="0 0 24 24"><use href="#arrow-up"/></svg>
+                  </template>
+                  <template x-if="(gw.grid_kw ?? 0) < -0.05">
+                    <svg class="icon text-sm" style="width: 12px; height: 12px; color: var(--ok)" aria-hidden="true" viewBox="0 0 24 24"><use href="#arrow-down"/></svg>
+                  </template>
+                </div>
+              </div>
+              <!-- Home -->
+              <div class="power-bar-row" style="gap: 8px">
+                <span class="power-bar-label c-live">Home</span>
+                <span class="power-bar-val c-live" style="min-width: 58px"
+                      x-text="fmt.kw(gw.home_kw ?? null) + ' kW'"></span>
+                <!-- Status SVG Icon Column -->
+                <div style="width: 20px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                  <!-- Left arrow if from Solar (solar is producing) -->
+                  <template x-if="(gw.solar_kw ?? 0) > 0.05">
+                    <svg class="icon text-sm" style="width: 12px; height: 12px; color: #eab308" aria-hidden="true" viewBox="0 0 24 24"><use href="#arrow-left"/></svg>
+                  </template>
+                  <!-- Right arrow if from Grid (grid is non-zero and solar is zero) -->
+                  <template x-if="!((gw.solar_kw ?? 0) > 0.05) && ((gw.grid_kw ?? 0) > 0.05 || (gw.grid_kw ?? 0) < -0.05)">
+                    <svg class="icon text-sm" style="width: 12px; height: 12px; color: var(--danger)" aria-hidden="true" viewBox="0 0 24 24"><use href="#arrow-right"/></svg>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Battery capacity scale -->
+          <template x-if="gw.capacity?.total > 0">
+            <div style="margin-top:10px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                <span style="font-size:.63rem;color:var(--text-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase">Battery Capacity</span>
+                <span style="font-size:.68rem;font-weight:700;color:var(--text-secondary)"
+                      x-text="(gw.capacity.available != null ? parseFloat(gw.capacity.available).toFixed(1) : '—') + ' / ' + parseFloat(gw.capacity.total).toFixed(1) + ' kWh'"></span>
+              </div>
+              <div style="height:5px;border-radius:999px;background:var(--surface-300,#1e2433);overflow:hidden">
+                <div style="height:100%;border-radius:999px;background:linear-gradient(90deg,var(--ok),#34d399);transition:width .5s ease"
+                     :style="'width:' + Math.min(100, Math.max(0, ((gw.capacity.available ?? 0) / gw.capacity.total) * 100)) + '%'"></div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Full Serial Number -->
+          <div style="margin-top:8px; font-size:.68rem; font-weight:700; color:var(--text-muted); font-family:monospace; letter-spacing:.05em; text-transform:uppercase;">
+            S/N: <span x-text="gw.full_serial || gw.short_id" style="color:var(--text-secondary)"></span>
+          </div>
+
+          <!-- Last seen -->
+          <div class="card-sub" style="margin-top:6px">
+            Last seen:
+            <span x-text="gw.last_seen ? new Date(gw.last_seen).toLocaleTimeString() : 'never'"></span>
+            &nbsp;·&nbsp;
+            Model: <span x-text="fmt.model(gw.model)"></span>
+          </div>
+          </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    </div> <!-- End of Top Level Grid -->
+
+    <!-- ── Selected Gateway Detail Panel ─────────────────────── -->
+    <template x-if="$store.app.selectedGatewayObj">
+      <div class="detail-panel" :id="'detail-' + $store.app.selectedGateway">
+        <div class="detail-panel-header">
+          <div>
+            <div class="detail-panel-title">
+              ⚡ <span x-text="$store.app.gatewayName($store.app.selectedGatewayObj)"></span>
+              <template x-if="$store.app.gatewayName($store.app.selectedGatewayObj) !== $store.app.selectedGatewayObj.short_id">
+                <span class="c-muted" style="font-weight:400;font-size:.8rem"
+                      x-text="'·  ' + $store.app.selectedGateway"></span>
+              </template>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <template x-if="$store.app.selectedGatewayStatus">
+              <span class="chip"
+                :class="{
+                  ok:    $store.app.selectedGatewayStatus?.poll_status === 'ok',
+                  error: $store.app.selectedGatewayStatus?.poll_status === 'error',
+                  warn:  $store.app.selectedGatewayStatus?.poll_status === 'retrying',
+                  muted: ['stopped','not_started'].includes($store.app.selectedGatewayStatus?.poll_status),
+                }"
+                x-text="'Poll: ' + ($store.app.selectedGatewayStatus?.poll_status || 'unknown')">
+              </span>
+            </template>
+            <button class="btn btn-secondary btn-sm"
+                    @click="$store.app.setTab('control')" id="btn-go-control">Go to Control →</button>
+          </div>
+        </div>
+
+        <div class="detail-panel-body">
+          <!-- TOU dispatch strip (Time-of-Use mode only) -->
+          <template x-if="$store.app.selectedGatewayObj.operating_mode_id === 1 && $store.app.selectedGatewayObj.tou_active?.name">
+            <div style="margin-bottom:16px;border-radius:8px;border:1px solid hsla(217,90%,60%,.28);background:hsla(217,90%,60%,.06);overflow:hidden">
+              <!-- Current wave row -->
+              <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid hsla(217,90%,60%,.15)">
+                <!-- Wave label (enum: Super Off-Peak, On-Peak, etc.) -->
+                <span style="font-size:.78rem;font-weight:800;color:#93c5fd;white-space:nowrap;letter-spacing:.01em"
+                      x-text="$store.app.selectedGatewayObj.tou_active.wave_label || $store.app.selectedGatewayObj.tou_active.name || '—'"></span>
+                <!-- Dispatch chip (aPower to home, Self-consumption, etc.) -->
+                <template x-if="$store.app.selectedGatewayObj.tou_active.title">
+                  <span style="font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid hsla(38,92%,50%,.35);background:hsla(38,92%,50%,.1);color:var(--accent);white-space:nowrap"
+                        x-text="$store.app.selectedGatewayObj.tou_active.title"></span>
+                </template>
+                <!-- Time remaining badge -->
+                <template x-if="$store.app.selectedGatewayObj.tou_active.remaining">
+                  <span style="margin-left:auto;font-size:.72rem;font-weight:700;color:#e2e8f0;background:hsla(217,90%,60%,.18);border:1px solid hsla(217,90%,60%,.3);border-radius:5px;padding:2px 8px;white-space:nowrap;flex-shrink:0"
+                        x-text="$store.app.selectedGatewayObj.tou_active.remaining"></span>
+                </template>
+              </div>
+              <!-- Next wave row -->
+              <template x-if="$store.app.selectedGatewayObj.tou_next?.name">
+                <div style="display:flex;align-items:center;gap:5px;padding:6px 12px">
+                  <span style="font-size:.68rem;color:var(--text-muted);flex-shrink:0">Next:</span>
+                  <span style="font-size:.72rem;font-weight:700;color:var(--text-secondary)"
+                        x-text="$store.app.selectedGatewayObj.tou_next.wave_label || $store.app.selectedGatewayObj.tou_next.name"></span>
+                  <template x-if="$store.app.selectedGatewayObj.tou_next.title">
+                    <span style="font-size:.68rem;color:var(--text-muted)"
+                          x-text="'· ' + $store.app.selectedGatewayObj.tou_next.title"></span>
+                  </template>
+                  <template x-if="$store.app.selectedGatewayObj.tou_next.start">
+                    <span style="font-size:.68rem;color:var(--text-muted);margin-left:auto;flex-shrink:0"
+                          x-text="'@ ' + $store.app.selectedGatewayObj.tou_next.start"></span>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- Horizontal detail-strip table row (Merging Dashboard & Gateways layout) -->
+          <div class="overflow-x-auto" style="border:1px solid var(--border);border-radius:8px;background:var(--surface-1);margin-bottom:12px">
+            <table class="w-full text-left text-sm whitespace-nowrap" style="border-collapse:collapse;min-width:1100px">
+              <thead class="text-[0.7rem] uppercase text-[var(--text-muted)] bg-[var(--surface-0)] border-b border-[var(--border)]">
+                <tr>
+                  <th class="px-3 py-2 font-semibold">Name & S/N</th>
+                  <th class="px-3 py-2 font-semibold">Model (SKU)</th>
+                  <th class="px-3 py-2 font-semibold">Device Status</th>
+                  <th class="px-3 py-2 font-semibold">Connectivity & Relays</th>
+                  <th class="px-3 py-2 font-semibold">Accessories</th>
+                  <th class="px-3 py-2 font-semibold">Run Status</th>
+                  <th class="px-3 py-2 font-semibold">Battery SOC</th>
+                  <th class="px-3 py-2 font-semibold">Battery Power</th>
+                  <th class="px-3 py-2 font-semibold">Solar</th>
+                  <th class="px-3 py-2 font-semibold">Grid</th>
+                  <th class="px-3 py-2 font-semibold">Home Load</th>
+                  <th class="px-3 py-2 font-semibold">Batteries</th>
+                  <th class="px-3 py-2 font-semibold">Poll Status</th>
+                  <th class="px-3 py-2 font-semibold">Last Seen & Age</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="transition-colors hover:bg-[var(--surface-2)]">
+                  <!-- Name & S/N -->
+                  <td class="px-3 py-2.5 align-middle">
+                    <div class="font-bold text-[var(--text-primary)] leading-tight" x-text="$store.app.gatewayName($store.app.selectedGatewayObj)"></div>
+                    <div class="text-[0.7rem] text-[var(--text-muted)] font-mono leading-tight" x-text="$store.app.selectedGatewayObj.full_serial || $store.app.selectedGatewayObj.short_id"></div>
+                  </td>
+                  <!-- Model -->
+                  <td class="px-3 py-2.5 align-middle">
+                    <div class="text-[var(--text-primary)] leading-tight text-[0.85rem]" x-text="$store.app.selectedGatewayObj.model || '—'"></div>
+                  </td>
+                  <!-- Device Status -->
+                  <td class="px-3 py-2.5 align-middle">
+                    <span class="chip" style="transform: scale(0.9); transform-origin: left"
+                          :class="$store.app.selectedGatewayObj.poll_status === 'ok' ? 'ok' : ($store.app.selectedGatewayObj.poll_status && !['stopped','not_started'].includes($store.app.selectedGatewayObj.poll_status) ? 'error' : 'muted')">
+                      <span class="status-dot"
+                            :class="$store.app.selectedGatewayObj.poll_status === 'ok' ? 'online' : (['error','retrying','circuit_breaker_tripped'].includes($store.app.selectedGatewayObj.poll_status) ? 'offline' : '')"></span>
+                      <span x-text="$store.app.selectedGatewayObj.poll_status === 'ok' ? 'Normal' : (['error','retrying'].includes($store.app.selectedGatewayObj.poll_status) ? 'Fault' : 'Unknown')"></span>
+                    </span>
+                  </td>
+                  <!-- Connectivity & Relays -->
+                  <td class="px-3 py-2.5 align-middle">
+                    <div class="flex flex-col text-[0.65rem] font-mono leading-tight gap-0.5">
+                      <div class="flex gap-2">
+                        <span :class="$store.app.selectedGatewayObj.network_connection ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'">NET:<span x-text="$store.app.selectedGatewayObj.network_connection === 1 ? 'ETH' : ($store.app.selectedGatewayObj.network_connection === 2 ? 'WiFi' : ($store.app.selectedGatewayObj.network_connection === 3 ? '4G' : '-'))"></span></span>
+                        <span :class="$store.app.selectedGatewayObj.wifi_signal > 20 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'">WiFi:<span x-text="$store.app.selectedGatewayObj.wifi_signal != null ? $store.app.selectedGatewayObj.wifi_signal + 'dBm' : '-'"></span></span>
+                        <span :class="$store.app.selectedGatewayObj.mobile_signal > 10 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'">4G:<span x-text="$store.app.selectedGatewayObj.mobile_signal != null ? $store.app.selectedGatewayObj.mobile_signal + 'dBm' : '-'"></span></span>
+                      </div>
+                      <div class="flex gap-2">
+                        <span :class="$store.app.relayClass($store.app.selectedGatewayObj.grid_relay1, 'text-[var(--ok)]')" :title="$store.app.relayTitle('GRD', $store.app.selectedGatewayObj.grid_relay1)">GRD:<span x-text="$store.app.relayLabel($store.app.selectedGatewayObj.grid_relay1)"></span></span>
+                        <span :class="$store.app.relayClass($store.app.selectedGatewayObj.generator_relay, 'text-[var(--warn)]')" :title="$store.app.relayTitle('GEN', $store.app.selectedGatewayObj.generator_relay)">GEN:<span x-text="$store.app.relayLabel($store.app.selectedGatewayObj.generator_relay)"></span></span>
+                        <span :class="$store.app.relayClass($store.app.selectedGatewayObj.solar_relay1, 'text-[var(--solar)]')" :title="$store.app.relayTitle('SOL', $store.app.selectedGatewayObj.solar_relay1)">SOL:<span x-text="$store.app.relayLabel($store.app.selectedGatewayObj.solar_relay1)"></span></span>
+                      </div>
+                    </div>
+                  </td>
+                  <!-- Accessories -->
+                  <td class="px-3 py-2.5 align-middle">
+                    <div class="flex items-center gap-1.5 text-[var(--text-muted)]">
+                      <template x-if="!$store.app.selectedGatewayObj.accessories || $store.app.selectedGatewayObj.accessories.length === 0">
+                        <span class="text-[0.8rem]">—</span>
+                      </template>
+                      <template x-if="$store.app.selectedGatewayObj.solar_kw > 0 || $store.app.selectedGatewayObj.has_solar">
+                        <svg class="icon text-[var(--solar)]" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#sun"/></svg>
+                      </template>
+                      <template x-if="$store.app.selectedGatewayObj.accessories?.includes('smart_circuits')">
+                        <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#power"/></svg>
+                      </template>
+                      <template x-if="$store.app.selectedGatewayObj.accessories?.includes('generator')">
+                        <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#ev-station"/></svg>
+                      </template>
+                      <template x-if="$store.app.selectedGatewayObj.accessories?.includes('ahub')">
+                        <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#server"/></svg>
+                      </template>
+                    </div>
+                  </td>
+                  <!-- Run Status -->
+                  <td class="px-3 py-2.5 align-middle">
+                    <div class="font-bold text-[0.8rem] leading-tight"
+                         :class="$store.app.selectedGatewayObj.runtime_mode === 'VPP Mode' ? 'text-[var(--live)]' : 'text-[var(--text-primary)]'"
+                         x-text="$store.app.selectedGatewayObj.runtime_mode === 'VPP Mode' ? 'VPP Mode' : ($store.app.selectedGatewayObj.operating_mode || '—')"></div>
+                    <div class="text-[0.65rem] text-[var(--text-muted)] leading-tight"
+                         x-text="$store.app.getBatteryStateText($store.app.selectedGatewayObj)"></div>
+                  </td>
+                  <!-- Battery SOC -->
+                  <td class="px-3 py-2.5 font-bold text-[var(--ok)] text-[0.85rem] align-middle"
+                      :style="'color:' + socBarColour($store.app.selectedGatewayObj.battery_soc ?? null)">
+                    <span x-text="fmt.soc($store.app.selectedGatewayObj.battery_soc ?? null) + '%'"></span>
+                  </td>
+                  <!-- Battery Power -->
+                  <td class="px-3 py-2.5 font-bold text-[0.85rem] align-middle"
+                      :style="($store.app.selectedGatewayObj.battery_kw ?? 0) > 0.05 ? 'color:var(--ok)' : (($store.app.selectedGatewayObj.battery_kw ?? 0) < -0.05 ? 'color:var(--accent)' : 'color:var(--text-muted)')"
+                      x-text="fmt.kw($store.app.selectedGatewayObj.battery_kw ?? null) + ' kW'"></td>
+                  <!-- Solar -->
+                  <td class="px-3 py-2.5 font-bold text-[var(--solar)] text-[0.85rem] align-middle"
+                      x-text="fmt.kw($store.app.selectedGatewayObj.solar_kw ?? null) + ' kW'"></td>
+                  <!-- Grid -->
+                  <td class="px-3 py-2.5 font-bold text-[0.85rem] align-middle"
+                      :class="($store.app.selectedGatewayObj.grid_kw ?? 0) > 0.05 ? 'text-[var(--danger)]' : 'text-[var(--ok)]'"
+                      x-text="fmt.kw($store.app.selectedGatewayObj.grid_kw ?? null) + ' kW'"></td>
+                  <!-- Home Load -->
+                  <td class="px-3 py-2.5 font-bold text-[var(--live)] text-[0.85rem] align-middle"
+                      x-text="fmt.kw($store.app.selectedGatewayObj.home_kw ?? null) + ' kW'"></td>
+                  <!-- Batteries -->
+                  <td class="px-3 py-2.5 text-[var(--text-primary)] text-[0.85rem] align-middle"
+                      x-text="$store.app.selectedGatewayObj.battery_count ?? '—'"></td>
+                  <!-- Poll Status -->
+                  <td class="px-3 py-2.5 align-middle">
+                    <span class="chip" style="transform: scale(0.9); transform-origin: left"
+                      :class="{
+                        ok:    $store.app.selectedGatewayStatus?.poll_status === 'ok',
+                        error: ['error','no_credentials'].includes($store.app.selectedGatewayStatus?.poll_status),
+                        warn:  $store.app.selectedGatewayStatus?.poll_status === 'retrying',
+                        muted: !$store.app.selectedGatewayStatus?.poll_status || ['stopped','not_started'].includes($store.app.selectedGatewayStatus?.poll_status),
+                      }">
+                      <span class="status-dot"
+                        :class="{online: $store.app.selectedGatewayStatus?.poll_status === 'ok', offline: ['error','no_credentials'].includes($store.app.selectedGatewayStatus?.poll_status)}"></span>
+                      <span x-text="$store.app.selectedGatewayStatus?.poll_status === 'no_credentials' ? 'No Credentials' : ($store.app.selectedGatewayStatus?.poll_status || 'not started')"></span>
+                    </span>
+                  </td>
+                  <!-- Last Seen & Age -->
+                  <td class="px-3 py-2.5 text-[0.7rem] text-[var(--text-muted)] align-middle">
+                    <div x-text="$store.app.selectedGatewayObj.last_seen ? new Date($store.app.selectedGatewayObj.last_seen).toLocaleString() : '—'"></div>
+                    <div class="text-[0.62rem] opacity-80" x-text="'(' + fmt.ago($store.app.selectedGatewayStatus?.last_poll_age_s ?? null) + ')'"></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+
+          <!-- Error notice -->
+          <template x-if="$store.app.selectedGatewayStatus?.last_error">
+            <div class="card" style="margin-top:16px;border-color:var(--danger);background:hsla(343,88%,60%,.07)">
+              <div class="card-label c-danger">Last Error</div>
+              <div style="font-size:.82rem;color:var(--danger);margin-top:4px;font-family:monospace"
+                   x-text="$store.app.selectedGatewayStatus.last_error"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+  </div>
+</template>
+
+<style>
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>

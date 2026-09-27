@@ -1,0 +1,334 @@
+{# Engine Diagnostics — Phase 3.C, v0.5.2 (2026-08-06).
+   Read-only visualisation of the SmartDispatch decision precedence chain,
+   live winner, LP model output, and engine config. See:
+   - src/routes/api_smart_dispatch.py::get_decision_chain (data source)
+   - docs/smart_dispatch_architecture.md (precedence chain narrative)
+#}
+<div x-data="engineDiagnostics()" x-init="init()" class="p-6 max-w-7xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold flex items-center gap-2">
+        <svg class="w-7 h-7 text-primary-light" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <use href="#activity"/>
+        </svg>
+        Engine Diagnostics
+      </h1>
+      <p class="text-sm text-gray-500 mt-1">
+        Read-only view of the SmartDispatch decision chain, LP optimiser output, and engine config.
+        Data refreshes every 15 s.
+      </p>
+    </div>
+    <button @click="refresh()" class="px-3 py-1.5 rounded-md text-sm font-semibold bg-primary/15 text-primary-light hover:bg-primary/25">
+      Refresh now
+    </button>
+  </div>
+
+  <!-- ═══ Section 0 — plain-English summary ═══ -->
+  <div class="rounded-lg border border-primary/30 bg-primary/5 p-5">
+    <h2 class="text-base font-bold flex items-center gap-2 mb-2">
+      <svg class="w-5 h-5 text-primary-light" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <use href="#info"/>
+      </svg>
+      How to read this page
+    </h2>
+    <div class="text-sm text-gray-300 space-y-2 leading-relaxed">
+      <p>
+        Every 30 seconds the SmartDispatch engine decides what your battery should do
+        (<span class="font-mono text-primary-light">HOLD</span>, <span class="font-mono text-primary-light">GRID_CHARGE</span>,
+        <span class="font-mono text-primary-light">GRID_EXPORT</span>). Many sources
+        can want different things — your Strategy Matrix rules, time schedules,
+        Automation Builder rules, and the cost-minimising LP/greedy optimiser. This page
+        shows exactly <strong>which one won this tick and why</strong>.
+      </p>
+      <p>
+        Steps run in strict order (top of the chain below wins first):
+        <strong>your explicit rules always beat the optimiser</strong>. If a matrix rule
+        matches your live prices + SoC, the optimiser's recommendation is superseded.
+        The optimiser is a smart fallback — it only speaks when nothing else has an
+        opinion.
+      </p>
+      <p class="text-xs text-gray-500 italic">
+        Read the sections top-to-bottom: 1) what won right now, 2) the 6-step ladder
+        (winning step highlighted green), 3) what the optimiser <em>would</em> have
+        done (shown even when it didn't win), 4) your active config, 5) all Strategy
+        Matrix rules. Everything is read from tables the engine writes to — this page
+        does not run the engine or change anything.
+      </p>
+    </div>
+  </div>
+
+  <!-- ═══ Section 1 — Live winner card ═══ -->
+  <template x-if="data && data.winner">
+    <div class="rounded-lg border border-gray-700 bg-[var(--surface-1)] p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Latest Decision</h2>
+        <span class="text-xs text-gray-500" x-text="'Evaluated at ' + (data.winner.ts || '—') + ' UTC'"></span>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Action</div>
+          <div class="text-2xl font-black mt-1"
+               :class="{'text-emerald-400': data.winner.action === 'GRID_CHARGE',
+                        'text-amber-400':   data.winner.action === 'GRID_EXPORT',
+                        'text-gray-300':    ['HOLD','NONE'].includes(data.winner.action)}"
+               x-text="data.winner.action"></div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Winning Rule</div>
+          <div class="text-sm font-semibold mt-1" x-text="data.winner.rule_name || '—'"></div>
+          <div class="text-[10px] text-gray-500 mt-0.5" x-text="'trigger: ' + (data.winner.trigger_category || '?')"></div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Context at tick</div>
+          <div class="text-xs mt-1">
+            SoC: <span class="font-bold" x-text="data.winner.soc_pct != null ? data.winner.soc_pct.toFixed(1) + '%' : '—'"></span>
+          </div>
+          <div class="text-xs">
+            Import: <span class="font-bold" x-text="data.winner.import_c_kwh != null ? data.winner.import_c_kwh.toFixed(2) + '¢' : '—'"></span>
+            &nbsp;/&nbsp;
+            Export: <span class="font-bold" x-text="data.winner.export_c_kwh != null ? data.winner.export_c_kwh.toFixed(2) + '¢' : '—'"></span>
+          </div>
+          <div class="text-[10px] text-gray-500 mt-0.5">
+            spike: <span x-text="data.winner.spike_status || '—'"></span>
+            &nbsp;·&nbsp;demand_window: <span x-text="data.winner.demand_window ? 'YES' : 'no'"></span>
+          </div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Reason</div>
+          <div class="text-xs font-mono mt-1 text-gray-300" x-text="data.winner.reason || '—'"></div>
+        </div>
+      </div>
+      <template x-if="data.winner.shadowed_rules && data.winner.shadowed_rules.length">
+        <div class="mt-3 pt-3 border-t border-gray-700">
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black mb-1">
+            Shadowed rules (this tick)
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="s in data.winner.shadowed_rules" :key="s.rule_name">
+              <span class="text-[11px] px-2 py-0.5 rounded bg-gray-800 text-gray-400" x-text="s.rule_name + ' (P' + s.priority + ')'"></span>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <!-- ═══ Section 2 — Precedence chain ═══ -->
+  <div class="rounded-lg border border-gray-700 bg-[var(--surface-1)] p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">Decision Precedence Chain</h2>
+      <span class="text-xs text-gray-500">
+        Each tick walks these steps in order. First to produce a winner locks the decision.
+      </span>
+    </div>
+    <div class="space-y-2">
+      <template x-for="(step, i) in (data && data.precedence_chain) || []" :key="step.id">
+        <div class="flex items-start gap-3 p-3 rounded border transition-colors"
+             :class="data && data.winner_step_id === step.id
+                     ? 'bg-emerald-500/10 border-emerald-500/40'
+                     : 'bg-[var(--surface-2)] border-gray-800'">
+          <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-black text-sm"
+               :class="data && data.winner_step_id === step.id
+                       ? 'bg-emerald-500 text-white'
+                       : 'bg-gray-800 text-gray-500'"
+               x-text="step.step"></div>
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              <div class="font-semibold" x-text="step.name"></div>
+              <template x-if="data && data.winner_step_id === step.id">
+                <span class="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded">WON THIS TICK</span>
+              </template>
+            </div>
+            <div class="text-xs text-gray-400 mt-0.5" x-text="step.role"></div>
+            <div class="text-[11px] text-gray-500 mt-0.5">
+              <span class="font-mono">wins_when:</span> <span x-text="step.wins_when"></span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ═══ Section 3 — LP / Greedy Optimiser output ═══ -->
+  <div class="rounded-lg border border-gray-700 bg-[var(--surface-1)] p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-semibold flex items-center gap-2">
+        Optimiser Output — <span class="text-sm text-gray-500 font-normal">
+          <span x-text="data && data.engine_config && data.engine_config.use_lp_optimizer ? 'LP (PuLP+CBC MIP)' : 'Greedy heuristic'"></span>
+        </span>
+      </h2>
+      <template x-if="data && data.lp_plan_horizon">
+        <span class="text-xs text-gray-500" x-text="'Plan: ' + data.lp_plan_horizon.slots + ' slots · generated ' + (data.lp_plan_horizon.generated_at || '')"></span>
+      </template>
+    </div>
+    <template x-if="data && data.lp_plan_first_slot">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Slot-0 action</div>
+          <div class="text-lg font-black mt-1" x-text="data.lp_plan_first_slot.action"></div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Projected SoC</div>
+          <div class="text-lg font-black mt-1" x-text="data.lp_plan_first_slot.projected_soc + '%'"></div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Charge / Discharge</div>
+          <div class="text-sm font-mono mt-1">
+            <span class="text-emerald-400" x-text="'+' + data.lp_plan_first_slot.charge_kw + ' kW'"></span>
+            &nbsp;/&nbsp;
+            <span class="text-amber-400" x-text="'-' + data.lp_plan_first_slot.discharge_kw + ' kW'"></span>
+          </div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Slot prices</div>
+          <div class="text-sm font-mono mt-1">
+            <span x-text="'in ' + (data.lp_plan_first_slot.import_price * 100).toFixed(1) + '¢'"></span>
+            &nbsp;/&nbsp;
+            <span x-text="'out ' + (data.lp_plan_first_slot.export_price * 100).toFixed(1) + '¢'"></span>
+          </div>
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest text-gray-500 font-black">Solar / Load</div>
+          <div class="text-sm font-mono mt-1">
+            <span class="text-emerald-400" x-text="data.lp_plan_first_slot.pv_kw + ' kW'"></span>
+            &nbsp;/&nbsp;
+            <span x-text="data.lp_plan_first_slot.home_load_kw + ' kW'"></span>
+          </div>
+        </div>
+      </div>
+    </template>
+    <template x-if="!data || !data.lp_plan_first_slot">
+      <div class="text-sm text-gray-500 italic">No plan history yet — waiting for first optimiser run.</div>
+    </template>
+    <div class="mt-3 pt-3 border-t border-gray-700 text-[11px] text-gray-500">
+      This is the optimiser's <em>recommendation for right now</em>. It's used only if steps 1–3 above are all silent
+      (see precedence chain). If a matrix / schedule / custom rule matched, the optimiser's suggestion is superseded.
+    </div>
+  </div>
+
+  <!-- ═══ Section 4 — Engine config ═══ -->
+  <div class="rounded-lg border border-gray-700 bg-[var(--surface-1)] p-5">
+    <h2 class="text-lg font-semibold mb-3">Engine Configuration (current gateway)</h2>
+    <template x-if="data && data.engine_config">
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+        <template x-for="[k, v] in Object.entries(data.engine_config)" :key="k">
+          <div class="flex justify-between items-center py-1 border-b border-gray-800">
+            <span class="text-gray-400 font-mono text-xs" x-text="k"></span>
+            <span class="font-semibold font-mono" x-text="v === null ? '(unset)' : v"></span>
+          </div>
+        </template>
+      </div>
+    </template>
+  </div>
+
+  <!-- ═══ Section 5 — Strategy matrix rows ═══ -->
+  <div class="rounded-lg border border-gray-700 bg-[var(--surface-1)] p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-semibold">Strategy Matrix — <span x-text="data ? data.matrix_count : 0"></span> rules</h2>
+      <span class="text-xs text-gray-500">Ordered by eval_order (lowest priority number = highest precedence)</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-xs">
+        <thead>
+          <tr class="text-left text-gray-500 uppercase tracking-wider border-b border-gray-700">
+            <th class="px-3 py-2 font-semibold">P</th>
+            <th class="px-3 py-2 font-semibold">Scope</th>
+            <th class="px-3 py-2 font-semibold">Name</th>
+            <th class="px-3 py-2 font-semibold">Category</th>
+            <th class="px-3 py-2 font-semibold">Signals</th>
+            <th class="px-3 py-2 font-semibold text-center">Enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="row in (data && data.strategy_matrix) || []" :key="row.id">
+            <tr class="border-b border-gray-800 hover:bg-[var(--surface-2)]">
+              <td class="px-3 py-2 font-mono font-bold" x-text="row.eval_order"></td>
+              <td class="px-3 py-2">
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-bold"
+                      :class="row.gateway_id === 'all' ? 'bg-gray-700 text-gray-300' : 'bg-emerald-500/20 text-emerald-400'"
+                      x-text="row.gateway_id === 'all' ? 'GLOBAL' : row.gateway_id"></span>
+              </td>
+              <td class="px-3 py-2 font-semibold" x-text="row.strategy_name"></td>
+              <td class="px-3 py-2 text-gray-400" x-text="row.trigger_category"></td>
+              <td class="px-3 py-2 font-mono text-[10px] text-gray-500 truncate max-w-xs" x-text="row.signals_json"></td>
+              <td class="px-3 py-2 text-center">
+                <span class="w-2 h-2 inline-block rounded-full"
+                      :class="row.enabled ? 'bg-emerald-500' : 'bg-gray-600'"></span>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══ Section 6 — About / docs ═══ -->
+  <div class="rounded-lg border border-gray-700 bg-[var(--surface-1)] p-5 text-sm">
+    <h2 class="text-lg font-semibold mb-3">About the Decision Chain</h2>
+    <p class="text-gray-400 mb-2">
+      The SD engine runs a <strong>fixed 6-step precedence chain</strong> on every 30 s Micro tick.
+      The winner from the first non-silent step becomes the tick's dispatch decision.
+    </p>
+    <p class="text-gray-400 mb-2">
+      The <strong>LP / greedy optimiser</strong> at step 4 always runs (its output feeds into the context regardless),
+      but only "wins" when steps 1–3 have no match. This means your explicit user rules always override the optimiser
+      — the optimiser is a smart fallback, not an override authority.
+    </p>
+    <p class="text-gray-400">
+      Full architecture doc:
+      <a href="/docs/smart_dispatch_architecture.md" target="_blank" class="text-primary-light hover:underline font-mono text-xs">smart_dispatch_architecture.md</a>
+      · Detailed decision chain narrative:
+      <a href="/docs/sd_decision_chain.md" target="_blank" class="text-primary-light hover:underline font-mono text-xs">sd_decision_chain.md</a>
+    </p>
+  </div>
+
+  <!-- Loading / error state -->
+  <template x-if="loading && !data">
+    <div class="text-center text-gray-500 py-6">Loading engine diagnostics…</div>
+  </template>
+  <template x-if="error">
+    <div class="text-center text-red-400 py-6" x-text="'Failed to load: ' + error"></div>
+  </template>
+</div>
+
+<script>
+function engineDiagnostics() {
+  return {
+    data: null,
+    loading: true,
+    error: null,
+    _timer: null,
+
+    async init() {
+      await this.refresh();
+      // Poll every 15 s while the tab is active. Alpine's x-if unmount
+      // will drop this component and its timer when the user leaves.
+      this._timer = setInterval(() => this.refresh(), 15000);
+    },
+
+    async refresh() {
+      const gw = Alpine.store('app').selectedGateway;
+      if (!gw) {
+        this.error = 'No gateway selected';
+        this.loading = false;
+        return;
+      }
+      try {
+        const r = await fetch(`api/smart_dispatch/decision_chain?gateway_id=${encodeURIComponent(gw)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        this.data = await r.json();
+        this.error = null;
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    destroy() {
+      if (this._timer) clearInterval(this._timer);
+    },
+  };
+}
+</script>

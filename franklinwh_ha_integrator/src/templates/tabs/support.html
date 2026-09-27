@@ -1,0 +1,1672 @@
+<!-- ── Admin Tab v2 — System Administration (renamed from "SysAdmin" 2026-08-08 BD-06 / #18) -->
+<div x-data="systemSupport()" x-init="init()" class="space-y-5 max-w-5xl">
+
+  <!-- Header -->
+  <div>
+    <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+      <i class="fas fa-shield-alt text-primary-light text-lg"></i>
+      Admin
+    </h1>
+    <p class="text-xs text-gray-400 mt-0.5">System settings, backup management, database browser, and environment info.</p>
+  </div>
+
+  <!-- ── Sub-tab nav ──────────────────────────────────────────────────────── -->
+  <div class="flex gap-1 border-b border-gray-700/50 pb-0 flex-wrap">
+    <!-- BD-06 / #18 — "Notifications" sub-tab entry removed 2026-08-08. Was a
+         dead nav item: no content div behind sysTab === 'notifications'.
+         Notification config lives elsewhere per the user's brain-dump.
+
+         NOTE: this comment lives OUT here, not inside the x-for expression.
+         Alpine evaluates the attribute by interpolating it into a generated
+         function body, so a `//` line comment inside the expression can
+         swallow the code that follows it — this exact block threw
+         "SyntaxError: Unexpected token '}'" on every Support tab load and
+         left the sub-tab nav unrendered. Use HTML comments outside the
+         attribute, never `//` inside one. -->
+    <template x-for="t in [
+      { id: 'system',          label: 'System',          icon: 'fa-cog' },
+      { id: 'features',        label: 'Setup Features',  icon: 'fa-toggle-on' },
+      { id: 'storage',         label: 'Storage',         icon: 'fa-archive' },
+      { id: 'database',        label: 'Database',        icon: 'fa-database' },
+      { id: 'environment',     label: 'Environment',     icon: 'fa-flask' },
+      { id: 'device-registry', label: 'Device Registry', icon: 'fa-microchip' }
+    ]" :key="t.id">
+      <button @click="sysTab = t.id"
+              class="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-all"
+              :class="sysTab === t.id
+                ? 'border-primary-light text-primary-light bg-primary/10'
+                : 'border-transparent text-gray-400 hover:text-gray-200 hover:bg-gray-800/60'">
+        <i class="fas" :class="t.icon"></i>
+        <span x-text="t.label"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- ╔══════════════════════════════════════════════════╗
+       ║  SYSTEM TAB — Feature Flags + Process Control    ║
+       ╚══════════════════════════════════════════════════╝ -->
+  <div x-show="sysTab === 'system'" class="space-y-5">
+
+  <!-- ══ 1. FEATURE FLAGS ════════════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-toggle-on text-primary-light text-xs"></i>
+        <p class="text-xs font-bold text-gray-200">Feature Flags &amp; Data Retention</p>
+      </div>
+      <template x-if="features">
+        <span class="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border"
+              :class="envColor(features.environment)" x-text="envLabel(features.environment)"></span>
+      </template>
+    </div>
+
+    <!-- HA Addon warning -->
+    <template x-if="metricsWarning">
+      <div class="mx-4 mt-4 rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-3 flex items-start gap-3">
+        <i class="fas fa-exclamation-triangle text-amber-400 mt-0.5 flex-shrink-0"></i>
+        <p class="text-xs text-amber-300 leading-relaxed">
+          <strong>HA Add-on detected.</strong> Home Assistant Recorder already stores all MQTT entity states
+          (default 10-day retention). Enabling FHAI Metrics Collection duplicates this data in a second database,
+          increasing disk usage without additional benefit. Consider disabling unless you need custom retention.
+        </p>
+      </div>
+    </template>
+
+    <div x-show="featuresLoading" class="px-5 py-8 text-center text-gray-500 text-xs">
+      <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading…
+    </div>
+
+    <template x-if="!featuresLoading && features">
+      <div class="p-5 space-y-6">
+
+        <!-- Toggles row -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+          <!-- Metrics enabled -->
+          <div class="rounded-lg border border-gray-700 bg-gray-800/40 p-4 flex items-center justify-between">
+            <div>
+              <p class="text-xs font-bold text-gray-200">Metrics Collection</p>
+              <p class="text-[10px] text-gray-500 mt-0.5">Store telemetry per poll</p>
+              <template x-if="features.metrics_enabled_auto">
+                <span class="text-[9px] text-gray-600 italic">auto (env default)</span>
+              </template>
+            </div>
+            <button @click="featuresEdit.metrics_enabled = !featuresEdit.metrics_enabled"
+                    class="relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none"
+                    :class="featuresEdit.metrics_enabled ? 'bg-emerald-500' : 'bg-gray-600'">
+              <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200"
+                    :class="featuresEdit.metrics_enabled ? 'translate-x-5' : 'translate-x-0'"></span>
+            </button>
+          </div>
+
+          <!-- Backup enabled -->
+          <div class="rounded-lg border border-gray-700 bg-gray-800/40 p-4 flex items-center justify-between">
+            <div>
+              <p class="text-xs font-bold text-gray-200">Automatic Backup</p>
+              <p class="text-[10px] text-gray-500 mt-0.5">Crash-safe SQLite snapshots</p>
+            </div>
+            <button @click="featuresEdit.backup_enabled = !featuresEdit.backup_enabled"
+                    class="relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none"
+                    :class="featuresEdit.backup_enabled ? 'bg-emerald-500' : 'bg-gray-600'">
+              <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200"
+                    :class="featuresEdit.backup_enabled ? 'translate-x-5' : 'translate-x-0'"></span>
+            </button>
+          </div>
+
+          <!-- VACUUM enabled -->
+          <div class="rounded-lg border border-gray-700 bg-gray-800/40 p-4 flex items-center justify-between">
+            <div>
+              <p class="text-xs font-bold text-gray-200">VACUUM After Prune</p>
+              <p class="text-[10px] text-gray-500 mt-0.5">Reclaim disk space (slow)</p>
+            </div>
+            <button @click="featuresEdit.prune_vacuum_enabled = !featuresEdit.prune_vacuum_enabled"
+                    class="relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none"
+                    :class="featuresEdit.prune_vacuum_enabled ? 'bg-emerald-500' : 'bg-gray-600'">
+              <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200"
+                    :class="featuresEdit.prune_vacuum_enabled ? 'translate-x-5' : 'translate-x-0'"></span>
+            </button>
+          </div>
+
+          <!-- Toast Auto-Dismiss -->
+          <div class="rounded-lg border border-gray-700 bg-gray-800/40 p-4 flex items-center justify-between">
+            <div>
+              <p class="text-xs font-bold text-gray-200">Auto-Dismiss Toasts</p>
+              <p class="text-[10px] text-gray-500 mt-0.5">Fade away notifications automatically</p>
+            </div>
+            <button @click="featuresEdit.toast_auto_dismiss = !featuresEdit.toast_auto_dismiss"
+                    class="relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none"
+                    :class="featuresEdit.toast_auto_dismiss ? 'bg-emerald-500' : 'bg-gray-600'">
+              <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200"
+                    :class="featuresEdit.toast_auto_dismiss ? 'translate-x-5' : 'translate-x-0'"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Retention & Settings numbers -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <label class="block text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Metrics Retention (days)</label>
+            <input type="number" x-model.number="featuresEdit.metrics_retention_days" min="1" max="365"
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+            <p class="text-[9px] text-gray-600 mt-1">Rows older than this are deleted daily at 2am. HA Recorder default = 10 days.</p>
+          </div>
+          <div>
+            <label class="block text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Backup Retention (days)</label>
+            <input type="number" x-model.number="featuresEdit.backup_retention_days" min="1" max="90"
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+          </div>
+          <div>
+            <label class="block text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Backup Interval (hours)</label>
+            <input type="number" x-model.number="featuresEdit.backup_interval_hours" min="1" max="24"
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+          </div>
+          <div>
+            <label class="block text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Toast Dismiss Delay (sec)</label>
+            <input type="number" x-model.number="featuresEdit.toast_dismiss_delay_seconds" min="1" max="300"
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+            <p class="text-[9px] text-gray-600 mt-1">Number of seconds toast notifications stay visible before fading away.</p>
+          </div>
+        </div>
+
+        <!-- Last prune / backup status -->
+        <div class="flex flex-wrap gap-6 text-[10px] text-gray-500 border-t border-gray-700/50 pt-3">
+          <span>Last backup: <span class="text-gray-300" x-text="formatDate(features.last_backup_at)"></span></span>
+          <span>Last prune: <span class="text-gray-300" x-text="formatDate(features.last_prune_at)"></span></span>
+          <span x-show="features.last_prune_rows">Pruned rows (last run): <span class="text-gray-300" x-text="features.last_prune_rows"></span></span>
+        </div>
+
+        <!-- Prune Preview panel -->
+        <div class="rounded-lg border border-gray-700/60 bg-gray-800/30 overflow-hidden">
+          <div class="px-4 py-2.5 bg-gray-800/60 border-b border-gray-700/40 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-search text-amber-400 text-[10px]"></i>
+              <p class="text-xs font-bold text-gray-300">Prune Preview</p>
+              <span class="text-[9px] text-gray-600 border border-gray-700 px-1.5 py-0.5 rounded uppercase tracking-widest font-bold">Dry-run</span>
+            </div>
+            <button @click="fetchPrunePreview()" :disabled="prunePreviewLoading"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-400 hover:text-gray-200 transition disabled:opacity-50">
+              <i class="text-[10px] fas" :class="prunePreviewLoading ? 'fa-sync-alt animate-spin' : 'fa-eye'"></i>
+              <span x-text="prunePreviewLoading ? 'Scanning…' : 'Preview Impact'"></span>
+            </button>
+          </div>
+          <template x-if="prunePreview">
+            <div class="p-4 space-y-3">
+              <div class="flex items-center gap-4 text-[10px] text-gray-500 mb-2">
+                <span>Cutoff: <span class="text-gray-300 font-mono" x-text="prunePreview.cutoff ? prunePreview.cutoff.substring(0,10) : ''"></span></span>
+                <span>Retention: <span class="text-gray-300" x-text="prunePreview.retention_days + ' days'"></span></span>
+                <span>Total to delete: <span class="font-bold" :class="prunePreview.total_rows_to_delete > 0 ? 'text-amber-400' : 'text-emerald-400'" x-text="prunePreview.total_rows_to_delete.toLocaleString() + ' rows'"></span></span>
+              </div>
+              <!-- Telemetry table impact -->
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Telemetry Tables (eligible for pruning)</p>
+              <table class="w-full text-[10px] mb-3">
+                <thead><tr class="text-[8px] uppercase tracking-widest text-gray-700 border-b border-gray-700/40">
+                  <th class="text-left py-1">Table</th><th class="text-right py-1">Total Rows</th><th class="text-right py-1">Rows to Delete</th><th class="text-right py-1">Oldest</th>
+                </tr></thead>
+                <tbody>
+                  <template x-for="t in prunePreview.preview" :key="t.table">
+                    <tr class="border-b border-gray-700/20">
+                      <td class="font-mono text-gray-300 py-1" x-text="t.table"></td>
+                      <td class="text-right text-gray-500" x-text="t.total_rows?.toLocaleString() ?? '—'"></td>
+                      <td class="text-right font-bold" :class="t.rows_to_delete > 0 ? 'text-amber-400' : 'text-gray-600'" x-text="t.rows_to_delete?.toLocaleString() ?? '—'"></td>
+                      <td class="text-right text-gray-600 text-[9px]" x-text="t.oldest_eligible ? t.oldest_eligible.substring(0,10) : '—'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <!-- Protected tables -->
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Protected Tables (never pruned)</p>
+              <div class="flex flex-wrap gap-1.5">
+                <template x-for="tbl in prunePreview.protected_tables" :key="tbl">
+                  <span class="px-2 py-0.5 rounded-full text-[9px] font-bold border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 font-mono" x-text="tbl"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+          <div x-show="!prunePreview && !prunePreviewLoading" class="px-4 py-3 text-[10px] text-gray-600">
+            Click "Preview Impact" to see what the next prune run would delete — before it runs.
+          </div>
+        </div>
+
+        <!-- Save + Prune Now buttons -->
+        <div class="flex gap-3">
+          <button @click="saveFeatures()" :disabled="featuresSaving"
+                  class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary/80 transition disabled:opacity-50">
+            <i class="text-[10px] fas" :class="featuresSaving ? 'fa-sync-alt animate-spin' : 'fa-save'"></i>
+            <span x-text="featuresSaving ? 'Saving…' : 'Save Settings'"></span>
+          </button>
+          <button @click="showPruneModal = true" :disabled="runningPrune"
+                  class="flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-bold hover:bg-amber-500/20 transition disabled:opacity-50">
+            <i class="text-[10px] fas" :class="runningPrune ? 'fa-sync-alt animate-spin' : 'fa-broom'"></i>
+            <span x-text="runningPrune ? 'Pruning…' : 'Prune Now'"></span>
+          </button>
+        </div>
+
+        <!-- Prune result -->
+        <template x-if="pruneResult">
+          <div class="rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 text-xs text-emerald-300">
+            <p class="font-bold mb-1"><i class="fas fa-check-circle mr-1"></i>Prune Complete</p>
+            <template x-for="[tbl, cnt] in Object.entries(pruneResult.pruned || {})" :key="tbl">
+              <p x-text="`${tbl}: ${cnt} rows deleted`" class="text-[10px] text-emerald-400/80"></p>
+            </template>
+            <p class="mt-1 text-[10px]">Disk reclaimed: <span class="font-bold" x-text="pruneResult.reclaimed_mb + ' MB'"></span></p>
+          </div>
+        </template>
+      </div>
+    </template>
+  </div>
+
+  </div><!-- end sysTab=system (Feature Flags) -->
+
+  <!-- ╔══════════════════════════════════════════════════╗
+       ║  SETUP FEATURES TAB — PIN Code + Tab visibility ║
+       ╚══════════════════════════════════════════════════╝ -->
+  <div x-show="sysTab === 'features'" class="space-y-5">
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden shadow-lg backdrop-blur-md">
+      <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-sliders-h text-primary-light text-xs"></i>
+          <p class="text-xs font-bold text-gray-200">Application Feature Configuration</p>
+        </div>
+      </div>
+
+      <div class="p-5 space-y-6" x-show="features" x-cloak>
+        <!-- ══ Section 1: Security Settings ══ -->
+        <div class="space-y-3">
+          <h3 class="text-[10px] font-black uppercase tracking-widest text-gray-400 border-b border-gray-700/50 pb-1.5 flex items-center gap-1.5">
+            <i class="fas fa-lock text-[10px] text-orange-400"></i> UI Access Security
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Automations PIN code toggle -->
+            <div class="rounded-lg border border-gray-700 bg-gray-800/40 p-4 flex items-center justify-between hover:border-gray-600 transition duration-150">
+              <div class="flex gap-3 items-start pr-4">
+                <div class="p-2 rounded-lg bg-orange-500/10 text-orange-400 mt-0.5">
+                  <i class="fas fa-key text-sm"></i>
+                </div>
+                <div>
+                  <p class="text-xs font-bold text-gray-200">Automations PIN Code Protection</p>
+                  <p class="text-[10px] text-gray-500 mt-0.5">Require a safety unlock challenge when opening the Automations builder tab</p>
+                </div>
+              </div>
+              <button @click="featuresEdit.automations_pin_enabled = !featuresEdit.automations_pin_enabled"
+                      class="relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none flex-shrink-0"
+                      :class="featuresEdit.automations_pin_enabled ? 'bg-emerald-500' : 'bg-gray-600'">
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200"
+                      :class="featuresEdit.automations_pin_enabled ? 'translate-x-5' : 'translate-x-0'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ Section 2: Optional Features (Decoupling) ══ -->
+        <div class="space-y-4">
+          <div class="border-b border-gray-700/50 pb-1.5 flex items-center justify-between">
+            <h3 class="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-1.5">
+              <i class="fas fa-cubes text-[10px] text-emerald-400"></i> Optional Feature Modules (Decoupling)
+            </h3>
+            <span class="text-[9px] text-gray-600 italic">Disable entire modules to completely exclude their templates and scripts from rendering (prevents iPad/browser OOM crashes)</span>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <template x-for="m in [
+              { id: 'weather',         label: 'Weather & Radar',      desc: 'Local coordinates weather telemetry & forecasts' },
+              { id: 'solar',           label: 'Solar Forecast',       desc: 'Solcast integration & PV production planning' },
+              { id: 'smart_dispatch',  label: 'Smart Dispatch',       desc: 'Amber Smart Dispatch power control hooks' },
+              { id: 'dynamic_pricing', label: 'Live / Dynamic Pricing', desc: 'Utility rates, Amber Electric integration & logs' },
+              { id: 'automations',     label: 'Automations',          desc: 'Advanced grid/battery logic & automation templates' },
+              { id: 'metrics',         label: 'Reporting & Metrics',   desc: 'Database size browser, query tool, telemetry metrics' },
+              { id: 'security',        label: 'Security & PIN',       desc: 'Custom UI access PIN-locks & local authorization' }
+            ]" :key="m.id">
+              <label class="flex flex-col gap-1 p-3 rounded-lg border border-gray-700/50 bg-gray-800/20 hover:bg-gray-800/40 hover:border-gray-600 transition cursor-pointer select-none">
+                <div class="flex items-center gap-2.5">
+                  <input type="checkbox" :checked="isModuleEnabled(m.id)" @change="toggleModule(m.id)"
+                         class="w-3.5 h-3.5 rounded border-gray-600 bg-gray-900 text-primary focus:ring-0 focus:ring-offset-0 cursor-pointer">
+                  <span class="text-xs font-bold text-gray-200" x-text="m.label"></span>
+                </div>
+                <span class="text-[10px] text-gray-500 pl-6 leading-relaxed" x-text="m.desc"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <!-- ══ Section 3: Sidebar Visibility & Tab Suppression ══ -->
+        <div class="space-y-4">
+          <div class="border-b border-gray-700/50 pb-1.5 flex items-center justify-between">
+            <h3 class="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-1.5">
+              <i class="fas fa-eye-slash text-[10px] text-blue-400"></i> Sidebar Tab Visibility
+            </h3>
+            <span class="text-[9px] text-gray-600 italic">Select tabs to suppress from sidebar navigation</span>
+          </div>
+
+          <div class="space-y-5">
+            <!-- Primary Tabs -->
+            <div>
+              <p class="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-2">Primary Operations</p>
+              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                <template x-for="t in [
+                  { id: 'dashboard',     label: 'Dashboard' },
+                  { id: 'control',       label: 'Control' },
+                  { id: 'smart_circuits',label: 'Smart Circuits' },
+                  { id: 'battery',       label: 'Battery' },
+                  { id: 'schedule',      label: 'Schedule' },
+                  { id: 'smart_dispatch',label: 'Smart Dispatch' },
+                  { id: 'automations',   label: 'Automations' },
+                  { id: 'solar_setup',   label: 'Solar Setup' },
+                  { id: 'weather',       label: 'Weather & Radar' },
+                  { id: 'metrics',       label: 'Reporting' }
+                ]" :key="t.id">
+                  <label class="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-gray-700/50 bg-gray-800/20 hover:bg-gray-800/40 hover:border-gray-600 transition cursor-pointer select-none">
+                    <input type="checkbox" :checked="isTabChecked(t.id)" @change="toggleTabSuppression(t.id)"
+                           class="w-3.5 h-3.5 rounded border-gray-600 bg-gray-900 text-primary focus:ring-0 focus:ring-offset-0 cursor-pointer">
+                    <span class="text-xs text-gray-300 flex items-center gap-1.5">
+                      <span class="text-[10px] font-medium text-gray-400" x-text="t.label"></span>
+                    </span>
+                  </label>
+                </template>
+              </div>
+            </div>
+
+            <!-- Configuration Tabs -->
+            <div>
+              <p class="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-2">Configuration</p>
+              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                <template x-for="t in [
+                  { id: 'gateways',        label: 'Gateways' },
+                  { id: 'mqtt_admin',      label: 'MQTT Admin' },
+                  { id: 'ha_entities',     label: 'HA Entities' },
+                  { id: 'home_automation', label: 'Home Automation' },
+                  { id: 'power',           label: 'Power / Hardware' },
+                  { id: 'pricing',         label: 'Services' },
+                  { id: 'dynamic_pricing', label: 'Pricing' },
+                  { id: 'security',        label: 'Security' }
+                ]" :key="t.id">
+                  <label class="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-gray-700/50 bg-gray-800/20 hover:bg-gray-800/40 hover:border-gray-600 transition cursor-pointer select-none">
+                    <input type="checkbox" :checked="isTabChecked(t.id)" @change="toggleTabSuppression(t.id)"
+                           class="w-3.5 h-3.5 rounded border-gray-600 bg-gray-900 text-primary focus:ring-0 focus:ring-offset-0 cursor-pointer">
+                    <span class="text-xs text-gray-300 flex items-center gap-1.5">
+                      <span class="text-[10px] font-medium text-gray-400" x-text="t.label"></span>
+                    </span>
+                  </label>
+                </template>
+              </div>
+            </div>
+
+            <!-- Diagnostics Tabs -->
+            <div>
+              <p class="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-2">Diagnostics (excludes Admin)</p>
+              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                <template x-for="t in [
+                  { id: 'health',     label: 'Health' },
+                  { id: 'logs',       label: 'Logs' },
+                  { id: 'terminal',   label: 'Terminal' },
+                  { id: 'apimetrics', label: 'API Metrics' }
+                ]" :key="t.id">
+                  <label class="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-gray-700/50 bg-gray-800/20 hover:bg-gray-800/40 hover:border-gray-600 transition cursor-pointer select-none">
+                    <input type="checkbox" :checked="isTabChecked(t.id)" @change="toggleTabSuppression(t.id)"
+                           class="w-3.5 h-3.5 rounded border-gray-600 bg-gray-900 text-primary focus:ring-0 focus:ring-offset-0 cursor-pointer">
+                    <span class="text-xs text-gray-300 flex items-center gap-1.5">
+                      <span class="text-[10px] font-medium text-gray-400" x-text="t.label"></span>
+                    </span>
+                  </label>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ Section 3: Save button ══ -->
+        <div class="flex gap-3 border-t border-gray-700/50 pt-4">
+          <button @click="saveFeatures()" :disabled="featuresSaving"
+                  class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary/80 transition disabled:opacity-50">
+            <i class="text-[10px] fas" :class="featuresSaving ? 'fa-sync-alt animate-spin' : 'fa-save'"></i>
+            <span x-text="featuresSaving ? 'Saving…' : 'Save Settings'"></span>
+          </button>
+        </div>
+      </div>
+
+      <div x-show="featuresLoading || !features" class="px-5 py-8 text-center text-gray-500 text-xs">
+        <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading Features…
+      </div>
+    </div>
+  </div>
+
+  <!-- ╔══════════════════════════════════════════════════╗
+       ║  STORAGE TAB — Backup Archives                    ║
+       ╚══════════════════════════════════════════════════╝ -->
+  <div x-show="sysTab === 'storage'" class="space-y-5">
+
+  <!-- ══ 2. STORAGE & BACKUP ═══════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-archive text-primary-light text-xs"></i>
+        <p class="text-xs font-bold text-gray-200">Storage &amp; Backup Archives</p>
+      </div>
+      <div class="flex gap-2">
+        <button @click="runBackupNow()" :disabled="runningBackup"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/30 text-primary-light text-xs font-bold hover:bg-primary/30 transition disabled:opacity-50">
+          <i class="text-[10px] fas" :class="runningBackup ? 'fa-sync-alt animate-spin' : 'fa-database'"></i>
+          <span x-text="runningBackup ? 'Backing up…' : 'Backup Now'"></span>
+        </button>
+        <button @click="fetchBackups()"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-400 hover:text-gray-200 transition">
+          <i class="fas fa-sync-alt text-[10px]" :class="backupsLoading ? 'animate-spin' : ''"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Summary bar -->
+    <template x-if="backups">
+      <div class="flex gap-8 px-5 py-4 border-b border-gray-700/50 bg-gray-800/30">
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Archives</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="backups.count"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Total Size</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="backups.total_size_mb + ' MB'"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">What's Backed Up</p>
+          <p class="text-xs text-gray-400">config.db + franklinwh.log (compressed)</p>
+        </div>
+      </div>
+    </template>
+
+    <div x-show="backupsLoading" class="px-5 py-6 text-center text-gray-500 text-xs">
+      <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading archives…
+    </div>
+
+    <!-- Archive table -->
+    <template x-if="backups && backups.archives.length > 0">
+      <div class="overflow-x-auto max-h-72 overflow-y-auto">
+        <table class="w-full text-xs">
+          <thead class="sticky top-0 bg-gray-800 border-b border-gray-700 z-10">
+            <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+              <th class="px-4 py-2.5 text-left">Filename</th>
+              <th class="px-4 py-2.5 text-left">Size</th>
+              <th class="px-4 py-2.5 text-left">Created</th>
+              <th class="px-4 py-2.5 text-left">Contents</th>
+              <th class="px-4 py-2.5 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="arc in backups.archives" :key="arc.filename">
+              <tr class="border-b border-gray-700/30 hover:bg-gray-800/40">
+                <td class="px-4 py-2.5 font-mono text-gray-300 text-[10px]" x-text="arc.filename"></td>
+                <td class="px-4 py-2.5 text-gray-400" x-text="arc.size_mb + ' MB'"></td>
+                <td class="px-4 py-2.5 text-gray-500 text-[10px]" x-text="formatDate(arc.created_at)"></td>
+                <td class="px-4 py-2.5">
+                  <template x-if="arc.probe">
+                    <span class="inline-flex items-center gap-1 text-[9px]">
+                      <span class="px-1.5 py-0.5 rounded font-bold"
+                            :class="arc.probe.gateway_count > 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'"
+                            x-text="arc.probe.gateway_count + ' GW'"></span>
+                      <span class="text-gray-600" x-text="arc.probe.metrics_rows.toLocaleString() + ' rows'"></span>
+                    </span>
+                  </template>
+                  <template x-if="!arc.probe && arc.probing">
+                    <span class="text-gray-700 text-[9px]"><i class="fas fa-sync-alt animate-spin mr-1"></i>probing…</span>
+                  </template>
+                  <template x-if="!arc.probe && !arc.probing">
+                    <button @click="probeBackup(arc)" class="text-[9px] text-gray-700 hover:text-gray-400 underline transition">Inspect</button>
+                  </template>
+                </td>
+                <td class="px-4 py-2.5 text-right flex items-center justify-end gap-1.5">
+                  <button @click="openRestoreModal(arc)" :disabled="restoringBackup === arc.filename"
+                          class="px-2 py-1 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-[10px] font-bold hover:bg-emerald-500/20 transition disabled:opacity-50">
+                    <i class="fas fa-undo text-[9px]"></i>
+                  </button>
+                  <button @click="deleteBackup(arc.filename)" :disabled="deletingBackup === arc.filename"
+                          class="px-2 py-1 rounded border border-red-500/30 bg-red-500/10 text-red-400 text-[10px] font-bold hover:bg-red-500/20 transition disabled:opacity-50">
+                    <i class="text-[9px] fas" :class="deletingBackup === arc.filename ? 'fa-sync-alt animate-spin' : 'fa-trash'"></i>
+                  </button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </template>
+    <template x-if="backups && backups.archives.length === 0">
+      <p class="text-center py-8 text-gray-500 text-xs">No backup archives found.</p>
+    </template>
+  </div>
+
+  <!-- WAL Status Card -->
+  <div class="rounded-xl border bg-gray-800/60 overflow-hidden"
+       :class="walStatus && !walStatus.healthy ? 'border-amber-500/50' : 'border-gray-700'">
+    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-hdd text-primary-light text-xs"></i>
+        <p class="text-xs font-bold text-gray-200">Database File Health</p>
+        <template x-if="walStatus && !walStatus.healthy">
+          <span class="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-400">⚠ WAL Growing</span>
+        </template>
+        <template x-if="walStatus && walStatus.healthy">
+          <span class="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">● Healthy</span>
+        </template>
+      </div>
+      <button @click="fetchWalStatus()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-400 hover:text-gray-200 transition">
+        <i class="fas fa-sync-alt text-[10px]" :class="walLoading ? 'animate-spin' : ''"></i>
+      </button>
+    </div>
+    <div x-show="walLoading" class="px-5 py-4 text-center text-gray-500 text-xs"><i class="fas fa-sync-alt animate-spin mr-2"></i>Loading…</div>
+    <template x-if="walStatus">
+      <div class="flex flex-wrap gap-6 px-5 py-4">
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Main DB</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="walStatus.db_size_mb + ' MB'"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">WAL File</p>
+          <p class="text-base font-black font-mono" :class="walStatus.wal_size_mb > 50 ? 'text-amber-400' : 'text-gray-100'" x-text="walStatus.wal_size_mb + ' MB'"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Total on Disk</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="walStatus.total_size_mb + ' MB'"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Journal Mode</p>
+          <p class="text-sm font-black font-mono text-gray-300" x-text="walStatus.journal_mode.toUpperCase()"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">WAL Lag</p>
+          <p class="text-sm font-black font-mono" :class="walStatus.wal_lag_pages > 1000 ? 'text-amber-400' : 'text-gray-300'" x-text="walStatus.wal_lag_pages + ' pages'"></p>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  </div><!-- end sysTab=storage -->
+
+  <!-- ╔══════════════════════════════════════════════════╗
+       ║  DATABASE TAB — DB Browser                        ║
+       ╚══════════════════════════════════════════════════╝ -->
+  <div x-show="sysTab === 'database'" class="space-y-5">
+
+  <!-- ══ 3. DATABASE BROWSER ═══════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-table text-primary-light text-xs"></i>
+        <p class="text-xs font-bold text-gray-200">Database Browser</p>
+        <template x-if="dbSizeMb > 0">
+          <span class="text-[10px] text-gray-500">— <span x-text="dbSizeMb + ' MB'"></span> on disk</span>
+        </template>
+      </div>
+      <button @click="fetchDbTables()"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-400 hover:text-gray-200 transition">
+        <i class="fas fa-sync-alt text-[10px]" :class="dbLoading ? 'animate-spin' : ''"></i>
+      </button>
+    </div>
+
+    <!-- ── TOP: Table List ───────────────────────────────────────────────── -->
+    <div class="border-b border-gray-700">
+      <!-- Sort header -->
+      <div class="grid gap-0 border-b border-gray-700/60 bg-gray-800/80 text-[8px] font-black uppercase tracking-widest text-gray-600"
+           style="grid-template-columns: 2fr 1fr 1fr 1fr;">
+        <button @click="setDbSort('name')" class="px-3 py-1.5 text-left hover:text-gray-300 transition flex items-center gap-1">
+          Table <i class="fas text-[7px]" :class="sortIcon('name')"></i>
+        </button>
+        <button @click="setDbSort('row_count')" class="px-2 py-1.5 text-right hover:text-gray-300 transition flex items-center justify-end gap-1">
+          Rows <i class="fas text-[7px]" :class="sortIcon('row_count')"></i>
+        </button>
+        <button @click="setDbSort('size_bytes')" class="px-2 py-1.5 text-right hover:text-gray-300 transition flex items-center justify-end gap-1">
+          Size <i class="fas text-[7px]" :class="sortIcon('size_bytes')"></i>
+        </button>
+        <button @click="setDbSort('last_updated')" class="px-2 py-1.5 text-right hover:text-gray-300 transition flex items-center justify-end gap-1">
+          Updated <i class="fas text-[7px]" :class="sortIcon('last_updated')"></i>
+        </button>
+      </div>
+      <!-- Table rows -->
+      <div class="overflow-y-auto" style="max-height: 220px;">
+        <div x-show="dbLoading" class="px-4 py-4 text-center text-gray-500 text-xs">
+          <i class="fas fa-sync-alt animate-spin"></i>
+        </div>
+        <template x-for="tbl in sortedDbTables" :key="tbl.name">
+          <button @click="browseTable(tbl.name)"
+                  class="w-full grid gap-0 text-left hover:bg-gray-700/40 transition border-b border-gray-700/20"
+                  style="grid-template-columns: 2fr 1fr 1fr 1fr;"
+                  :class="selectedTable === tbl.name ? 'bg-primary/10 border-l-2 border-l-primary' : ''">
+            <span class="px-3 py-1.5 text-[10px] font-mono"
+                  :class="selectedTable === tbl.name ? 'text-primary-light font-bold' : 'text-gray-300'"
+                  x-text="tbl.name"></span>
+            <span class="px-2 py-1.5 text-[9px] text-right text-gray-500 font-mono"
+                  x-text="tbl.row_count >= 0 ? tbl.row_count.toLocaleString() : '?'"></span>
+            <span class="px-2 py-1.5 text-[9px] text-right font-mono"
+                  :class="tbl.size_bytes > 1048576 ? 'text-amber-400' : 'text-gray-600'"
+                  x-text="formatBytes(tbl.size_bytes)"></span>
+            <span class="px-2 py-1.5 text-[8px] text-right text-gray-600"
+                  :title="tbl.last_updated"
+                  x-text="formatDateShort(tbl.last_updated)"></span>
+          </button>
+        </template>
+        <div x-show="!dbLoading && dbTables.length === 0" class="px-4 py-4 text-center text-gray-500 text-xs">No tables found.</div>
+      </div>
+    </div>
+
+    <!-- ── BOTTOM: Row Browser ───────────────────────────────────────────── -->
+    <div class="border-b border-gray-700">
+      <div x-show="!selectedTable" class="px-4 py-6 text-center text-gray-600 text-xs">
+        <i class="fas fa-hand-pointer mr-2"></i>Select a table above to browse its rows
+      </div>
+
+      <template x-if="selectedTable && tableData">
+        <div>
+          <!-- Pagination bar -->
+          <div class="px-4 py-2 bg-gray-800/30 flex items-center justify-between border-b border-gray-700/40">
+            <p class="text-[10px] text-gray-500">
+              <span class="text-gray-300 font-bold font-mono" x-text="selectedTable"></span>
+              — rows <span x-text="tableOffset + 1"></span>–<span x-text="Math.min(tableOffset + tableLimit, tableData.total)"></span>
+              of <span x-text="tableData.total.toLocaleString()"></span>
+            </p>
+            <div class="flex gap-2">
+              <button @click="tablePrev()" :disabled="tableOffset === 0 || tableLoading"
+                      class="px-2 py-1 rounded border border-gray-600 text-[10px] text-gray-400 hover:text-gray-200 disabled:opacity-40 transition">
+                <i class="fas fa-chevron-left"></i>
+              </button>
+              <button @click="tableNext()" :disabled="tableOffset + tableLimit >= tableData.total || tableLoading"
+                      class="px-2 py-1 rounded border border-gray-600 text-[10px] text-gray-400 hover:text-gray-200 disabled:opacity-40 transition">
+                <i class="fas fa-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+          <!-- Data table -->
+          <div class="overflow-auto" style="max-height: 280px;">
+            <div x-show="tableLoading" class="py-6 text-center text-gray-500 text-xs"><i class="fas fa-sync-alt animate-spin"></i></div>
+            <table x-show="!tableLoading" class="w-full text-xs">
+              <thead class="sticky top-0 bg-gray-800 border-b border-gray-700 z-10">
+                <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+                  <template x-for="col in tableData.columns" :key="col">
+                    <th class="px-3 py-2 text-left whitespace-nowrap" x-text="col"></th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(row, ri) in tableData.rows" :key="ri">
+                  <tr class="border-b border-gray-700/20 hover:bg-gray-800/40" :class="ri % 2 === 1 ? 'bg-gray-800/20' : ''">
+                    <template x-for="(cell, ci) in row" :key="ci">
+                      <td class="px-3 py-1.5 text-gray-400 max-w-xs truncate font-mono text-[10px]"
+                          :title="String(cell ?? '')"
+                          x-text="cell !== null ? String(cell).substring(0, 120) : 'null'"></td>
+                    </template>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+
+      <div x-show="selectedTable && tableLoading && !tableData" class="px-4 py-6 text-center text-gray-500 text-xs">
+        <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading…
+      </div>
+    </div>
+
+    <!-- ── SQL Query CLI ─────────────────────────────────────────────────── -->
+    <div x-data="{
+      sqlInput: '',
+      sqlResult: null,
+      sqlError: null,
+      sqlRunning: false,
+      async runQuery() {
+        if (!this.sqlInput.trim()) return;
+        this.sqlRunning = true; this.sqlResult = null; this.sqlError = null;
+        try {
+          const r = await fetchJSON('api/system/db/query', {
+            method: 'POST',
+            body: JSON.stringify({ sql: this.sqlInput.trim(), limit: 200 }),
+          });
+          this.sqlResult = r;
+        } catch(e) { this.sqlError = e.message || 'Query failed'; }
+        finally { this.sqlRunning = false; }
+      }
+    }" class="p-4 space-y-3">
+      <div class="flex items-center gap-2 mb-1">
+        <i class="fas fa-terminal text-primary-light text-xs"></i>
+        <p class="text-xs font-bold text-gray-300">SQL Query</p>
+        <span class="text-[9px] text-gray-600 border border-gray-700 px-1.5 py-0.5 rounded uppercase tracking-widest font-bold">Read-only</span>
+      </div>
+      <div class="flex gap-2">
+        <textarea x-model="sqlInput"
+                  @keydown.ctrl.enter.prevent="runQuery()"
+                  placeholder="SELECT * FROM gateway_metrics ORDER BY id DESC LIMIT 10"
+                  rows="2"
+                  class="flex-1 bg-gray-900/80 border border-gray-600 rounded-lg px-3 py-2 text-[11px] font-mono text-gray-300 placeholder-gray-700 focus:outline-none focus:border-primary/60 resize-y"></textarea>
+        <button @click="runQuery()" :disabled="sqlRunning || !sqlInput.trim()"
+                class="px-4 py-2 text-xs font-semibold rounded-lg bg-primary/20 border border-primary/30 text-primary-light hover:bg-primary/30 transition disabled:opacity-40 flex items-center gap-2 self-start">
+          <i class="fas" :class="sqlRunning ? 'fa-sync-alt animate-spin' : 'fa-play'"></i>
+          Run
+        </button>
+      </div>
+      <p class="text-[9px] text-gray-700">Ctrl+Enter to run · SELECT / PRAGMA / EXPLAIN / WITH only · auto-limited to 200 rows</p>
+
+      <!-- Error -->
+      <template x-if="sqlError">
+        <div class="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-[10px] text-red-400 font-mono" x-text="sqlError"></div>
+      </template>
+
+      <!-- Results -->
+      <template x-if="sqlResult">
+        <div class="rounded-lg border border-gray-700 overflow-hidden">
+          <div class="px-3 py-1.5 bg-gray-800 border-b border-gray-700 flex items-center gap-3 text-[10px]">
+            <span class="text-gray-400"><span class="text-gray-200 font-bold" x-text="sqlResult.row_count"></span> row(s)</span>
+            <span class="text-gray-400"><span class="text-gray-200 font-bold" x-text="sqlResult.elapsed_ms"></span> ms</span>
+            <template x-if="sqlResult.truncated">
+              <span class="text-amber-400 font-bold">⚠ Results truncated at 200 rows</span>
+            </template>
+          </div>
+          <div x-show="sqlResult.columns.length > 0" class="overflow-auto" style="max-height: 240px;">
+            <table class="w-full text-xs">
+              <thead class="sticky top-0 bg-gray-800 border-b border-gray-700">
+                <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+                  <template x-for="col in sqlResult.columns" :key="col">
+                    <th class="px-3 py-1.5 text-left whitespace-nowrap" x-text="col"></th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(row, ri) in sqlResult.rows" :key="ri">
+                  <tr class="border-b border-gray-700/20 hover:bg-gray-800/40" :class="ri % 2 === 1 ? 'bg-gray-800/20' : ''">
+                    <template x-for="(cell, ci) in row" :key="ci">
+                      <td class="px-3 py-1 font-mono text-[10px] text-gray-400 max-w-xs truncate"
+                          :title="String(cell ?? '')"
+                          x-text="cell !== null ? String(cell).substring(0, 120) : 'null'"></td>
+                    </template>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <div x-show="sqlResult.columns.length === 0" class="px-3 py-3 text-[10px] text-gray-500 italic">No rows returned.</div>
+        </div>
+      </template>
+    </div>
+
+  </div>
+
+  </div><!-- end sysTab=database -->
+
+
+  <!-- ╔══════════════════════════════════════════════════╗
+       ║  ENVIRONMENT TAB — Python deps + Process Control  ║
+       ╚══════════════════════════════════════════════════╝ -->
+  <div x-show="sysTab === 'environment'" class="space-y-5">
+
+  <!-- ══ 4. ENVIRONMENT PROFILE ════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center gap-2">
+      <i class="fas fa-layer-group text-primary-light text-xs"></i>
+      <p class="text-xs font-bold text-gray-200">Python Environment</p>
+    </div>
+    <div class="flex gap-8 px-5 py-4 border-b border-gray-700/50 bg-gray-800/30">
+      <div>
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Python Runtime</p>
+        <p class="text-base font-black font-mono text-gray-100" x-text="pythonVersion ? 'v' + pythonVersion : 'Loading…'"></p>
+      </div>
+      <div>
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Dependency Count</p>
+        <p class="text-base font-black font-mono text-gray-100" x-text="dependencies.length + ' packages'"></p>
+      </div>
+    </div>
+    <div class="px-5 py-3 border-b border-gray-700/30">
+      <div class="relative max-w-xs">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-600 text-[11px]"></i>
+        <input type="text" x-model="searchQuery" placeholder="Search dependencies…"
+               class="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+      </div>
+    </div>
+    <div class="overflow-x-auto max-h-60 overflow-y-auto">
+      <table class="w-full text-xs">
+        <thead class="sticky top-0 bg-gray-800 border-b border-gray-700 z-10">
+          <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+            <th class="px-4 py-2.5 text-left">Package</th>
+            <th class="px-4 py-2.5 text-left">Version</th>
+            <th class="px-4 py-2.5 text-left">Last Installed</th>
+            <th class="px-4 py-2.5 text-left">Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr x-show="loading"><td colspan="4" class="text-center py-10 text-gray-500">
+            <i class="fas fa-sync-alt animate-spin mr-2"></i>Scanning environment…
+          </td></tr>
+          <tr x-show="!loading && filteredDeps.length === 0"><td colspan="4" class="text-center py-8 text-gray-500">No matching dependencies.</td></tr>
+          <template x-for="(dep, i) in filteredDeps" :key="dep.name">
+            <tr class="border-b border-gray-700/30 hover:bg-gray-800/40" :class="i % 2 === 1 ? 'bg-gray-800/20' : ''">
+              <td class="px-4 py-2.5 font-bold font-mono text-gray-100" x-text="dep.name"></td>
+              <td class="px-4 py-2.5">
+                <span class="px-2 py-0.5 rounded bg-primary/10 text-primary-light text-[10px] font-bold" x-text="dep.version"></span>
+              </td>
+              <td class="px-4 py-2.5 font-mono text-gray-500 text-[10px]" x-text="dep.installed_at"></td>
+              <td class="px-4 py-2.5 text-gray-400 max-w-xs truncate" :title="dep.summary" x-text="dep.summary || 'No description provided.'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══ 5. PROCESS CONTROL ════════════════════════════════════════════════ -->
+  <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-microchip text-primary-light text-xs"></i>
+        <p class="text-xs font-bold text-gray-200">Process Control Center</p>
+      </div>
+      <div class="flex gap-2">
+        <button @click="showRestartModal = true"
+                title="Force-restart the HA Integrator application"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-xs font-bold hover:bg-red-500/20 transition">
+          <svg class="icon w-3 h-3" aria-hidden="true" viewBox="0 0 24 24"><use href="#power"/></svg>Restart App
+        </button>
+        <button @click="fetchProcesses()"
+                title="Refresh process list"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-400 hover:text-gray-200 transition">
+          <svg class="icon w-3 h-3" :class="refreshingProcesses ? 'animate-spin' : ''" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="flex gap-8 px-5 py-4 border-b border-gray-700/50 bg-gray-800/30">
+      <div>
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Uptime</p>
+        <p class="text-base font-black font-mono text-gray-100" x-text="formatUptime(processMetrics.uptime_seconds)"></p>
+      </div>
+      <div>
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Memory Usage</p>
+        <p class="text-base font-black font-mono text-gray-100" x-text="processMetrics.memory_mb ? processMetrics.memory_mb + ' MB' : '--'"></p>
+      </div>
+      <div>
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">CPU Load</p>
+        <p class="text-base font-black font-mono text-gray-100" x-text="processMetrics.cpu_percent ? processMetrics.cpu_percent + '%' : '--'"></p>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead class="bg-gray-800 border-b border-gray-700">
+          <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+            <th class="px-4 py-2.5 text-left w-[45%]">Task Worker</th>
+            <th class="px-4 py-2.5 text-left">State</th>
+            <th class="px-4 py-2.5 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr x-show="tasks.length === 0"><td colspan="3" class="text-center py-8 text-gray-500">No tasks detected.</td></tr>
+          <template x-for="(task, idx) in tasks" :key="idx">
+            <tr class="border-b border-gray-700/30 hover:bg-gray-800/40">
+              <td class="px-4 py-3 font-bold font-mono text-gray-100 flex items-center gap-2">
+                <i class="fas fa-microchip text-gray-600 text-[10px]"></i>
+                <span x-text="task.name"></span>
+              </td>
+              <td class="px-4 py-3">
+                <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                      :class="task.status === 'Running' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' : 'bg-red-500/15 border-red-500/30 text-red-400'">
+                  <span class="w-1.5 h-1.5 rounded-full" :class="task.status === 'Running' ? 'bg-emerald-400' : 'bg-red-400'"></span>
+                  <span x-text="task.status"></span>
+                </span>
+              </td>
+              <td class="px-4 py-3 text-right">
+                <button @click="restartTask(task.name)" :disabled="restartingTask === task.name"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-300 hover:border-amber-500/40 hover:text-amber-400 transition disabled:opacity-50 ml-auto">
+                  <i class="text-[10px] fas" :class="restartingTask === task.name ? 'fa-sync-alt animate-spin' : 'fa-power-off'"></i>
+                  Restart
+                </button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══ Prune Confirmation Modal ══════════════════════════════════════════ -->
+  <div x-show="showPruneModal" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-md rounded-2xl border border-amber-500/30 bg-gray-900 shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-800 flex items-center gap-3">
+        <i class="fas fa-broom text-amber-400"></i>
+        <h4 class="font-bold text-amber-400">Confirm Metrics Prune</h4>
+      </div>
+      <div class="p-6 space-y-4">
+        <p class="text-sm text-gray-400">This will permanently delete all telemetry rows older than
+          <span class="text-white font-bold" x-text="featuresEdit.metrics_retention_days + ' days'"></span>
+          from the database.
+        </p>
+        <div class="rounded-lg bg-amber-500/10 border border-amber-500/20 px-4 py-3 flex items-start gap-3">
+          <i class="fas fa-exclamation-circle text-amber-400 mt-0.5 flex-shrink-0"></i>
+          <p class="text-xs text-amber-400 font-bold leading-relaxed">
+            A backup will be taken first. Then DELETE + VACUUM will run — the DB file will be
+            rewritten and disk space reclaimed. This may take 30–60 seconds.
+          </p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="showPruneModal = false"
+                class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Cancel</button>
+        <button @click="confirmRunPrune()"
+                class="flex-[2] py-2.5 rounded-xl bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 transition flex items-center justify-center gap-2">
+          <i class="fas fa-broom text-[10px]"></i>Run Prune + VACUUM
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Restore Confirmation Modal ════════════════════════════════════════ -->
+  <div x-show="showRestoreModal" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-lg rounded-2xl border border-emerald-500/30 bg-gray-900 shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+        <h4 class="font-bold text-emerald-400 flex items-center gap-2">
+          <i class="fas fa-undo"></i>Restore from Backup
+        </h4>
+        <button @click="showRestoreModal = false; restoring = false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-6 space-y-4">
+        <!-- Backup info -->
+        <template x-if="restoreTarget">
+          <div>
+            <p class="text-xs text-gray-400 mb-3">Restoring from:</p>
+            <div class="rounded-lg bg-gray-800 border border-gray-700 px-4 py-3 font-mono text-sm text-gray-200" x-text="restoreTarget.filename"></div>
+          </div>
+        </template>
+        <!-- Probe result -->
+        <template x-if="restoreTarget && restoreTarget.probe">
+          <div class="rounded-lg bg-gray-800/60 border border-gray-700/60 px-4 py-3 space-y-2">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-2">Backup Contents</p>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <p class="text-[9px] text-gray-600 mb-0.5">Gateways</p>
+                <p class="font-bold font-mono" :class="restoreTarget.probe.gateway_count > 0 ? 'text-emerald-400' : 'text-red-400'" x-text="restoreTarget.probe.gateway_count"></p>
+              </div>
+              <div>
+                <p class="text-[9px] text-gray-600 mb-0.5">Credentials</p>
+                <p class="font-bold font-mono text-gray-200" x-text="restoreTarget.probe.credential_count"></p>
+              </div>
+              <div>
+                <p class="text-[9px] text-gray-600 mb-0.5">Metrics Rows</p>
+                <p class="font-bold font-mono text-gray-400" x-text="restoreTarget.probe.metrics_rows?.toLocaleString() ?? '—'"></p>
+              </div>
+            </div>
+            <template x-if="restoreTarget.probe.gateways && restoreTarget.probe.gateways.length > 0">
+              <div class="mt-2">
+                <p class="text-[9px] text-gray-600 mb-1">Gateways in this backup:</p>
+                <template x-for="gw in restoreTarget.probe.gateways" :key="gw.short_id">
+                  <p class="text-[10px] font-mono text-emerald-300" x-text="`${gw.name} — ${gw.full_serial}`"></p>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="restoreTarget && !restoreTarget.probe">
+          <div class="text-[10px] text-gray-600 italic"><i class="fas fa-sync-alt animate-spin mr-1"></i>Inspecting backup…</div>
+        </template>
+        <div class="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 flex items-start gap-3">
+          <i class="fas fa-exclamation-circle text-red-400 mt-0.5 flex-shrink-0"></i>
+          <p class="text-xs text-red-400 font-bold leading-relaxed">
+            All data written since this backup was taken will be lost. The current database will be saved to
+            <span class="font-mono">config.db.pre_restore_bak</span> before restore. The app will restart automatically.
+          </p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="showRestoreModal = false; restoring = false"
+                class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Cancel</button>
+        <button @click="confirmRestore()" :disabled="restoring"
+                class="flex-[2] py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+          <i class="text-[10px] fas" :class="restoring ? 'fa-sync-alt animate-spin' : 'fa-undo'"></i>
+          <span x-text="restoring ? 'Restoring…' : 'Confirm Restore & Restart'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Restart Confirmation Modal ════════════════════════════════════════ -->
+
+  <div x-show="showRestartModal" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-md rounded-2xl border border-red-500/30 bg-gray-900 shadow-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+        <h4 class="font-bold text-red-400 flex items-center gap-2">
+          <i class="fas fa-exclamation-triangle"></i>System Restart
+        </h4>
+        <button @click="showRestartModal=false" aria-label="Close" class="text-gray-500 hover:text-gray-300 transition"><svg class="icon w-4 h-4" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg></button>
+      </div>
+      <div class="p-6 space-y-4">
+        <p class="text-sm text-gray-400 leading-relaxed">Are you sure you want to hard-restart the entire HA Integrator application?</p>
+        <div class="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 flex items-start gap-3">
+          <i class="fas fa-exclamation-circle text-red-400 mt-0.5 flex-shrink-0"></i>
+          <p class="text-xs text-red-400 font-bold leading-relaxed">
+            All cached memory handles will be flushed instantly. The web server will go offline before respawning.
+          </p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="showRestartModal=false"
+                class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Cancel</button>
+        <button @click="confirmRestartApplication()" :disabled="restartingApp"
+                class="flex-[2] py-2.5 rounded-xl bg-red-500 text-white text-xs font-bold hover:bg-red-600 transition disabled:opacity-50 flex items-center justify-center gap-2">
+          <i class="text-[10px] fas" :class="restartingApp ? 'fa-sync-alt animate-spin' : 'fa-power-off'"></i>
+          <span x-text="restartingApp ? 'Terminating…' : 'Force Restart'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- end sysTab=environment -->
+
+  <!-- ╔══════════════════════════════════════════════════════════════════╗
+       ║  DEVICE REGISTRY TAB                                             ║
+       ╚══════════════════════════════════════════════════════════════════╝ -->
+  <div x-show="sysTab === 'device-registry'" x-data="deviceRegistry()" x-init="init()" class="space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-sm font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-microchip text-primary-light text-xs"></i>
+          FranklinWH Device Registry
+        </h2>
+        <p class="text-[10px] text-gray-400 mt-0.5">
+          Hardware model catalog seeded from <code class="text-primary-light">device_catalog_seed.json</code>.
+          Edits (overrides, notes, tombstones) survive re-seeding.
+        </p>
+      </div>
+      <button @click="loadAll()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 transition">
+        <i class="fas fa-sync-alt text-[10px]" :class="loading ? 'animate-spin' : ''"></i>
+        Refresh
+      </button>
+    </div>
+
+    <div x-show="loading" class="text-center text-gray-500 text-xs py-6">
+      <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading…
+    </div>
+    <div x-show="error && !loading" class="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-300" x-text="error"></div>
+
+    <!-- Models Table -->
+    <template x-if="!loading">
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+        <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-server text-primary-light text-xs"></i>
+            <p class="text-xs font-bold text-gray-200">Device Models</p>
+            <span class="text-[9px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400 font-mono" x-text="models.length + ' rows'"></span>
+          </div>
+          <button @click="openAddModel()"
+                  class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/30 text-xs text-primary-light hover:bg-primary/30 transition">
+            <i class="fas fa-plus text-[10px]"></i> Add Model
+          </button>
+        </div>
+        <div class="px-3 pt-2"><input type="text" x-model="tableFilter" placeholder="Filter models…" class="w-64 bg-gray-900 border border-gray-700 rounded px-3 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"></div>
+        <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+          <table class="w-full text-[10px]" style="min-width:max-content">
+            <thead class="sticky top-0 z-10">
+              <tr class="border-b border-gray-700 bg-gray-800">
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold cursor-pointer hover:text-gray-200 select-none" @click="sortBy('hw_version_int')">
+                  HW Ver <i class="fas text-[7px] ml-1" :class="sortKey === 'hw_version_int' ? (sortDir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'"></i>
+                </th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold cursor-pointer hover:text-gray-200 select-none" @click="sortBy('api_field_name')">
+                  API Field <i class="fas text-[7px] ml-1" :class="sortKey === 'api_field_name' ? (sortDir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'"></i>
+                </th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold">Real HW</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold">Class</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold cursor-pointer hover:text-gray-200 select-none" @click="sortBy('name')">
+                  Name <i class="fas text-[7px] ml-1" :class="sortKey === 'name' ? (sortDir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'"></i>
+                </th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold cursor-pointer hover:text-gray-200 select-none" @click="sortBy('sku')">
+                  SKU <i class="fas text-[7px] ml-1" :class="sortKey === 'sku' ? (sortDir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'"></i>
+                </th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold cursor-pointer hover:text-gray-200 select-none" @click="sortBy('model')">
+                  Model <i class="fas text-[7px] ml-1" :class="sortKey === 'model' ? (sortDir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'"></i>
+                </th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold whitespace-nowrap">Max Amps</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold whitespace-nowrap">kW nom/pk</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold whitespace-nowrap">kWh</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold whitespace-nowrap">MPPT</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold cursor-pointer hover:text-gray-200 whitespace-nowrap" @click="sortBy('country_id')">
+                  Country <i class="fas text-[7px] ml-1" :class="sortKey === 'country_id' ? (sortDir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort'"></i>
+                </th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold">Gen</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold">Source</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold">Status</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-semibold sticky right-0 bg-gray-800 z-10 shadow-[-4px_0_8px_rgba(0,0,0,0.4)]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="m in filteredModels" :key="m.hw_version_int">
+                <tr class="border-b border-gray-700/40 hover:bg-gray-700/20 transition"
+                    :class="m.is_deprecated ? 'opacity-50' : ''">
+                  <td class="px-3 py-2 font-mono text-primary-light font-bold" x-text="m.hw_version_int"></td>
+                  <td class="px-3 py-2 font-mono text-gray-500 text-[9px]" x-text="m.api_field_name || '—'"></td>
+                  <td class="px-3 py-2 font-mono text-gray-400" x-text="m.real_hw_version || '—'"></td>
+                  <td class="px-3 py-2">
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold"
+                          :class="m.device_class === 'agate' ? 'bg-blue-500/20 text-blue-300' : 'bg-green-500/20 text-green-300'"
+                          x-text="deviceClassLabel(m.device_class)"></span>
+                  </td>
+                  <td class="px-3 py-2 text-gray-200 font-medium">
+                    <span x-text="m.user_override_name || m.name"></span>
+                    <span x-show="m.user_override_name" class="ml-1 text-[8px] text-amber-400 font-bold">OVR</span>
+                  </td>
+                  <td class="px-3 py-2 font-mono text-gray-400 text-[9px] whitespace-nowrap" x-text="m.sku || '—'"></td>
+                  <td class="px-3 py-2 text-gray-300 whitespace-nowrap" x-text="m.model || '—'"></td>
+                  <td class="px-3 py-2 font-mono text-gray-400 text-[9px] whitespace-nowrap" x-text="m.max_service_amps ? m.max_service_amps+'A' : '—'"></td>
+                  <td class="px-3 py-2 font-mono text-gray-400 text-[9px] whitespace-nowrap" x-text="m.nominal_kw ? m.nominal_kw+'/'+( m.peak_kw||'?')+' kW' : '—'"></td>
+                  <td class="px-3 py-2 font-mono text-gray-400 text-[9px] whitespace-nowrap" x-text="m.rated_kwh ? m.rated_kwh+' kWh' : '—'"></td>
+                  <td class="px-3 py-2 whitespace-nowrap"><template x-if="m.has_mppt"><span class="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300" x-text="(m.mppt_count||'?')+'x MPPT'"></span></template><template x-if="!m.has_mppt"><span class="text-gray-600 text-[9px]">—</span></template></td>
+                  <td class="px-3 py-2 text-gray-400 whitespace-nowrap" x-text="countryLabel(m.country_id)"></td>
+                  <td class="px-3 py-2 text-gray-400 whitespace-nowrap" x-text="m.generation ? 'Gen ' + m.generation : '—'"></td>
+                  <td class="px-3 py-2">
+                    <span class="px-1.5 py-0.5 rounded text-[9px]"
+                          :class="m.source === 'user' ? 'bg-amber-500/20 text-amber-300' : 'bg-gray-700 text-gray-500'"
+                          x-text="m.source"></span>
+                  </td>
+                  <td class="px-3 py-2">
+                    <template x-if="m.is_deprecated">
+                      <span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[9px] font-bold">DEPRECATED</span>
+                    </template>
+                    <template x-if="!m.is_deprecated">
+                      <span class="text-green-400 text-[9px]">Active</span>
+                    </template>
+                  </td>
+                  <td class="px-3 py-2 sticky right-0 bg-gray-900/95 shadow-[-4px_0_8px_rgba(0,0,0,0.5)] z-10">
+                    <div class="flex items-center gap-1 flex-wrap">
+                    <button @click="openEditModel(m)" title="Edit" class="px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-[9px] transition"><i class="fas fa-pencil-alt"></i></button>
+                    <button @click="toggleAccessories(m.hw_version_int)" title="Accessories" class="px-2 py-1 rounded text-[9px] transition" :class="expandedAccessories===m.hw_version_int?'bg-purple-500/40 text-purple-200':'bg-purple-500/20 text-purple-300 hover:bg-purple-500/30'"><i class="fas fa-plug"></i></button>
+                    <template x-if="!m.is_deprecated">
+                      <button @click="tombstoneModel(m)" title="Mark deprecated"
+                              class="px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/40 text-[9px] transition">
+                        <i class="fas fa-ban"></i>
+                      </button>
+                    </template>
+                    <template x-if="m.is_deprecated">
+                      <button @click="restoreModel(m)" title="Restore"
+                              class="px-2 py-1 rounded bg-green-500/20 text-green-400 hover:bg-green-500/40 text-[9px] transition">
+                        <i class="fas fa-undo"></i>
+                      </button>
+                    </template>
+                    </div>
+                  </td>
+                </tr>
+              <tr x-show="expandedAccessories===m.hw_version_int" x-cloak>
+                <td colspan="12" class="px-4 py-3 bg-purple-900/10 border-b border-purple-700/20">
+                  <p class="text-[9px] font-bold text-purple-400 mb-2">COMPATIBLE ACCESSORIES</p>
+                  <span x-show="accessoriesLoading" class="text-[10px] text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>Loading…</span>
+                  <div class="flex flex-wrap gap-2">
+                    <template x-for="acc in modelAccessories" :key="acc.accessory_id">
+                      <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-purple-700/40 bg-purple-500/10 text-[10px]"><i class="fas fa-plug text-purple-400 text-[9px]"></i><span class="font-semibold text-purple-200" x-text="acc.name"></span><span class="px-1 py-0.5 rounded bg-purple-900/50 text-purple-300 text-[9px]" x-text="acc.accessory_type"></span><span x-show="acc.circuit_count" x-text="acc.circuit_count+'c'" class="text-gray-500"></span></span>
+                    </template>
+                    <span x-show="!accessoriesLoading&&modelAccessories.length===0" class="text-[10px] text-gray-500 italic">None found.</span>
+                  </div>
+                </td>
+              </tr>
+              </template>
+              <tr x-show="models.length === 0">
+                <td colspan="12" class="px-3 py-6 text-center text-gray-500 text-xs">No models — seed may not have loaded</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+
+    <!-- Accessories Table -->
+    <template x-if="!loading">
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+        <div class="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-plug text-primary-light text-xs"></i>
+            <p class="text-xs font-bold text-gray-200">Accessories</p>
+            <span class="text-[9px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400 font-mono" x-text="accessories.length + ' rows'"></span>
+          </div>
+          <button @click="openAddAccessory()"
+                  class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/30 text-xs text-primary-light hover:bg-primary/30 transition">
+            <i class="fas fa-plus text-[10px]"></i> Add Accessory
+          </button>
+        </div>
+        <div class="mx-4 mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 flex items-start gap-2">
+          <i class="fas fa-info-circle text-amber-400 mt-0.5 flex-shrink-0 text-[10px]"></i>
+          <p class="text-[10px] text-amber-300/80">
+            <strong>Accessory IDs are FHAI-internal</strong> (200–302 convention).
+            The FranklinWH API returns only <code>accessoryType</code> (3=generator, 4=smart_circuits).
+            Accessories detected via feature flags have no API type.
+          </p>
+        </div>
+        <div class="overflow-x-auto mt-3">
+          <table class="w-full text-[10px]">
+            <thead>
+              <tr class="border-b border-gray-700 bg-gray-800/80 text-[9px] uppercase tracking-wider">
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Internal ID</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">API Type</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Name</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">SKU</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Type</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Ver</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Compatible aGates</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Compatible aPower</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Circuits</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">V2L</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Country</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Note</th>
+                <th class="px-3 py-2 text-left text-gray-400 font-bold">Edit</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="a in accessories" :key="a.accessory_id">
+                <tr class="border-b border-gray-700/40 hover:bg-gray-700/20 transition">
+                  <td class="px-3 py-2 font-mono text-primary-light font-bold" x-text="a.accessory_id"></td>
+                  <td class="px-3 py-2">
+                    <template x-if="a.api_accessory_type !== null && a.api_accessory_type !== undefined">
+                      <span class="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[9px]" x-text="a.api_accessory_type"></span>
+                    </template>
+                    <template x-if="a.api_accessory_type === null || a.api_accessory_type === undefined">
+                      <span class="text-gray-600 text-[9px]">flag</span>
+                    </template>
+                  </td>
+                  <td class="px-3 py-2 text-gray-200 font-medium" x-text="a.name"></td>
+                  <td class="px-3 py-2 font-mono text-gray-400 text-[9px]" x-text="a.sku || '—'"></td>
+                  <td class="px-3 py-2">
+                    <span class="px-1.5 py-0.5 rounded text-[9px] bg-purple-500/20 text-purple-300" x-text="a.accessory_type"></span>
+                  </td>
+                  <td class="px-3 py-2 text-gray-400" x-text="a.version ? 'V' + a.version : '—'"></td>
+                  <td class="px-3 py-2">
+                    <template x-if="a.compatible_agates === 'ALL'">
+                      <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 text-[8px] font-black uppercase">ALL</span>
+                    </template>
+                    <template x-if="a.compatible_agates !== 'ALL'">
+                      <div class="flex flex-wrap gap-1 max-w-[120px]">
+                        <template x-for="hw in parseCompat(a.compatible_agates)" :key="hw">
+                          <span class="px-1 py-0.25 rounded bg-blue-500/10 text-blue-300 text-[8px] font-mono border border-blue-500/20" x-text="hw"></span>
+                        </template>
+                        <span x-show="!a.compatible_agates || a.compatible_agates === '[]'" class="text-gray-700">—</span>
+                      </div>
+                    </template>
+                  </td>
+                  <td class="px-3 py-2">
+                    <template x-if="a.compatible_apower === 'ALL'">
+                      <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 text-[8px] font-black uppercase">ALL</span>
+                    </template>
+                    <template x-if="a.compatible_apower !== 'ALL'">
+                      <div class="flex flex-wrap gap-1 max-w-[120px]">
+                        <template x-for="hw in parseCompat(a.compatible_apower)" :key="hw">
+                          <span class="px-1 py-0.25 rounded bg-green-500/10 text-green-300 text-[8px] font-mono border border-green-500/20" x-text="hw"></span>
+                        </template>
+                        <span x-show="!a.compatible_apower || a.compatible_apower === '[]'" class="text-gray-700">—</span>
+                      </div>
+                    </template>
+                  </td>
+                  <td class="px-3 py-2 text-gray-400" x-text="a.circuit_count || '—'"></td>
+                  <td class="px-3 py-2 text-[9px]">
+                    <template x-if="a.v2l_port"><span class="text-green-400 font-bold">Port</span></template>
+                    <template x-if="a.v2l_enables"><span class="text-emerald-400 font-bold ml-1">Enables</span></template>
+                    <template x-if="!a.v2l_port && !a.v2l_enables"><span class="text-gray-600">—</span></template>
+                  </td>
+                  <td class="px-3 py-2 text-gray-400" x-text="countryLabel(a.country_id)"></td>
+                  <td class="px-3 py-2 text-gray-500 italic text-[9px]" x-text="a.user_note || '—'"></td>
+                  <td class="px-3 py-2">
+                    <button @click="openEditAccessory(a)" title="Edit note"
+                            class="px-2 py-1 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-[9px] transition">
+                      <i class="fas fa-pencil-alt"></i>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="accessories.length === 0">
+                <td colspan="13" class="px-3 py-6 text-center text-gray-500 text-xs">No accessories found</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+
+    <!-- Add Model Modal -->
+    <div x-show="showAddModelModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-4" @click.stop>
+        <h3 class="text-sm font-bold text-gray-100"><i class="fas fa-plus-circle text-primary-light mr-2"></i>Add New Device Model</h3>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">HW Version Int *</label>
+            <input x-model.number="newModel.hw_version_int" type="number" placeholder="e.g. 105" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Device Class *</label>
+            <select x-model="newModel.device_class" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200">
+              <option value="agate">Gateway (aGate)</option><option value="apower">Battery (aPower)</option></select></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Country</label>
+            <select x-model.number="newModel.country_id" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200">
+              <option value="">Global</option><option value="1">CN</option><option value="2">US</option><option value="3">AU</option></select></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Name *</label>
+            <input x-model="newModel.name" type="text" placeholder="e.g. aGate X" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">SKU</label>
+            <input x-model="newModel.sku" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Model String</label>
+            <input x-model="newModel.model" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Real HW Ver (API)</label>
+            <input x-model="newModel.real_hw_version" type="text" placeholder="FHP1.2" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Generation</label>
+            <input x-model.number="newModel.generation" type="number" placeholder="1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">AC Hz</label>
+            <input x-model.number="newModel.ac_hz" type="number" placeholder="50 or 60" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Max Service Amps</label>
+            <input x-model.number="newModel.max_service_amps" type="number" placeholder="200" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Max AC Amps</label>
+            <input x-model.number="newModel.max_ac_amps" type="number" placeholder="20.8" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Nominal kW</label>
+            <input x-model.number="newModel.nominal_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Peak kW</label>
+            <input x-model.number="newModel.peak_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Rated kWh</label>
+            <input x-model.number="newModel.rated_kwh" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Has MPPT</label>
+            <select x-model.number="newModel.has_mppt" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"><option value="0">No</option><option value="1">Yes</option></select></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">MPPT Count</label>
+            <input x-model.number="newModel.mppt_count" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">MPPT Max kW</label>
+            <input x-model.number="newModel.mppt_max_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">AC Solar Max kW</label>
+            <input x-model.number="newModel.ac_solar_max_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">SKU Region</label>
+            <input x-model="newModel.sku_region" type="text" placeholder="AU / US" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Type</label>
+            <input x-model="newModel.type" type="text" placeholder="standard" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Notes</label>
+            <textarea x-model="newModel.notes" rows="2" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200 resize-none"></textarea></div>
+        </div>
+        <p x-show="modalError" class="text-[10px] text-red-400" x-text="modalError"></p>
+        <div class="flex gap-3">
+          <button @click="showAddModelModal=false" class="flex-1 py-2 rounded-xl border border-gray-600 text-xs text-gray-400">Cancel</button>
+          <button @click="submitAddModel()" :disabled="modalSaving" class="flex-[2] py-2 rounded-xl bg-primary text-white text-xs font-bold disabled:opacity-50">
+            <span x-text="modalSaving ? 'Saving…' : 'Add Model'"></span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Model Modal -->
+    <div x-show="showEditModelModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-4" @click.stop>
+        <h3 class="text-sm font-bold text-gray-100"><i class="fas fa-pencil-alt text-primary-light mr-2"></i>Edit Model HW <span class="text-primary-light font-mono" x-text="editingModel.hw_version_int"></span></h3>
+        <div class="grid grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+          <div class="col-span-2"><p class="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">Identity</p></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Name</label>
+            <input x-model="editingModel.name" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Display Name Override</label>
+            <input x-model="editingModel.user_override_name" type="text" placeholder="Leave blank to use seeded name" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">SKU</label>
+            <input x-model="editingModel.sku" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Model String</label>
+            <input x-model="editingModel.model" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Real HW Ver</label>
+            <input x-model="editingModel.real_hw_version" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">SKU Region</label>
+            <input x-model="editingModel.sku_region" type="text" placeholder="AU / US" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Country</label>
+            <select x-model.number="editingModel.country_id" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"><option value="">Global</option><option value="1">CN</option><option value="2">US</option><option value="3">AU</option></select></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Generation</label>
+            <input x-model.number="editingModel.generation" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div class="col-span-2"><p class="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 mt-1">Electrical Spec</p></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">AC Hz</label>
+            <input x-model.number="editingModel.ac_hz" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Max Service Amps</label>
+            <input x-model.number="editingModel.max_service_amps" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Max AC Amps</label>
+            <input x-model.number="editingModel.max_ac_amps" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Nominal kW</label>
+            <input x-model.number="editingModel.nominal_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Peak kW</label>
+            <input x-model.number="editingModel.peak_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Rated kWh</label>
+            <input x-model.number="editingModel.rated_kwh" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">AC Solar Max kW</label>
+            <input x-model.number="editingModel.ac_solar_max_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div class="col-span-2"><p class="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 mt-1">MPPT</p></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Has MPPT</label>
+            <select x-model.number="editingModel.has_mppt" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"><option value="0">No</option><option value="1">Yes</option></select></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">MPPT Count</label>
+            <input x-model.number="editingModel.mppt_count" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">MPPT Max kW</label>
+            <input x-model.number="editingModel.mppt_max_kw" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">MPPT Isc A</label>
+            <input x-model.number="editingModel.mppt_isc_amps" type="number" step="0.1" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Admin Note</label>
+            <textarea x-model="editingModel.user_note" rows="2" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200 resize-none"></textarea></div>
+        </div>
+        <p x-show="modalError" class="text-[10px] text-red-400" x-text="modalError"></p>
+        <div class="flex gap-3">
+          <button @click="showEditModelModal=false" class="flex-1 py-2 rounded-xl border border-gray-600 text-xs text-gray-400">Cancel</button>
+          <button @click="submitEditModel()" :disabled="modalSaving" class="flex-[2] py-2 rounded-xl bg-primary text-white text-xs font-bold disabled:opacity-50">
+            <span x-text="modalSaving ? 'Saving…' : 'Save Changes'"></span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Accessory Modal -->
+    <div x-show="showEditAccessoryModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-lg space-y-4" @click.stop>
+        <h3 class="text-sm font-bold text-gray-100"><i class="fas fa-pencil-alt text-primary-light mr-2"></i>Edit Accessory #<span class="text-primary-light font-mono" x-text="editingAccessory.accessory_id"></span></h3>
+        <div class="grid grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+          <div class="col-span-2"><p class="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">Identity</p></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Name</label>
+            <input x-model="editingAccessory.name" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Type</label>
+            <select x-model="editingAccessory.accessory_type" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200">
+              <option value="smart_circuits">smart_circuits</option><option value="generator">generator</option>
+              <option value="apbox">apbox</option><option value="ahub">ahub</option>
+              <option value="mac1">mac1</option><option value="split_ct">split_ct</option></select></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">SKU</label>
+            <input x-model="editingAccessory.sku" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">API Type (3/4/blank)</label>
+            <input x-model.number="editingAccessory.api_accessory_type" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Country</label>
+            <select x-model.number="editingAccessory.country_id" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200">
+              <option value="">Global</option><option value="1">CN</option><option value="2">US</option><option value="3">AU</option></select></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Version</label>
+            <input x-model.number="editingAccessory.version" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div class="col-span-2"><p class="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 mt-1">Compatibility</p>
+            <p class="text-[9px] text-gray-600 mb-2">Select compatible Gateway models (aGate) and Battery models (aPower)</p></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Compatible aGates</label>
+            <div class="bg-gray-800 border border-gray-600 rounded-lg p-2 max-h-24 overflow-y-auto space-y-1">
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :value="'ALL'" x-model="editingAccessory._agatesAll" @change="if($event.target.checked) editingAccessory._agatesSelected=[]" class="accent-blue-500"><span class="text-xs text-gray-300">ALL</span></label>
+              <template x-for="m in models.filter(m=>m.device_class==='agate')" :key="m.hw_version_int">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" :value="m.hw_version_int" x-model="editingAccessory._agatesSelected" :disabled="editingAccessory._agatesAll" class="accent-blue-500">
+                  <span class="text-xs text-gray-300" x-text="m.hw_version_int+' — '+(m.user_override_name||m.name)"></span>
+                </label>
+              </template>
+            </div></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Compatible aPower</label>
+            <div class="bg-gray-800 border border-gray-600 rounded-lg p-2 max-h-24 overflow-y-auto space-y-1">
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :value="'ALL'" x-model="editingAccessory._apowerAll" @change="if($event.target.checked) editingAccessory._apowerSelected=[]" class="accent-blue-500"><span class="text-xs text-gray-300">ALL</span></label>
+              <template x-for="m in models.filter(m=>m.device_class==='apower')" :key="m.hw_version_int">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" :value="m.hw_version_int" x-model="editingAccessory._apowerSelected" :disabled="editingAccessory._apowerAll" class="accent-blue-500">
+                  <span class="text-xs text-gray-300" x-text="m.hw_version_int+' — '+(m.user_override_name||m.name)"></span>
+                </label>
+              </template>
+            </div></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Admin Note</label>
+            <textarea x-model="editingAccessory.user_note" rows="2" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200 resize-none"></textarea></div>
+        </div>
+        <p x-show="modalError" class="text-[10px] text-red-400" x-text="modalError"></p>
+        <div class="flex gap-3">
+          <button @click="showEditAccessoryModal=false" class="flex-1 py-2 rounded-xl border border-gray-600 text-xs text-gray-400">Cancel</button>
+          <button @click="submitEditAccessory()" :disabled="modalSaving" class="flex-[2] py-2 rounded-xl bg-primary text-white text-xs font-bold disabled:opacity-50">
+            <span x-text="modalSaving ? 'Saving…' : 'Save Changes'"></span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Accessory Modal -->
+    <div x-show="showAddAccessoryModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-4" @click.stop>
+        <h3 class="text-sm font-bold text-gray-100"><i class="fas fa-plus-circle text-primary-light mr-2"></i>Add New Accessory</h3>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Internal ID *</label>
+            <input x-model.number="newAccessory.accessory_id" type="number" placeholder="305" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">API Type (3/4/blank)</label>
+            <input x-model.number="newAccessory.api_accessory_type" type="number" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Name *</label>
+            <input x-model="newAccessory.name" type="text" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200"></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Type *</label>
+            <select x-model="newAccessory.accessory_type" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200">
+              <option value="smart_circuits">smart_circuits</option><option value="generator">generator</option>
+              <option value="apbox">apbox</option><option value="ahub">ahub</option>
+              <option value="mac1">mac1</option><option value="split_ct">split_ct</option></select></div>
+          <div><label class="text-[10px] text-gray-400 font-semibold block mb-1">Country</label>
+            <select x-model.number="newAccessory.country_id" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200">
+              <option value="">Global</option><option value="1">CN</option><option value="2">US</option><option value="3">AU</option></select></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Compatible aGates</label>
+            <div class="bg-gray-800 border border-gray-600 rounded-lg p-2 max-h-24 overflow-y-auto space-y-1">
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" x-model="newAccessory._agatesAll" @change="if($event.target.checked) newAccessory._agatesSelected=[]" class="accent-blue-500"><span class="text-xs text-gray-300">ALL</span></label>
+              <template x-for="m in models.filter(m=>m.device_class==='agate')" :key="m.hw_version_int">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" :value="m.hw_version_int" x-model="newAccessory._agatesSelected" :disabled="newAccessory._agatesAll" class="accent-blue-500">
+                  <span class="text-xs text-gray-300" x-text="m.hw_version_int+' — '+(m.user_override_name||m.name)"></span>
+                </label>
+              </template>
+            </div></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Compatible aPower</label>
+            <div class="bg-gray-800 border border-gray-600 rounded-lg p-2 max-h-24 overflow-y-auto space-y-1">
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" x-model="newAccessory._apowerAll" @change="if($event.target.checked) newAccessory._apowerSelected=[]" class="accent-blue-500"><span class="text-xs text-gray-300">ALL</span></label>
+              <template x-for="m in models.filter(m=>m.device_class==='apower')" :key="m.hw_version_int">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" :value="m.hw_version_int" x-model="newAccessory._apowerSelected" :disabled="newAccessory._apowerAll" class="accent-blue-500">
+                  <span class="text-xs text-gray-300" x-text="m.hw_version_int+' — '+(m.user_override_name||m.name)"></span>
+                </label>
+              </template>
+            </div></div>
+          <div class="col-span-2"><label class="text-[10px] text-gray-400 font-semibold block mb-1">Notes</label>
+            <textarea x-model="newAccessory.notes" rows="2" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-200 resize-none"></textarea></div>
+        </div>
+        <p x-show="modalError" class="text-[10px] text-red-400" x-text="modalError"></p>
+        <div class="flex gap-3">
+          <button @click="showAddAccessoryModal=false" class="flex-1 py-2 rounded-xl border border-gray-600 text-xs text-gray-400">Cancel</button>
+          <button @click="submitAddAccessory()" :disabled="modalSaving" class="flex-[2] py-2 rounded-xl bg-primary text-white text-xs font-bold disabled:opacity-50">
+            <span x-text="modalSaving ? 'Saving…' : 'Add Accessory'"></span></button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end sysTab=device-registry -->
+
+
+
+
+</div><!-- end x-data systemSupport -->
+<!-- systemSupport() loaded from admin.html head -->
+
+<script>
+function deviceRegistry() {
+  return {
+    models: [], accessories: [],
+    loading: false, error: null,
+    showAddModelModal: false, showEditModelModal: false,
+    showEditAccessoryModal: false, showAddAccessoryModal: false,
+    modalSaving: false, modalError: null,
+    editingModel: {}, editingAccessory: {},
+    newModel: { hw_version_int: null, device_class: 'agate', name: '', sku: '', model: '', real_hw_version: '', generation: null, country_id: null, notes: '' },
+    newAccessory: { accessory_id: null, name: '', accessory_type: 'smart_circuits', api_accessory_type: null, country_id: null, compatible_agates: '', compatible_apower: '', notes: '' },
+
+    async init() { await this.loadAll(); },
+
+    async loadAll() {
+      this.loading = true; this.error = null;
+      try {
+        const [mRes, aRes] = await Promise.all([fetch('api/models/devices'), fetch('api/models/accessories')]);
+        this.models = (await mRes.json()).models || [];
+        this.accessories = (await aRes.json()).accessories || [];
+      } catch (e) { this.error = 'Failed to load Device Registry: ' + e.message; }
+      finally { this.loading = false; }
+    },
+
+    countryLabel(id) { return { 1: 'CN', 2: 'US', 3: 'AU' }[id] || 'Global'; },
+    deviceClassLabel(cls) { return cls === 'agate' ? 'Gateway' : cls === 'apower' ? 'Battery' : cls; },
+    parseCompat(v) {
+      if (!v || v === 'ALL') return [];
+      try { const arr = JSON.parse(v); return Array.isArray(arr) ? arr : []; } catch { return []; }
+    },
+
+    tableFilter:'', sortKey:'hw_version_int', sortDir:1,
+    sortBy(k){if(this.sortKey===k)this.sortDir*=-1;else{this.sortKey=k;this.sortDir=1;}},
+    get filteredModels(){let r=[...this.models];if(this.tableFilter.trim()){const q=this.tableFilter.toLowerCase();r=r.filter(m=>Object.values(m).some(v=>String(v??'').toLowerCase().includes(q)));}const k=this.sortKey,d=this.sortDir;r.sort((a,b)=>{const av=a[k]??'',bv=b[k]??'';return typeof av==='number'&&typeof bv==='number'?(av-bv)*d:String(av).localeCompare(String(bv))*d;});return r;},
+    expandedAccessories:null, modelAccessories:[], accessoriesLoading:false,
+    async toggleAccessories(hw){if(this.expandedAccessories===hw){this.expandedAccessories=null;this.modelAccessories=[];return;}this.expandedAccessories=hw;this.modelAccessories=[];this.accessoriesLoading=true;try{const r=await fetch('api/models/devices/'+hw+'/accessories');const d=await r.json();this.modelAccessories=d.accessories||[];}catch(e){this.modelAccessories=[];}finally{this.accessoriesLoading=false;}},
+    openAddModel() { this.newModel = { hw_version_int: null, device_class: 'agate', name: '', sku: '', model: '', api_field_name:'', real_hw_version: '', generation: null, country_id: null, has_mppt:0, type:'', sku_region:'', max_service_amps:null, nominal_kw:null, peak_kw:null, max_ac_amps:null, ac_hz:null, mppt_count:null, mppt_isc_amps:null, mppt_imp_amps:null, mppt_max_kw:null, ac_solar_max_kw:null, rated_kwh:null, notes: '' }; this.modalError = null; this.showAddModelModal = true; },
+    async submitAddModel() {
+      if (!this.newModel.hw_version_int || !this.newModel.name) { this.modalError = 'HW Version Int and Name are required.'; return; }
+      this.modalSaving = true; this.modalError = null;
+      try {
+        const payload = Object.fromEntries(Object.entries(this.newModel).filter(([,v]) => v !== null && v !== ''));
+        const res = await fetch('api/models/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        this.showAddModelModal = false; await this.loadAll();
+      } catch (e) { this.modalError = e.message; } finally { this.modalSaving = false; }
+    },
+    openEditModel(m) { this.editingModel = { hw_version_int:m.hw_version_int, user_override_name:m.user_override_name||'', user_note:m.user_note||'', name:m.name||'', sku:m.sku||'', model:m.model||'', real_hw_version:m.real_hw_version||'', country_id:m.country_id??'', generation:m.generation??'', has_mppt:m.has_mppt??0, type:m.type||'', sku_region:m.sku_region||'', max_service_amps:m.max_service_amps??'', nominal_kw:m.nominal_kw??'', peak_kw:m.peak_kw??'', max_ac_amps:m.max_ac_amps??'', ac_hz:m.ac_hz??'', mppt_count:m.mppt_count??'', mppt_isc_amps:m.mppt_isc_amps??'', mppt_imp_amps:m.mppt_imp_amps??'', mppt_max_kw:m.mppt_max_kw??'', ac_solar_max_kw:m.ac_solar_max_kw??'', rated_kwh:m.rated_kwh??'', notes:m.notes||'' }; this.modalError=null; this.showEditModelModal=true; },
+    async submitEditModel() {
+      this.modalSaving = true; this.modalError = null;
+      try {
+        const payload=Object.fromEntries(Object.entries(this.editingModel).filter(([k,v])=>k!=='hw_version_int'&&v!==''&&v!==null));['country_id','generation','max_service_amps','nominal_kw','peak_kw','max_ac_amps','ac_hz','mppt_count','mppt_isc_amps','mppt_imp_amps','mppt_max_kw','ac_solar_max_kw','rated_kwh','has_mppt'].forEach(k=>{if(payload[k]!==undefined&&payload[k]!=='')payload[k]=Number(payload[k]);});
+        const res = await fetch('api/models/devices/' + this.editingModel.hw_version_int, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        this.showEditModelModal = false; await this.loadAll();
+      } catch (e) { this.modalError = e.message; } finally { this.modalSaving = false; }
+    },
+    async tombstoneModel(m) {
+      if (!confirm('Mark ' + m.name + ' (HW ' + m.hw_version_int + ') as deprecated?')) return;
+      await fetch('api/models/devices/' + m.hw_version_int + '/tombstone', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: 'Via Device Registry UI' }) });
+      await this.loadAll();
+    },
+    async restoreModel(m) { await fetch('api/models/devices/' + m.hw_version_int + '/restore', { method: 'POST' }); await this.loadAll(); },
+
+    openEditAccessory(a) {
+      const parseCompat = (v) => {
+        if (!v || v === 'ALL') return [];
+        try { const arr = JSON.parse(v); return Array.isArray(arr) ? arr : []; } catch { return []; }
+      };
+      this.editingAccessory = {
+        accessory_id: a.accessory_id, name: a.name || '', accessory_type: a.accessory_type || 'smart_circuits',
+        sku: a.sku || '', api_accessory_type: a.api_accessory_type ?? '', country_id: a.country_id ?? '',
+        version: a.version ?? '', user_note: a.user_note || '',
+        _agatesAll: a.compatible_agates === 'ALL', _agatesSelected: parseCompat(a.compatible_agates),
+        _apowerAll: a.compatible_apower === 'ALL', _apowerSelected: parseCompat(a.compatible_apower),
+      };
+      this.modalError = null; this.showEditAccessoryModal = true;
+    },
+    async submitEditAccessory() {
+      this.modalSaving = true; this.modalError = null;
+      try {
+        const ea = this.editingAccessory;
+        const payload = {
+          name: ea.name || null, accessory_type: ea.accessory_type || null,
+          sku: ea.sku || null, user_note: ea.user_note || null,
+          country_id: ea.country_id !== '' ? Number(ea.country_id) : null,
+          api_accessory_type: ea.api_accessory_type !== '' ? Number(ea.api_accessory_type) : null,
+          version: ea.version !== '' ? Number(ea.version) : null,
+          compatible_agates: ea._agatesAll ? 'ALL' : (ea._agatesSelected.length ? JSON.stringify(ea._agatesSelected) : null),
+          compatible_apower: ea._apowerAll ? 'ALL' : (ea._apowerSelected.length ? JSON.stringify(ea._apowerSelected) : null),
+        };
+        const res = await fetch('api/models/accessories/' + ea.accessory_id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(Object.entries(payload).filter(([,v])=>v!==null))) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        this.showEditAccessoryModal = false; await this.loadAll();
+      } catch (e) { this.modalError = e.message; } finally { this.modalSaving = false; }
+    },
+    openAddAccessory() { this.newAccessory = { accessory_id: null, name: '', accessory_type: 'smart_circuits', sku: '', api_accessory_type: null, country_id: null, version: null, _agatesAll: false, _agatesSelected: [], _apowerAll: false, _apowerSelected: [], notes: '' }; this.modalError = null; this.showAddAccessoryModal = true; },
+    async submitAddAccessory() {
+      if (!this.newAccessory.accessory_id || !this.newAccessory.name) { this.modalError = 'Internal ID and Name are required.'; return; }
+      this.modalSaving = true; this.modalError = null;
+      try {
+        const na = this.newAccessory;
+        const payload = Object.fromEntries(Object.entries(na).filter(([k,v]) => !k.startsWith('_') && v !== null && v !== ''));
+        payload.compatible_agates = na._agatesAll ? 'ALL' : (na._agatesSelected.length ? JSON.stringify(na._agatesSelected) : null);
+        payload.compatible_apower = na._apowerAll ? 'ALL' : (na._apowerSelected.length ? JSON.stringify(na._apowerSelected) : null);
+        const res = await fetch('api/models/accessories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(Object.entries(payload).filter(([,v])=>v!==null))) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed');
+        this.showAddAccessoryModal = false; await this.loadAll();
+      } catch (e) { this.modalError = e.message; } finally { this.modalSaving = false; }
+    },
+  };
+}
+
+
+</script>
+

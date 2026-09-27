@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InkyPi2 Dashboard | FranklinWH</title>
+  <link rel="icon" type="image/x-icon" href="static/favicon.ico">
+  <style>
+    /* Premium High-Contrast E-Ink Parchment Style */
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&family=JetBrains+Mono:wght@500;700&display=swap');
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #f4f3e8; /* Classic e-ink paper warm tone */
+      color: #000000;
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    /* Outer layout container */
+    .dashboard-container {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border: 3px solid #000000;
+      background-color: #f4f3e8;
+    }
+
+    /* Header block */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      border-bottom: 3px solid #000000;
+    }
+
+    .header-left h1 {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      text-transform: uppercase;
+    }
+
+    .header-left p {
+      font-size: 13px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      margin-top: 2px;
+      text-transform: uppercase;
+    }
+
+    .header-center {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .soc-pill {
+      border: 2px solid #000000;
+      padding: 6px 12px;
+      font-weight: 800;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .header-right {
+      text-align: right;
+    }
+
+    .header-right .temp {
+      font-size: 24px;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .header-right .cond {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Core grid structure */
+    .main-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      flex: 1;
+    }
+
+    .col-left {
+      grid-column: span 7;
+      border-right: 3px solid #000000;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .col-right {
+      grid-column: span 5;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Metrics Panels */
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      flex: 1;
+    }
+
+    .metric-card {
+      padding: 20px;
+      border-bottom: 2px solid #000000;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .metric-card:nth-child(odd) {
+      border-right: 2px solid #000000;
+    }
+
+    .metric-card .label {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #333333;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .metric-card .value-container {
+      margin-top: 10px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+
+    .metric-card .value {
+      font-size: 36px;
+      font-weight: 900;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: -1px;
+    }
+
+    .metric-card .unit {
+      font-size: 16px;
+      font-weight: 800;
+      margin-left: 4px;
+    }
+
+    .metric-card .subtext {
+      font-size: 12px;
+      font-weight: 600;
+      color: #444444;
+      margin-top: 4px;
+    }
+
+    /* Weather details list */
+    .details-list {
+      padding: 20px;
+      border-bottom: 3px solid #000000;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .details-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      border-bottom: 1px dashed #aaaaaa;
+      padding-bottom: 6px;
+    }
+
+    .details-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .details-item .item-label {
+      color: #333333;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .details-item .item-value {
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Temperature Curve Section */
+    .curve-section {
+      padding: 20px;
+      border-bottom: 3px solid #000000;
+      display: flex;
+      flex-direction: column;
+      background-color: #fcfbf4;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chart-container {
+      width: 100%;
+      height: 140px;
+      position: relative;
+    }
+
+    .chart-container svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Forecast row at the bottom */
+    .forecast-section {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      background-color: #fcfbf4;
+    }
+
+    .forecast-day {
+      padding: 16px 8px;
+      text-align: center;
+      border-right: 2px solid #000000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 160px;
+    }
+
+    .forecast-day:last-child {
+      border-right: none;
+    }
+
+    .forecast-day .day-name {
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .forecast-day .weather-icon {
+      width: 36px;
+      height: 36px;
+      margin: 10px 0;
+    }
+
+    .forecast-day .temp-range {
+      font-size: 12px;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .forecast-day .solar-yield {
+      margin-top: 10px;
+      font-size: 11px;
+      font-weight: 800;
+      background-color: #000000;
+      color: #f4f3e8;
+      padding: 3px 6px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Helper SVG icons */
+    .icon-svg {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: #000000;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* Loading overlay */
+    #loading {
+      position: fixed;
+      inset: 0;
+      background-color: #f4f3e8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      font-weight: 800;
+      font-size: 16px;
+      gap: 12px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #000000;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Loading State -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Syncing inkyPi2 E-Ink Dashboard...</div>
+  </div>
+
+  <div class="dashboard-container">
+    
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <h1 id="gateway-name">FRANKLINWH GATEWAY</h1>
+        <p id="current-datetime">WAITING FOR REFRESH...</p>
+      </div>
+      <div class="header-center">
+        <div class="soc-pill">
+          <!-- Battery icon -->
+          <svg class="icon-svg" style="width:20px;height:20px" viewBox="0 0 24 24"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"/><line x1="22" y1="11" x2="22" y2="13"/></svg>
+          <span id="battery-soc">--</span>%
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="temp"><span id="weather-temp">--</span>°C</div>
+        <div class="cond" id="weather-condition">LOADING...</div>
+      </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="main-grid">
+      
+      <!-- Left side: Live telemetry flow metrics -->
+      <div class="col-left">
+        <div class="flow-grid">
+          
+          <!-- Solar Power Card -->
+          <div class="metric-card">
+            <div class="label">
+              <svg class="icon-svg" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M2 12h20M12 2v20M7 2v20M17 2v20"/></svg>
+              Solar PV
+            </div>
+            <div class="value-container">
+              <div>
+                <span class="value" id="solar-kw">--</span>
+                <span class="unit">kW</span>
+              </div>
+            </div>
+            <div class="subtext">Produced Today: <span id="solar-yield-today" style="font-family:'JetBrains Mono', monospace;font-weight:800">--</span> kWh</div>
+          </div>
+
+          <!-- Battery Power Card -->
+          <div class="metric-card">
+            <div class="label">
+              <svg class="icon-svg" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 12h12"/></svg>
+              Battery Storage
+            </div>
+            <div class="value-container">
+              <div>
+                <span class="value" id="battery-kw">--</span>
+                <span class="unit">kW</span>
+              </div>
+            </div>
+            <div class="subtext" id="battery-status-desc">Standby</div>
+            <div class="subtext" style="font-size:11px; margin-top: 8px; border-top: 1px dashed #aaaaaa; padding-top: 8px;">
+              Today - Chg: <span id="battery-charge-today">--</span> kWh | Dischg: <span id="battery-discharge-today">--</span> kWh
+            </div>
+            <div class="subtext" id="battery-flow-details" style="font-size:10px; color:#555555; margin-top: 4px; font-family: 'JetBrains Mono', monospace;">
+              NO ACTIVE FLOW
+            </div>
+          </div>
+
+          <!-- Home Load Card -->
+          <div class="metric-card">
+            <div class="label">
+              <svg class="icon-svg" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+              Home Load
+            </div>
+            <div class="value-container">
+              <div>
+                <span class="value" id="home-kw">--</span>
+                <span class="unit">kW</span>
+              </div>
+            </div>
+            <div class="subtext">House usage flow</div>
+          </div>
+
+          <!-- Grid Power Card -->
+          <div class="metric-card" style="border-bottom:none">
+            <div class="label">
+              <svg class="icon-svg" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              Grid Power
+            </div>
+            <div class="value-container">
+              <div>
+                <span class="value" id="grid-kw">--</span>
+                <span class="unit">kW</span>
+              </div>
+            </div>
+            <div class="subtext" id="grid-status-desc">Grid Active</div>
+            <div class="subtext" style="font-size:11px; margin-top: 8px; border-top: 1px dashed #aaaaaa; padding-top: 8px;">
+              Today - Import: <span id="grid-import-today">--</span> kWh | Export: <span id="grid-export-today">--</span> kWh
+            </div>
+            <div class="subtext" id="grid-flow-details" style="font-size:10px; color:#555555; margin-top: 4px; font-family: 'JetBrains Mono', monospace;">
+              NO ACTIVE EXPORT
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Right side: Weather details & Dynamic Pricing / TOU -->
+      <div class="col-right">
+        
+        <!-- Weather metrics details list -->
+        <div class="details-list">
+          <div class="section-title">
+            <svg class="icon-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            Weather Metrics
+          </div>
+          <div class="details-item">
+            <span class="item-label">Temp range</span>
+            <span class="item-value"><span id="weather-temp-low">--</span>° / <span id="weather-temp-high">--</span>°</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Humidity</span>
+            <span class="item-value"><span id="weather-humidity">--</span>%</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Wind speed</span>
+            <span class="item-value"><span id="weather-wind">--</span> km/h</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Atmosphere</span>
+            <span class="item-value"><span id="weather-pressure">--</span> hPa</span>
+          </div>
+        </div>
+
+        <!-- Pricing details list (dynamic / flat rate indicators) -->
+        <div class="details-list" id="pricing-card" style="border-bottom:none">
+          <div class="section-title">
+            <svg class="icon-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            Energy Pricing
+          </div>
+          <div class="details-item">
+            <span class="item-label" id="pricing-provider-label">Utility Tariff</span>
+            <span class="item-value" id="pricing-mode-badge" style="text-transform:uppercase">FLAT RATE</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Import rate</span>
+            <span class="item-value"><span id="pricing-import">--</span> ¢/kWh</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Export FiT</span>
+            <span class="item-value"><span id="pricing-export">--</span> ¢/kWh</span>
+          </div>
+        </div>
+
+        <!-- TOU Card: only visible in Time-of-Use mode -->
+        <div class="details-list" id="tou-schedule-card" style="display:none; border-bottom:none">
+          <div class="section-title">
+            <svg class="icon-svg" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            TOU Schedule
+          </div>
+          <div class="details-item">
+            <span class="item-label">Current Dispatch</span>
+            <span class="item-value" id="tou-current-dispatch">--</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Time Remaining</span>
+            <span class="item-value" id="tou-remaining-time">--</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Next Dispatch</span>
+            <span class="item-value" id="tou-next-dispatch">--</span>
+          </div>
+          <div class="details-item">
+            <span class="item-label">Next Period Time</span>
+            <span class="item-value" id="tou-next-time">--</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Temperature curve (24H Projection Chart) -->
+    <div class="curve-section">
+      <div class="section-title">
+        <svg class="icon-svg" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        24H Temperature Profile (°C)
+      </div>
+      <div class="chart-container" id="curve-chart-container">
+        <!-- SVG dynamic graph path will be drawn here -->
+        <svg id="temp-svg-chart">
+          <path id="chart-line-path" fill="none" stroke="#000000" stroke-width="3" stroke-linecap="round"></path>
+          <g id="chart-points"></g>
+          <g id="chart-labels"></g>
+          <g id="chart-icons"></g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- 7-Day Solar Forecast & Weather row -->
+    <div class="forecast-section" id="forecast-row">
+      <!-- 7 forecast day blocks will be populated dynamically -->
+    </div>
+
+  </div>
+
+  <script>
+    // ── e-Ink Glyphs Dictionary (Simple, Crisp line-art) ──────────────────────
+    const WEATHER_GLYPHS = {
+      sunny: `<svg viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`,
+      cloudy: `<svg viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 15h9a5 5 0 0 0 1-9.9z"/></svg>`,
+      'cloudy-rain': `<svg viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2"><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/><path d="M8 19v3M12 19v3M16 19v3"/></svg>`,
+      lightning: `<svg viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2"><path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 8.58"/><path d="M13 11l-4 6h6l-3 5"/></svg>`,
+      windy: `<svg viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2"><path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/></svg>`
+    };
+
+    function getWeatherGlyph(iconName) {
+      const icon = String(iconName).toLowerCase();
+      if (icon.includes('rain') || icon.includes('drizzle')) return WEATHER_GLYPHS['cloudy-rain'];
+      if (icon.includes('storm') || icon.includes('lightning') || icon.includes('thunder')) return WEATHER_GLYPHS['lightning'];
+      if (icon.includes('cloud') || icon.includes('overcast')) return WEATHER_GLYPHS['cloudy'];
+      if (icon.includes('wind')) return WEATHER_GLYPHS['windy'];
+      return WEATHER_GLYPHS['sunny'];
+    }
+
+    // ── Telemetry Fetch & Render Pipeline ─────────────────────────────────────
+    async function refreshDashboard() {
+      // Propagation of authentication token query param
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token') || urlParams.get('api_key');
+      
+      const ingressPath = '{{ base_path }}';
+      let fetchUrl = ingressPath + '/api/dashboard/inkypi2';
+      if (token) {
+        fetchUrl += '?token=' + encodeURIComponent(token);
+      }
+
+      try {
+        const response = await fetch(fetchUrl);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        
+        // Hide loading overlay on first successful load
+        document.getElementById('loading').style.display = 'none';
+
+        // 1. Render Header / Gateway
+        const gw = data.gateway || {};
+        document.getElementById('gateway-name').textContent = (gw.name || 'FRANKLINWH GATEWAY').toUpperCase();
+        
+        const now = new Date();
+        const opModeStr = gw.operating_mode ? ' · ' + gw.operating_mode.toUpperCase() : '';
+        document.getElementById('current-datetime').textContent = (now.toLocaleString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }) + opModeStr).toUpperCase();
+
+        document.getElementById('battery-soc').textContent = gw.battery_soc != null ? Math.round(gw.battery_soc) : '--';
+
+        // 2. Render Flow Metrics
+        document.getElementById('solar-kw').textContent = gw.solar_kw != null ? gw.solar_kw.toFixed(2) : '0.00';
+        document.getElementById('solar-yield-today').textContent = gw.solar_today_kwh != null ? gw.solar_today_kwh.toFixed(1) : '0.0';
+        
+        const bKw = gw.battery_kw || 0.0;
+        document.getElementById('battery-kw').textContent = Math.abs(bKw).toFixed(2);
+        let bState = 'STANDBY';
+        if (bKw < -0.05) bState = 'CHARGING';
+        else if (bKw > 0.05) bState = 'DISCHARGING';
+        document.getElementById('battery-status-desc').textContent = bState;
+
+        // Today Battery charged/discharged
+        document.getElementById('battery-charge-today').textContent = gw.battery_charge_today != null ? gw.battery_charge_today.toFixed(1) : '0.0';
+        document.getElementById('battery-discharge-today').textContent = gw.battery_discharge_today != null ? gw.battery_discharge_today.toFixed(1) : '0.0';
+
+        // Detailed flow battery charging/discharging
+        let batFlowParts = [];
+        if (gw.solar_to_battery_kw > 0.01) {
+          batFlowParts.push('SOLAR CHG: ' + gw.solar_to_battery_kw.toFixed(2) + ' kW');
+        }
+        if (gw.grid_to_battery_kw > 0.01) {
+          batFlowParts.push('GRID CHG: ' + gw.grid_to_battery_kw.toFixed(2) + ' kW');
+        }
+        if (gw.battery_export_to_grid_kw > 0.01) {
+          batFlowParts.push('BAT TO GRID: ' + gw.battery_export_to_grid_kw.toFixed(2) + ' kW');
+        }
+        document.getElementById('battery-flow-details').textContent = batFlowParts.length > 0 ? batFlowParts.join(' | ') : 'NO ACTIVE FLOW';
+
+        document.getElementById('home-kw').textContent = gw.home_kw != null ? gw.home_kw.toFixed(2) : '0.00';
+        
+        const gKw = gw.grid_kw || 0.0;
+        document.getElementById('grid-kw').textContent = Math.abs(gKw).toFixed(2);
+        document.getElementById('grid-status-desc').textContent = gKw >= 0.05 ? 'IMPORTING FROM GRID' : (gKw <= -0.05 ? 'EXPORTING TO GRID' : 'GRID BALANCED');
+
+        // Today Grid imported/exported
+        document.getElementById('grid-import-today').textContent = gw.grid_import_today != null ? gw.grid_import_today.toFixed(1) : '0.0';
+        document.getElementById('grid-export-today').textContent = gw.grid_export_today != null ? gw.grid_export_today.toFixed(1) : '0.0';
+
+        // Detailed flow grid exporting
+        let gridFlowParts = [];
+        if (gw.solar_export_to_grid_kw > 0.01) {
+          gridFlowParts.push('PV EXP: ' + gw.solar_export_to_grid_kw.toFixed(2) + ' kW');
+        }
+        if (gw.battery_export_to_grid_kw > 0.01) {
+          gridFlowParts.push('BAT EXP: ' + gw.battery_export_to_grid_kw.toFixed(2) + ' kW');
+        }
+        document.getElementById('grid-flow-details').textContent = gridFlowParts.length > 0 ? gridFlowParts.join(' | ') : 'NO ACTIVE EXPORT';
+
+        // 3. Render Weather Panel
+        const weather = data.weather || {};
+        const currWeather = weather.current || {};
+        document.getElementById('weather-temp').textContent = currWeather.temp != null ? Math.round(currWeather.temp) : '--';
+        document.getElementById('weather-condition').textContent = (currWeather.condition || 'UNKNOWN').toUpperCase();
+
+        document.getElementById('weather-temp-low').textContent = currWeather.temp_low != null ? Math.round(currWeather.temp_low) : '--';
+        document.getElementById('weather-temp-high').textContent = currWeather.temp_high != null ? Math.round(currWeather.temp_high) : '--';
+        document.getElementById('weather-humidity').textContent = currWeather.humidity != null ? currWeather.humidity : '--';
+        document.getElementById('weather-wind').textContent = currWeather.wind != null ? Math.round(currWeather.wind) : '--';
+        document.getElementById('weather-pressure').textContent = currWeather.pressure != null ? currWeather.pressure : '--';
+
+        // 4. Render Pricing Details
+        const pricing = data.pricing || {};
+        if (pricing.provider === 'franklinwh_tou') {
+          document.getElementById('pricing-provider-label').textContent = 'FRANKLINWH TOU';
+          document.getElementById('pricing-mode-badge').textContent = (pricing.spike_status || 'TOU MODE').toUpperCase();
+        } else if (pricing.provider && pricing.provider !== 'flat') {
+          document.getElementById('pricing-provider-label').textContent = pricing.provider.toUpperCase() + ' DYNAMIC';
+          document.getElementById('pricing-mode-badge').textContent = (pricing.spike_status || 'NORMAL').toUpperCase();
+        } else {
+          document.getElementById('pricing-provider-label').textContent = 'FLAT RATE';
+          document.getElementById('pricing-mode-badge').textContent = 'STABLE';
+        }
+        document.getElementById('pricing-import').textContent = pricing.import_c_kwh != null ? pricing.import_c_kwh.toFixed(1) : '--';
+        document.getElementById('pricing-export').textContent = pricing.export_c_kwh != null ? pricing.export_c_kwh.toFixed(1) : '--';
+
+        // 5. TOU Schedule Card Display Logic
+        const inTou = (gw.operating_mode_id === 1 || String(gw.operating_mode).toLowerCase().includes('time-of-use') || String(gw.operating_mode).toLowerCase().includes('tou'));
+        if (inTou) {
+          document.getElementById('pricing-card').style.borderBottom = '3px solid #000000';
+          document.getElementById('tou-schedule-card').style.display = 'flex';
+          
+          const status = gw.status || {};
+          document.getElementById('tou-current-dispatch').textContent = status.current_dispatch || status.active_dispatch_name || 'NO ACTIVE DISPATCH';
+          document.getElementById('tou-remaining-time').textContent = status.dispatch_remaining || status.active_dispatch_remaining || '--';
+          document.getElementById('tou-next-dispatch').textContent = status.next_dispatch_name || 'NONE';
+          
+          let nextStart = status.next_dispatch_start || '';
+          let nextEnd = status.next_dispatch_end || '';
+          if (nextStart && nextEnd) {
+            document.getElementById('tou-next-time').textContent = nextStart + ' - ' + nextEnd;
+          } else if (nextStart) {
+            document.getElementById('tou-next-time').textContent = 'starts @ ' + nextStart;
+          } else {
+            document.getElementById('tou-next-time').textContent = '--';
+          }
+        } else {
+          document.getElementById('pricing-card').style.borderBottom = 'none';
+          document.getElementById('tou-schedule-card').style.display = 'none';
+        }
+
+        // 6. Draw Temperature Curve Chart (24H Forecast)
+        renderTemperatureCurve(weather.forecast || []);
+
+        // 7. Render 7-Day Solar Forecast & Weather Row
+        render7DayForecast(weather.forecast || [], data.solar_forecast || {});
+
+      } catch (err) {
+        console.error('InkyPi sync failure:', err);
+      }
+    }
+
+    // SVG Drawing function for 24h temperature curve
+    function renderTemperatureCurve(forecastList) {
+      const container = document.getElementById('curve-chart-container');
+      const svg = document.getElementById('temp-svg-chart');
+      const path = document.getElementById('chart-line-path');
+      const pointsGroup = document.getElementById('chart-points');
+      const labelsGroup = document.getElementById('chart-labels');
+      const iconsGroup = document.getElementById('chart-icons');
+
+      // Reset SVG
+      pointsGroup.innerHTML = '';
+      labelsGroup.innerHTML = '';
+      iconsGroup.innerHTML = '';
+
+      if (!forecastList || forecastList.length === 0) return;
+
+      const pointsCount = Math.min(8, forecastList.length);
+      const data = forecastList.slice(0, pointsCount);
+
+      // SVG Width and Height
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+      // Extract temp ranges
+      const temps = data.map(d => d.temp_high || d.temp_max || 20.0);
+      const maxTemp = Math.max(...temps) + 2;
+      const minTemp = Math.min(...temps) - 2;
+      const tempRange = maxTemp - minTemp;
+
+      // Layout boundary sizing
+      const paddingLeft = 40;
+      const paddingRight = 40;
+      const paddingTop = 40;
+      const paddingBottom = 40;
+
+      const chartWidth = width - paddingLeft - paddingRight;
+      const chartHeight = height - paddingTop - paddingBottom;
+
+      // Map data to coordinate pairs
+      const points = data.map((d, index) => {
+        const x = paddingLeft + (index / (pointsCount - 1)) * chartWidth;
+        const temp = d.temp_high || d.temp_max || 20.0;
+        const y = paddingTop + chartHeight - ((temp - minTemp) / tempRange) * chartHeight;
+        return { x, y, temp, item: d };
+      });
+
+      // Draw path line
+      let pathD = '';
+      points.forEach((p, idx) => {
+        if (idx === 0) pathD += `M ${p.x} ${p.y}`;
+        else pathD += ` L ${p.x} ${p.y}`;
+      });
+      path.setAttribute('d', pathD);
+
+      // Add points, values and icons
+      points.forEach((p, idx) => {
+        // Dot point
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', p.x);
+        circle.setAttribute('cy', p.y);
+        circle.setAttribute('r', '4');
+        circle.setAttribute('fill', '#000000');
+        pointsGroup.appendChild(circle);
+
+        // Temp Label (above dot)
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', p.x);
+        text.setAttribute('y', p.y - 10);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('font-family', 'JetBrains Mono, monospace');
+        text.setAttribute('font-size', '11px');
+        text.setAttribute('font-weight', '700');
+        text.setAttribute('fill', '#000000');
+        text.textContent = Math.round(p.temp) + '°';
+        labelsGroup.appendChild(text);
+
+        // Date/Day label (below chart)
+        const dayText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        dayText.setAttribute('x', p.x);
+        dayText.setAttribute('y', height - 10);
+        dayText.setAttribute('text-anchor', 'middle');
+        dayText.setAttribute('font-family', 'Outfit, sans-serif');
+        dayText.setAttribute('font-size', '10px');
+        dayText.setAttribute('font-weight', '600');
+        dayText.setAttribute('fill', '#444444');
+        dayText.textContent = (p.item.day || p.item.day_name || '').slice(0, 3).toUpperCase();
+        labelsGroup.appendChild(dayText);
+
+        // Mini weather icon inline at the top boundary
+        const iconContainer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        iconContainer.setAttribute('transform', `translate(${p.x - 10}, ${paddingTop - 30})`);
+        iconContainer.innerHTML = getWeatherGlyph(p.item.icon);
+        
+        // Resize nested SVGs properly
+        const svgEl = iconContainer.querySelector('svg');
+        if (svgEl) {
+          svgEl.setAttribute('width', '20');
+          svgEl.setAttribute('height', '20');
+        }
+        iconsGroup.appendChild(iconContainer);
+      });
+    }
+
+    // Render 7-day hybrid forecast items
+    function render7DayForecast(weatherForecast, solarForecast) {
+      const forecastRow = document.getElementById('forecast-row');
+      forecastRow.innerHTML = '';
+
+      if (!weatherForecast || weatherForecast.length === 0) {
+        forecastRow.innerHTML = '<div style="grid-column:span 7;text-align:center;padding:20px;font-weight:bold">No forecast data loaded.</div>';
+        return;
+      }
+
+      // Check if we have high-res solar forecast slots
+      const hasSolarSlots = solarForecast.ok && solarForecast.slots && solarForecast.slots.length > 0;
+      const solarSlots = hasSolarSlots ? solarForecast.slots : [];
+      
+      // Resolve site capacity (kwp)
+      const kwp = solarForecast.kwp || 5.0;
+
+      weatherForecast.slice(0, 7).forEach((item, index) => {
+        const dayDiv = document.createElement('div');
+        dayDiv.className = 'forecast-day';
+
+        // Day name (Mon, Tue...)
+        const dayName = document.createElement('div');
+        dayName.className = 'day-name';
+        dayName.textContent = index === 0 ? 'Today' : (item.day || item.day_name || '').slice(0, 3);
+        dayDiv.appendChild(dayName);
+
+        // Icon glyph
+        const iconWrapper = document.createElement('div');
+        iconWrapper.className = 'weather-icon';
+        iconWrapper.innerHTML = getWeatherGlyph(item.icon);
+        dayDiv.appendChild(iconWrapper);
+
+        // Temp range
+        const tempRange = document.createElement('div');
+        tempRange.className = 'temp-range';
+        tempRange.textContent = `${Math.round(item.temp_low)}°/${Math.round(item.temp_high)}°`;
+        dayDiv.appendChild(tempRange);
+
+        // Solar yield projection
+        const solarYield = document.createElement('div');
+        solarYield.className = 'solar-yield';
+        
+        let projectedKwh = 0.0;
+
+        if (index === 0 || index === 1) {
+          if (hasSolarSlots) {
+            const targetDateStr = item.date;
+            const daySlots = solarSlots.filter(s => {
+              return s.time && s.time.startsWith(targetDateStr);
+            });
+            
+            if (daySlots.length > 0) {
+              projectedKwh = daySlots.reduce((sum, s) => sum + ((s.pv_kw || 0.0) * 0.5), 0.0);
+            } else {
+              projectedKwh = (item.solar_absorption || 1.0) * kwp * 4.5;
+            }
+          } else {
+            projectedKwh = (item.solar_absorption || 1.0) * kwp * 4.5;
+          }
+        } else {
+          projectedKwh = (item.solar_absorption || 1.0) * kwp * 4.5;
+        }
+
+        solarYield.textContent = projectedKwh.toFixed(1) + ' kWh';
+        dayDiv.appendChild(solarYield);
+
+        forecastRow.appendChild(dayDiv);
+      });
+    }
+
+    // Initial triggers & Polling loops
+    refreshDashboard();
+    setInterval(refreshDashboard, 60000); // refresh every 60s
+  </script>
+
+</body>
+</html>

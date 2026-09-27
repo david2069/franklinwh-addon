@@ -1,0 +1,1223 @@
+<!-- ── Control Tab v3 ── Battery & Mode Control ──────────────── -->
+<!-- Changes: 1) 3D glassmorphism cards  2) Reserve SOC modal  3) Mode Info modal  4) Go Off-Grid modal restored -->
+<div x-data="controlTab()" x-init="init()">
+
+<!-- Empty state -->
+<template x-if="$store.app.gateways.length === 0">
+  <div class="flex flex-col items-center justify-center min-h-96 gap-4 text-center">
+    <div class="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+      <i class="fas fa-sliders-h text-2xl text-primary-light opacity-70"></i>
+    </div>
+    <div>
+      <p class="font-bold text-gray-200">No Gateways</p>
+      <p class="text-sm text-gray-500 mt-1">Register a gateway in <a href="#" @click.prevent="$store.app.setTab('gateways')" class="text-primary-light hover:underline">Gateways</a> first.</p>
+    </div>
+  </div>
+</template>
+
+<template x-if="$store.app.gateways.length > 0">
+<div class="space-y-5 max-w-5xl">
+
+  <!-- ── Page Header ───────────────────────────────────────────── -->
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#sliders-horizontal"/></svg>
+        Battery &amp; Mode Control
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Operating mode selection, reserve levels, and battery dispatch</p>
+    </div>
+    <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border shadow-sm flex items-center gap-1.5"
+          :class="{
+            'bg-purple-500/15 text-purple-300 border-purple-500/30 shadow-purple-500/10': (isModeMismatch ? telemetryMode : currentModeInfo?.workMode) === 1,
+            'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 shadow-emerald-500/10': (isModeMismatch ? telemetryMode : currentModeInfo?.workMode) === 2,
+            'bg-blue-500/15 text-blue-300 border-blue-500/30 shadow-blue-500/10': (isModeMismatch ? telemetryMode : currentModeInfo?.workMode) === 3,
+            'bg-gray-800 text-gray-500 border-gray-700': !(isModeMismatch ? telemetryMode : currentModeInfo?.workMode),
+            'ring-2 ring-amber-500/40': isModeMismatch
+          }">
+      <i x-show="isModeMismatch" class="fas fa-circle animate-pulse text-amber-400 text-[6px]"></i>
+      <span x-text="isModeMismatch ? modeEnumLabel(telemetryMode) : (currentModeInfo?.modeName || 'Unknown Mode')"></span>
+    </span>
+  </div>
+
+  <!-- ── Two-column: Mode Selector + Battery Status ─────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+
+    <!-- ── Operating Mode Card ────────────────────────────────── -->
+    <div class="rounded-2xl border border-gray-700/60 bg-gray-900/80 shadow-xl shadow-black/30 overflow-hidden">
+      <!-- card glint top edge -->
+      <div class="h-px bg-gradient-to-r from-transparent via-white/8 to-transparent"></div>
+      <!-- header -->
+      <div class="px-5 py-3.5 bg-gradient-to-r from-gray-800/70 to-gray-900/40 border-b border-gray-700/50 flex items-center justify-between">
+        <p class="text-sm font-black flex items-center gap-2 text-gray-100">
+          <i class="fas fa-cog text-primary-light text-xs"></i> Operating Mode
+        </p>
+        <!-- Change 3: Show Info button -->
+        <button @click="openModeInfoModal()"
+                class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide border transition-all
+                       border-gray-600/60 text-gray-400 hover:border-blue-500/50 hover:text-blue-300 hover:bg-blue-500/8">
+          <i class="fas fa-circle-info text-[9px]"></i> Show Info
+        </button>
+      </div>
+      <div class="p-5 space-y-3">
+        <!-- Mode Mismatch Warning (Defensive State Checking) -->
+        <template x-if="isModeMismatch">
+          <div class="mb-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-3 shadow-inner">
+            <div class="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+              <i class="fas fa-triangle-exclamation text-amber-400 text-xs"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-[11px] font-black text-amber-300 uppercase tracking-wider">External Override Detected</p>
+              <p class="text-[10px] text-gray-300 mt-0.5 leading-tight">
+                The gateway is currently running in <span class="font-bold text-white" x-text="modeEnumLabel(telemetryMode)"></span>. 
+                This differs from the configured <span class="font-bold text-white" x-text="currentModeInfo?.modeName"></span>, 
+                likely due to an external app, VPP, or Modbus command.
+              </p>
+              <button @click="refreshData()" class="mt-2 text-[9px] font-black text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors">
+                <i class="fas fa-sync-alt text-[8px]"></i> SYNC STATE
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="availableModes.length === 0 && !fetchError">
+          <p class="text-xs text-gray-500 text-center py-6">Loading authorized modes…</p>
+        </template>
+        <template x-for="m in availableModes" :key="m.id">
+          <button @click="selectMode(m)" :disabled="busy"
+                  class="w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-all duration-200 disabled:opacity-50"
+                  :class="currentModeInfo?.workMode === m.id
+                    ? 'border-primary/50 bg-primary/8 shadow-md shadow-primary/10'
+                    : 'border-gray-700/70 hover:border-gray-600 bg-gray-800/30'">
+            <!-- Icon -->
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-sm shadow-inner"
+                 :style="'background:' + modeColour(m.id).bg + ';color:' + modeColour(m.id).text + ';border:1px solid ' + modeColour(m.id).border">
+              <i :class="'fas ' + m.icon"></i>
+            </div>
+            <!-- Text -->
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-black text-gray-100" x-text="m.name"></p>
+              <p class="text-[10px] text-gray-500 mt-0.5 leading-tight" x-text="m.desc"></p>
+              <p class="text-[11px] font-bold mt-1"
+                 :style="'color:' + modeColour(m.id).text"
+                 x-text="'Reserve: ' + getReserveForMode(m.id) + '%'"></p>
+            </div>
+            <!-- Active check -->
+            <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
+              <i x-show="currentModeInfo?.workMode === m.id"
+                 class="fas fa-check-circle text-primary-light text-lg"></i>
+              <!-- Telemetry active (if different from config) -->
+              <div x-show="telemetryMode === m.id && currentModeInfo?.workMode !== m.id"
+                   class="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-[8px] font-black text-amber-400 uppercase tracking-tighter">
+                <i class="fas fa-circle animate-pulse text-[5px]"></i> LIVE
+              </div>
+            </div>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- ── Right column: Quick Access + Battery Status ─────────── -->
+    <div class="space-y-4">
+
+      <!-- Quick Access -->
+      <div class="rounded-2xl border border-gray-700/60 bg-gray-900/80 shadow-xl shadow-black/30 overflow-hidden">
+        <div class="h-px bg-gradient-to-r from-transparent via-white/8 to-transparent"></div>
+        <div class="p-4">
+          <p class="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3">Quick Access</p>
+          <div class="grid grid-cols-3 gap-3">
+
+            <!-- Grid Import & Export -->
+            <button @click="openPcsControlModal()" :disabled="busy"
+                    class="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border transition-all disabled:opacity-50
+                           border-blue-500/30 bg-blue-500/5 text-blue-400 hover:border-blue-500/60 hover:bg-blue-500/10 shadow-sm">
+              <i class="fas fa-bolt text-xl"></i>
+              <span class="text-[10px] font-black text-center leading-tight">Grid Import &amp; Export</span>
+              <span class="text-[10px] font-bold text-blue-300/80" x-text="gridImportLabel"></span>
+            </button>
+
+            <!-- Storm Hedge -->
+            <button @click="openStormHedgeModal()" :disabled="busy"
+                    class="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border transition-all disabled:opacity-50 shadow-sm"
+                    :class="stormEn
+                      ? 'border-purple-500/50 bg-purple-500/8 text-purple-300 hover:border-purple-500/70'
+                      : 'border-purple-500/20 bg-purple-500/5  text-purple-400/70 hover:border-purple-500/40'">
+              <i class="fas fa-cloud-bolt text-xl"></i>
+              <span class="text-[10px] font-black">Storm Hedge</span>
+              <span class="text-[10px] font-black uppercase tracking-wide"
+                    :class="stormEn ? 'text-emerald-400' : 'text-gray-500 qa-pulse'"
+                    x-text="stormEn ? 'Enabled' : 'Disabled'"></span>
+            </button>
+
+            <!-- Go Off-Grid — Change 4: restored to openOffGridModal() -->
+            <button @click="openOffGridModal()" :disabled="busy"
+                    class="flex flex-col items-center justify-center gap-1.5 p-4 rounded-xl border transition-all disabled:opacity-50 shadow-sm"
+                    :class="isOffGridActive
+                      ? 'border-amber-500/60 bg-amber-500/12 text-amber-300 hover:border-amber-500/80'
+                      : 'border-emerald-500/25 bg-emerald-500/5 text-emerald-400 hover:border-emerald-500/50 hover:bg-emerald-500/8'">
+              <i class="fas fa-tower-broadcast text-xl"></i>
+              <span class="text-[10px] font-black">Go Off-Grid</span>
+              <span class="text-[10px] font-black uppercase tracking-wide"
+                    :class="isOffGridActive ? 'text-amber-400' : 'text-gray-500 qa-pulse'"
+                    x-text="isOffGridActive ? 'Active' : 'Inactive'"></span>
+            </button>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Battery Status Card -->
+      <div class="rounded-2xl border border-gray-700/60 bg-gray-900/80 shadow-xl shadow-black/30 overflow-hidden" x-show="batteryStatus">
+        <div class="h-px bg-gradient-to-r from-transparent via-white/8 to-transparent"></div>
+        <div class="px-5 py-3.5 bg-gradient-to-r from-gray-800/70 to-gray-900/40 border-b border-gray-700/50 flex items-center justify-between">
+          <p class="text-sm font-black flex items-center gap-2 text-gray-100">
+            <i class="fas fa-battery-three-quarters text-emerald-400 text-sm"></i> Battery Status
+          </p>
+          <div class="text-right">
+            <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Capacity</p>
+            <p class="text-xs font-black text-gray-200"
+               x-text="batteryStatus?.currentKwh != null ? batteryStatus.currentKwh.toFixed(1) + ' / ' + (batteryStatus.maxKwh??'—').toFixed(1) + ' kWh' : (capacityLabel||'—')"></p>
+          </div>
+        </div>
+        <div class="p-5 space-y-4">
+
+          <!-- SOC + Battery Power inline -->
+          <div class="flex items-start justify-between">
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">State of Charge</p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-[9px] font-black px-2 py-0.5 rounded-full border"
+                      :class="{
+                        'bg-emerald-500/12 text-emerald-300 border-emerald-500/25': batteryPowerStatus==='Charging',
+                        'bg-amber-500/12 text-amber-300 border-amber-500/25':       batteryPowerStatus==='Discharging',
+                        'bg-gray-800 text-gray-500 border-gray-700':               batteryPowerStatus==='Standby',
+                      }"
+                      x-text="batteryPowerStatus"></span>
+                <span class="text-sm font-black text-gray-100"
+                      x-text="batteryStatus?.batteryKw ? Math.abs(batteryStatus.batteryKw).toFixed(1)+' kW' : '0.0 kW'"></span>
+              </div>
+            </div>
+            <span class="text-3xl font-black tabular-nums text-emerald-400"
+                  x-text="(batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc) != null ? Math.round(batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc) + '%' : '—%'"></span>
+          </div>
+
+          <!-- SOC bar -->
+          <div>
+            <p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">SOC</p>
+            <div class="relative w-full h-4 rounded-full overflow-hidden bg-gray-800 border border-gray-700/50">
+              <div class="h-full rounded-full transition-all duration-700"
+                   :style="'width:' + (batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc ?? 0) + '%;background:' + ((batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc ?? 0)<=5?'#ef4444':((batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc ?? 0)<=20?'#f59e0b':((batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc ?? 0)<=39?'#3b82f6':'#22c55e')))"></div>
+              <!-- Reserve marker -->
+              <div class="absolute top-0 h-full w-0.5 bg-white/60"
+                   :style="'left:calc(' + (currentModeInfo?.workMode===1 ? batteryStatus?.touReserve : batteryStatus?.selfReserve) + '% - 1px)'"></div>
+            </div>
+            <p class="text-[11px] text-gray-400 mt-1">
+              <span class="text-gray-300 font-semibold" x-text="currentModeInfo?.modeName||'Unknown'"></span>
+              : Reserved <span class="text-white font-bold"
+                x-text="(currentModeInfo?.workMode===1?batteryStatus?.touReserve:batteryStatus?.selfReserve)+'%'"></span>
+            </p>
+          </div>
+
+          <!-- Collapsible SOC Controls: Reserved SOC + SOC Limits -->
+          <div class="border border-gray-700/40 rounded-xl overflow-hidden">
+            <!-- Toggle header -->
+            <button @click="showSocControls = !showSocControls"
+                    class="w-full flex items-center justify-between px-4 py-2.5 bg-gray-800/40 hover:bg-gray-800/70 transition text-left">
+              <span class="text-[10px] font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                <i class="fas fa-sliders text-violet-400 text-[9px]"></i>SOC Controls
+              </span>
+              <span class="flex items-center gap-2">
+                <!-- mini reserve preview when collapsed -->
+                <span x-show="!showSocControls" class="text-[10px] text-gray-500 font-mono"
+                      x-text="'Self ' + (batteryStatus?.selfReserve??20) + '% &bull; TOU ' + (batteryStatus?.touReserve??15) + '% &bull; Win ' + editMinDischarge + '–' + editMaxCharge + '%'">
+                </span>
+                <i class="fas text-[10px] text-gray-500 transition-transform duration-200"
+                   :class="showSocControls?'fa-chevron-up':'fa-chevron-down'"></i>
+              </span>
+            </button>
+
+            <!-- Expandable body -->
+            <div x-show="showSocControls" x-transition:enter="transition-all duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+              <div class="px-4 pt-3 pb-1">
+
+                <!-- Reserved SOC compact display + Change button -->
+                <div class="mb-4">
+                  <div class="flex items-center mb-2">
+                    <p class="text-[10px] font-black uppercase tracking-widest text-gray-400">Reserved SOC</p>
+                    <button @click="openReserveSocModal()"
+                            x-show="currentModeInfo?.workMode===1||currentModeInfo?.workMode===2"
+                            class="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black transition border
+                                   bg-teal-500/12 border-teal-500/30 text-teal-300 hover:bg-teal-500/20 hover:border-teal-500/50">
+                      <i class="fas fa-pencil text-[8px]"></i> Change
+                    </button>
+                  </div>
+                  <!-- Dual-tick bar -->
+                  <div class="relative w-full h-2.5 rounded-full bg-gray-700 overflow-visible mb-2">
+                    <div class="absolute top-0 h-full rounded-full bg-gray-600/60 transition-all duration-700"
+                         :style="'width:' + Math.max(batteryStatus?.selfReserve??20, batteryStatus?.touReserve??15) + '%'"></div>
+                    <div class="absolute top-[-3px] bottom-[-3px] w-1 rounded bg-emerald-400 shadow shadow-emerald-400/40 transition-all duration-700"
+                         :style="'left:calc(' + (batteryStatus?.selfReserve??20) + '% - 2px)'"></div>
+                    <div class="absolute top-[-3px] bottom-[-3px] w-1 rounded bg-purple-400 shadow shadow-purple-400/40 transition-all duration-700"
+                         :style="'left:calc(' + (batteryStatus?.touReserve??15) + '% - 2px)'"></div>
+                  </div>
+                  <div class="flex gap-4 text-[11px] text-gray-400">
+                    <span class="flex items-center gap-1.5">
+                      <span class="w-2 h-2 rounded-sm bg-emerald-400 inline-block"></span>
+                      Self&nbsp;<span class="font-black text-emerald-300" x-text="(batteryStatus?.selfReserve??20)+'%'"></span>
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                      <span class="w-2 h-2 rounded-sm bg-purple-400 inline-block"></span>
+                      TOU&nbsp;<span class="font-black text-purple-300" x-text="(batteryStatus?.touReserve??15)+'%'"></span>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- SOC Limits -->
+                <div class="border-t border-gray-700/40 pt-3">
+                  <div class="flex items-center justify-between mb-2">
+                    <p class="text-[10px] font-black uppercase tracking-widest text-gray-400">SOC Limits</p>
+                    <p class="text-[10px] text-gray-600">Operating window</p>
+                  </div>
+                  <!-- Range visualiser -->
+                  <div class="relative w-full h-2 rounded-full bg-gray-800 mb-4 border border-gray-700/30">
+                    <div class="absolute top-0 h-full bg-sky-400/20 transition-all duration-700"
+                         :style="'left:' + (editMinDischarge) + '%;width:' + (editMaxCharge - editMinDischarge) + '%'"></div>
+                    <div class="absolute top-0 h-full w-1 bg-violet-400 rounded shadow shadow-violet-400/30 transition-all duration-700" :style="'left:calc(' + editMinDischarge + '% - 2px)'"></div>
+                    <div class="absolute top-0 h-full w-1 bg-orange-400 rounded shadow shadow-orange-400/30 transition-all duration-700" :style="'left:calc(' + editMaxCharge + '% - 2px)'"></div>
+                  </div>
+                  <!-- Min Discharge -->
+                  <div class="mb-4">
+                    <div class="flex items-center justify-between mb-1.5">
+                      <label class="text-xs font-black text-violet-300 flex items-center gap-1.5">
+                        <i class="fas fa-battery-quarter text-[10px]"></i>Min Discharge SOC
+                      </label>
+                      <span class="text-sm font-black text-violet-200" x-text="editMinDischarge + '%'"></span>
+                    </div>
+                    <input type="range" x-model.number="editMinDischarge" min="0" max="95" step="5" class="w-full accent-violet-400">
+                    <p class="text-[10px] text-gray-500 mt-0.5">Discharge stops when battery reaches this level</p>
+                  </div>
+                  <!-- Max Charge -->
+                  <div class="mb-4">
+                    <div class="flex items-center justify-between mb-1.5">
+                      <label class="text-xs font-black text-orange-300 flex items-center gap-1.5">
+                        <i class="fas fa-battery-full text-[10px]"></i>Max Charge SOC
+                      </label>
+                      <span class="text-sm font-black text-orange-200" x-text="editMaxCharge + '%'"></span>
+                    </div>
+                    <input type="range" x-model.number="editMaxCharge" min="20" max="100" step="5" class="w-full accent-orange-400">
+                    <p class="text-[10px] text-gray-500 mt-0.5">Charging stops when battery reaches this level</p>
+                  </div>
+                  <!-- Apply row -->
+                  <div class="flex items-center justify-between pb-3">
+                    <div x-show="socLimitsSaveResult" x-transition
+                         class="flex items-center gap-1 text-xs font-bold"
+                         :class="socLimitsSaveResult==='ok'?'text-emerald-400':'text-red-400'">
+                      <i class="text-[11px]" :class="socLimitsSaveResult==='ok'?'fas fa-check-circle':'fas fa-times-circle'"></i>
+                      <span x-text="socLimitsSaveResult==='ok'?'Limits saved':'Save failed'"></span>
+                    </div>
+                    <button @click="saveSocLimits()" :disabled="socLimitsSaving"
+                            class="ml-auto flex items-center gap-1.5 px-4 py-1.5 text-xs font-black rounded-lg
+                                   bg-violet-500/15 border border-violet-500/35 text-violet-300 hover:bg-violet-500/25 transition disabled:opacity-50">
+                      <i class="fas fa-check text-[10px]"></i>
+                      <span x-text="socLimitsSaving?'Saving...':'Apply Limits'"></span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Battery Dispatch (full width) ──────────────────────────── -->
+  <div class="rounded-2xl border border-gray-700/60 bg-gray-900/80 shadow-xl shadow-black/30 overflow-hidden" x-show="!fetchError">
+    <div class="h-px bg-gradient-to-r from-transparent via-white/8 to-transparent"></div>
+    <div class="px-5 py-3.5 bg-gradient-to-r from-gray-800/70 to-gray-900/40 border-b border-gray-700/50">
+      <p class="text-sm font-black flex items-center gap-2 text-gray-100">
+        <i class="fas fa-bolt text-amber-400 text-sm"></i> Battery Dispatch
+      </p>
+    </div>
+    <div class="p-5 space-y-5">
+
+      <!-- Fix: dispatch action buttons with solid, legible colours for both light and dark mode -->
+      <!-- Each button uses a solid border + vivid foreground. Background is neutral so it works on both themes. -->
+      <div class="grid grid-cols-4 gap-3">
+        <!-- Charge -->
+        <button @click="dispatchAction='Charge'" :disabled="busy || dispatchLiveStatus?.active"
+                class="h-16 flex flex-col items-center justify-center gap-1 rounded-xl border-2 font-bold text-sm transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                :class="dispatchAction==='Charge'
+                  ? 'bg-emerald-500/25 text-emerald-300 border-emerald-400 shadow-lg shadow-emerald-500/20'
+                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500 hover:bg-emerald-500/20 hover:text-emerald-300 hover:shadow-md hover:shadow-emerald-500/15'">
+          <i class="fas fa-bolt text-base"></i>Charge
+        </button>
+        <!-- Discharge -->
+        <button @click="dispatchAction='Discharge'" :disabled="busy || dispatchLiveStatus?.active"
+                class="h-16 flex flex-col items-center justify-center gap-1 rounded-xl border-2 font-bold text-sm transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                :class="dispatchAction==='Discharge'
+                  ? 'bg-amber-500/25 text-amber-300 border-amber-400 shadow-lg shadow-amber-500/20'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500 hover:bg-amber-500/20 hover:text-amber-300 hover:shadow-md hover:shadow-amber-500/15'">
+          <i class="fas fa-lightbulb text-base"></i>Discharge
+        </button>
+        <!-- Stop -->
+        <button @click="dispatchAction='Stop';sendDispatch()"
+                :disabled="busy || !dispatchLiveStatus?.active"
+                class="h-16 flex flex-col items-center justify-center gap-1 rounded-xl border-2 font-bold text-sm transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                :class="dispatchLiveStatus?.active
+                  ? 'bg-red-500/15 text-red-600 border-red-500/70 hover:bg-red-500/25 dark:text-red-300 dark:border-red-500/50'
+                  : 'bg-transparent text-red-400/50 border-red-400/25 dark:text-red-400/30 dark:border-red-500/15'">
+          <i class="fas fa-stop-circle text-base"></i>Stop
+        </button>
+        <!-- Start -->
+        <button @click="sendDispatch()" :disabled="busy||!dispatchAction||dispatchAction==='Stop'||dispatchLiveStatus?.active"
+                class="h-16 flex flex-col items-center justify-center gap-1 rounded-xl border-2 font-bold text-sm transition-all duration-200"
+                :class="(!dispatchAction||dispatchAction==='Stop'||busy||dispatchLiveStatus?.active)
+                  ? 'bg-transparent text-gray-400 border-gray-400/40 cursor-not-allowed dark:text-gray-600 dark:border-gray-700'
+                  : 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/25'">
+          <i class="text-base fas" :class="busy?'fa-sync-alt animate-spin':'fa-play-circle'"></i>
+          <span x-text="busy?'Running…':'Start'"></span>
+        </button>
+      </div>
+
+
+      <!-- Bottom panels -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+        <!-- Power Flow -->
+        <div class="bg-gray-800/40 rounded-xl p-4 border border-gray-700/40 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <p class="text-sm font-black text-gray-200 flex items-center gap-2"><i class="fas fa-exchange-alt text-blue-400/60 text-xs"></i>Power Flow</p>
+            <button @click="refreshPowerFlow()" :disabled="pfRefreshing"
+                    class="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border transition"
+                    :class="pfRefreshing?'border-blue-500/50 text-blue-400 bg-blue-500/10':'border-gray-700 text-gray-500 hover:border-blue-500/40 hover:text-blue-400 hover:bg-blue-500/8'">
+              <i class="fas fa-sync-alt text-[9px]" :class="pfRefreshing?'animate-spin':''"></i>
+              <span x-text="pfRefreshing?'Refreshing...':'Live'"></span>
+            </button>
+          </div>
+          <div class="space-y-2.5">
+            <div class="flex items-center gap-2">
+              <span class="w-16 text-xs font-bold text-amber-400 flex items-center gap-1"><i class="fas fa-sun text-[10px]"></i> Solar</span>
+              <span class="text-sm font-black text-amber-300 w-14 text-right" x-text="(solarKw*1000).toFixed(0)+' W'"></span>
+              <span class="text-amber-300/60 px-1 text-xs" x-text="solarKw>0.01?'→→':'··'"></span>
+              <span class="text-xs font-bold text-purple-300 flex items-center gap-1"><i class="fas fa-home text-[10px]"></i> Home</span>
+              <span class="text-sm font-black text-purple-300 ml-auto" x-text="(homeKw*1000).toFixed(0)+' W'"></span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-16 text-xs font-bold flex items-center gap-1" :class="batteryKw>0?'text-amber-400':(batteryKw<0?'text-emerald-400':'text-gray-600')"><i class="fas fa-battery-half text-[10px]"></i> Bat</span>
+              <span class="text-sm font-black w-14 text-right" :class="batteryKw>0?'text-amber-300':(batteryKw<0?'text-emerald-300':'text-gray-600')" x-text="Math.abs(batteryKw*1000).toFixed(0)+' W'"></span>
+              <span class="px-1 text-xs" :class="batteryKw>0?'text-amber-300/60':(batteryKw<0?'text-emerald-400/60':'text-gray-700')" x-text="batteryKw>0.01?'→→':(batteryKw<-0.01?'←←':'··')"></span>
+              <span class="text-xs font-semibold" :class="batteryKw>0.01?'text-amber-300':(batteryKw<-0.01?'text-emerald-300':'text-gray-500')" x-text="batteryKw>0.01?'Discharging':(batteryKw<-0.01?'Charging':'Standby')"></span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-16 text-xs font-bold text-blue-400 flex items-center gap-1"><i class="fas fa-bolt text-[10px]"></i> Grid</span>
+              <span class="text-sm font-black w-14 text-right" :class="gridKw>0.01?'text-red-400':(gridKw<-0.01?'text-emerald-300':'text-gray-600')" x-text="Math.abs(gridKw*1000).toFixed(0)+' W'"></span>
+              <span class="px-1 text-xs" :class="gridKw>0.01?'text-red-400/60':(gridKw<-0.01?'text-emerald-400/60':'text-gray-700')" x-text="gridKw>0.01?'→→':(gridKw<-0.01?'←←':'··')"></span>
+              <span class="text-xs font-semibold" :class="gridKw>0.01?'text-red-300':(gridKw<-0.01?'text-emerald-300':'text-gray-500')" x-text="gridKw>0.01?'Importing':(gridKw<-0.01?'Exporting':'Balanced')"></span>
+            </div>
+          </div>
+
+          <!-- Dispatch hints -->
+          <template x-if="dispatchAction==='Charge'">
+            <div class="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/6 px-3 py-2.5">
+              <p class="text-xs font-black text-emerald-400 flex items-center gap-1.5"><i class="fas fa-arrow-up text-[10px]"></i>Charging will draw from Grid + Solar</p>
+              <p class="text-[11px] text-emerald-500/70 mt-1" x-text="'Battery needs ' + dispatchPowerKw + ' kW.'"></p>
+              <p class="text-[11px] text-amber-400/80 mt-0.5" x-text="'⚡ Est. Grid Import: ~' + (dispatchPowerKw + homeKw).toFixed(1) + ' kW'"></p>
+            </div>
+          </template>
+          <template x-if="dispatchAction==='Discharge'">
+            <div class="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/6 px-3 py-2.5">
+              <p class="text-xs font-black text-amber-400 flex items-center gap-1.5"><i class="fas fa-arrow-down text-[10px]"></i>Discharging supplies Home + Grid export</p>
+              <p class="text-[11px] text-amber-500/70 mt-1" x-text="'Battery outputs ' + dispatchPowerKw + ' kW.'"></p>
+            </div>
+          </template>
+          <template x-if="!dispatchAction">
+            <div class="mt-3 rounded-lg border border-gray-700/40 bg-gray-900/30 px-3 py-2 text-[11px] text-gray-500">
+              Select Charge or Discharge to configure dispatch
+            </div>
+          </template>
+
+          <!-- Power level slider -->
+          <div class="mt-3 pt-3 border-t border-gray-700/60">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-bold text-gray-400 flex items-center gap-1.5"><i class="fas fa-sliders-h text-blue-400/60 text-[10px]"></i>Power Level</label>
+              <!-- The percentage divided by a literal 5 and the slider stopped
+                   at 5.0 kW, whatever was installed. Both now follow the
+                   fleet's actual rating from the device registry. -->
+              <span class="text-sm font-black text-gray-200"
+                    x-text="dispatchPowerKw + ' kW (' + dispatchPowerPct + '%)'"></span>
+            </div>
+            <input type="range" x-model.number="dispatchPowerKw"
+                   min="0.5" :max="maxDispatchKw" step="0.1"
+                   @change="clampDispatchPower()"
+                   class="w-full accent-emerald-500">
+            <div class="flex justify-between text-[9px] text-gray-600 mt-1">
+              <span>0.5 kW</span>
+              <span x-text="maxDispatchKw.toFixed(1) + ' kW'"></span>
+            </div>
+            <!-- Say where the ceiling came from. A number with no provenance
+                 invites the question this whole change answers. -->
+            <template x-if="$store.app.selectedGatewayObj?.capacity?.models?.length">
+              <p class="text-[9px] text-gray-600 mt-1">
+                <span x-text="$store.app.selectedGatewayObj.capacity.models.join(' + ')"></span>
+                <span x-show="$store.app.selectedGatewayObj.capacity.capability_source !== 'registry'"
+                      class="text-amber-600/80"> · model not recognised, assuming aPower X</span>
+              </p>
+            </template>
+          </div>
+
+          <!-- Duration slider -->
+          <div class="mt-3 pt-3 border-t border-gray-700/60">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-bold text-gray-400 flex items-center gap-1.5"><i class="fas fa-clock text-blue-400/60 text-[10px]"></i>Duration</label>
+              <span class="text-sm font-black text-gray-200" x-text="formatDuration(dispatchDurationMin)"></span>
+            </div>
+            <input type="range" x-model.number="dispatchDurationMin" min="1" max="240" step="1" class="w-full accent-blue-500">
+            <div class="flex justify-between text-[9px] text-gray-600 mt-1"><span>1 min</span><span>2h</span><span>4h</span></div>
+          </div>
+
+          <!-- Max Charge SOC (Charge mode) -->
+          <div x-show="dispatchAction==='Charge'" x-transition class="mt-3 pt-3 border-t border-emerald-500/15">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-bold text-emerald-400 flex items-center gap-1.5"><i class="fas fa-battery-full text-[10px]"></i>Max Charge SOC</label>
+              <span class="text-sm font-black text-emerald-300" x-text="dispatchChargeSoc + '%'"></span>
+            </div>
+            <input type="range" x-model.number="dispatchChargeSoc" min="20" max="100" step="5" class="w-full accent-emerald-400">
+            <div class="flex justify-between text-[9px] text-gray-600 mt-1"><span>20%</span><span>Stop charging at this SOC</span><span>100%</span></div>
+          </div>
+
+          <!-- Min Discharge SOC (Discharge mode) -->
+          <div x-show="dispatchAction==='Discharge'" x-transition class="mt-3 pt-3 border-t border-amber-500/15">
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-bold text-amber-400 flex items-center gap-1.5"><i class="fas fa-battery-quarter text-[10px]"></i>Min Discharge SOC</label>
+              <span class="text-sm font-black text-amber-300" x-text="dispatchStopSoc + '%'"></span>
+            </div>
+            <input type="range" x-model.number="dispatchStopSoc" min="5" max="90" step="5" class="w-full accent-amber-400">
+            <div class="flex justify-between text-[9px] text-gray-600 mt-1"><span>5%</span><span>Stop discharging at this SOC</span><span>90%</span></div>
+          </div>
+        </div>
+
+        <!-- Dispatch Status -->
+        <div class="bg-gray-800/40 rounded-xl p-4 border border-blue-900/25 shadow-sm">
+          <p class="text-sm font-black text-gray-200 flex items-center gap-2 mb-4">
+            <i class="fas fa-info-circle text-blue-400/60 text-xs"></i>Dispatch Status
+          </p>
+
+          <!-- STATE -->
+          <div class="mb-4">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1">State</p>
+            <p class="font-black transition-all duration-300"
+               :class="dispatchLiveStatus?.active
+                 ? (dispatchLiveStatus?.run_status === 1 ? 'text-2xl text-blue-400' : (dispatchLiveStatus?.run_status === 2 ? 'text-2xl text-emerald-400' : 'text-2xl text-amber-400'))
+                 : 'text-lg text-gray-300'"
+               x-text="dispatchLiveStatus?.active ? (dispatchLiveStatus?.run_status_label || dispatchLiveStatus?.action || 'Active') : ''">
+            </p>
+          </div>
+
+          <!-- Countdown — only when active -->
+          <div x-show="dispatchLiveStatus?.active" x-transition class="mb-4 rounded-lg border border-blue-500/20 bg-blue-500/6 px-3 py-2.5 grid grid-cols-2 gap-3">
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-0.5">Remaining</p>
+              <p class="text-lg font-black text-blue-300" x-text="formatRemaining(dispatchLiveStatus?.remaining_s||0)"></p>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-0.5">Elapsed</p>
+              <p class="text-lg font-black text-gray-300" x-text="formatRemaining(dispatchLiveStatus?.elapsed_s||0)"></p>
+            </div>
+          </div>
+
+          <!-- Detail grid -->
+          <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Action</p>
+              <p class="text-sm font-bold text-gray-300" x-text="dispatchLiveStatus?.action||dispatchAction||'—'"></p>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Power</p>
+              <p class="text-sm font-bold text-gray-300" x-text="dispatchLiveStatus?.power_kw ? dispatchLiveStatus.power_kw+' kW' : (dispatchAction?dispatchPowerKw+' kW':'—')"></p>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Current SOC</p>
+              <p class="text-sm font-bold text-gray-300" x-text="(dispatchLiveStatus?.current_soc ?? batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc) != null ? Math.round(dispatchLiveStatus?.current_soc ?? batteryStatus?.soc ?? $store.app.selectedGatewayObj?.battery_soc) + '%' : '—'"></p>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Target SOC</p>
+              <p class="text-sm font-bold text-gray-300" x-text="dispatchAction==='Charge'?dispatchChargeSoc+'%':(dispatchAction==='Discharge'?dispatchStopSoc+'%':'—')"></p>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Watchdog</p>
+              <p class="text-sm font-bold" :class="dispatchLiveStatus?.active?'text-blue-300':'text-gray-600'"
+                 x-text="dispatchLiveStatus?.active ? formatRemaining(dispatchLiveStatus?.remaining_s||0) : '—'"></p>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Control</p>
+              <p class="text-sm font-bold text-gray-300">Cloud</p>
+            </div>
+            <!-- Hardware run_status — shows actual battery state vs dispatch intent -->
+            <div class="col-span-2" x-show="dispatchLiveStatus?.active">
+              <p class="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">HW Run Status</p>
+              <p class="text-sm font-bold flex items-center gap-1.5"
+                 :class="{
+                   'text-emerald-400': dispatchLiveStatus?.run_status === 2,
+                   'text-blue-400':    dispatchLiveStatus?.run_status === 1,
+                   'text-amber-400':   dispatchLiveStatus?.run_status === 0,
+                   'text-gray-500':    dispatchLiveStatus?.run_status == null,
+                 }">
+                <i class="fas fa-circle text-[6px]"></i>
+                <span x-text="dispatchLiveStatus?.run_status_label || '—'"></span>
+                <span x-show="dispatchLiveStatus?.active && dispatchLiveStatus?.run_status === 0"
+                      class="text-[9px] font-black text-amber-500 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-full ml-1">Not following dispatch</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</template>
+
+<!-- ═══════════════════════ MODALS ═══════════════════════ -->
+
+<!-- Mode Confirmation Modal -->
+<div x-show="pendingMode" x-cloak x-transition
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+  <div class="w-full max-w-md rounded-2xl border border-orange-500/25 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="h-px bg-gradient-to-r from-transparent via-orange-500/30 to-transparent"></div>
+    <div class="px-6 pt-6 pb-4">
+      <h4 class="text-base font-black text-gray-100 flex items-center gap-2 mb-5">
+        <i class="fas fa-sync-alt text-sm text-orange-400"></i> Confirm Mode Change
+      </h4>
+      <div class="flex items-center gap-4 p-4 bg-gray-800/80 rounded-xl mb-4 border border-gray-700/50">
+        <div class="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-triangle-exclamation text-blue-400"></i>
+        </div>
+        <div>
+          <p class="text-sm font-black text-gray-100" x-text="'Switch to ' + (pendingMode?.name||'')"></p>
+          <p class="text-xs text-gray-500 mt-0.5" x-text="pendingMode?.desc"></p>
+        </div>
+      </div>
+      <template x-if="pendingMode?.name !== 'Emergency Backup'">
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="text-sm font-bold text-gray-300 flex items-center gap-1.5"><i class="fas fa-cog text-gray-500 text-xs"></i>Reserve SOC</label>
+            <span class="text-lg font-black" x-text="modalSoc+'%'" :style="'color:' + modeColour(pendingMode?.id||1).text"></span>
+          </div>
+          <input type="range" x-model.number="modalSoc" min="5" max="100" step="5" class="w-full accent-primary">
+          <p class="text-xs text-gray-600">Minimum battery level before grid import starts.</p>
+        </div>
+      </template>
+      <template x-if="pendingMode?.name === 'Emergency Backup'">
+        <div class="space-y-4">
+          <p class="text-sm font-bold text-gray-300 flex items-center gap-1.5"><i class="fas fa-clock text-gray-500 text-xs"></i>Duration</p>
+          <div class="grid grid-cols-2 gap-3">
+            <button @click="backupForever=true" class="py-3 rounded-xl border-2 text-sm font-semibold transition"
+                    :class="backupForever?'border-blue-500 bg-blue-500/10 text-blue-400':'border-gray-700 text-gray-500'">
+              <i class="fas fa-infinity text-xs mr-1"></i>Indefinite
+            </button>
+            <button @click="backupForever=false" class="py-3 rounded-xl border-2 text-sm font-semibold transition"
+                    :class="!backupForever?'border-blue-500 bg-blue-500/10 text-blue-400':'border-gray-700 text-gray-500'">
+              <i class="fas fa-hourglass-half text-xs mr-1"></i>Fixed Time
+            </button>
+          </div>
+          <div x-show="!backupForever" x-transition class="space-y-3">
+            <div class="flex items-center gap-3 justify-center">
+              <div class="flex flex-col items-center flex-1">
+                <input type="number" x-model.number="backupDays" min="0" max="7" class="w-full text-center font-bold text-lg bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100">
+                <span class="text-[9px] uppercase tracking-widest text-gray-600 mt-1">Days</span>
+              </div>
+              <span class="text-gray-500 font-bold text-lg pb-5">:</span>
+              <div class="flex flex-col items-center flex-1">
+                <input type="number" x-model.number="backupHours" min="0" max="23" class="w-full text-center font-bold text-lg bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100">
+                <span class="text-[9px] uppercase tracking-widest text-gray-600 mt-1">Hours</span>
+              </div>
+              <span class="text-gray-500 font-bold text-lg pb-5">:</span>
+              <div class="flex flex-col items-center flex-1">
+                <input type="number" x-model.number="backupMinutes" min="0" max="59" step="5" class="w-full text-center font-bold text-lg bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-gray-100">
+                <span class="text-[9px] uppercase tracking-widest text-gray-600 mt-1">Mins</span>
+              </div>
+            </div>
+            <div>
+              <p class="text-[10px] font-bold text-gray-500 mb-2 flex items-center gap-1"><i class="fas fa-cloud-bolt text-[9px]"></i>Resume Mode After</p>
+              <div class="grid grid-cols-2 gap-2">
+                <button @click="backupNextMode=4" class="py-2 rounded-lg border text-xs font-semibold transition"
+                        :class="backupNextMode===4?'border-purple-500 bg-purple-500/10 text-purple-400':'border-gray-700 text-gray-500'">TOU</button>
+                <button @click="backupNextMode=2" class="py-2 rounded-lg border text-xs font-semibold transition"
+                        :class="backupNextMode===2?'border-emerald-500 bg-emerald-500/10 text-emerald-400':'border-gray-700 text-gray-500'">Self-Consumption</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div class="flex gap-3 px-6 py-4 border-t border-gray-800 bg-gray-900/60">
+      <button @click="pendingMode=null"
+              class="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition">Cancel</button>
+      <button @click="executeMode()" :disabled="busy"
+              class="flex-[2] py-2.5 text-sm font-black rounded-xl bg-primary text-white hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-2">
+        <i class="text-xs fas" :class="busy?'fa-sync-alt animate-spin':'fa-check'"></i>
+        <span x-text="busy?'Saving…':'Confirm Switch'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Change 2: Reserve SOC Modal ───────────────────────────── -->
+<div x-show="showReserveSocModal" x-cloak x-transition
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+     @click.self="showReserveSocModal=false">
+  <div class="w-full max-w-md rounded-2xl border border-teal-500/25 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="h-px bg-gradient-to-r from-transparent via-teal-500/30 to-transparent"></div>
+    <div class="flex items-start justify-between px-6 pt-6 pb-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-teal-500/15 flex items-center justify-center flex-shrink-0 border border-teal-500/25">
+          <i class="fas fa-sliders text-teal-300"></i>
+        </div>
+        <div>
+          <h4 class="font-black text-base text-gray-100">Edit Reserve SOC Levels</h4>
+          <p class="text-[10px] text-teal-400/70 mt-0.5">Set minimum battery levels per operating mode</p>
+        </div>
+      </div>
+      <button @click="showReserveSocModal=false" class="text-gray-600 hover:text-gray-300 transition mt-0.5">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="px-6 pb-2 space-y-5">
+
+      <!-- Preview bar -->
+      <div class="relative w-full h-3 rounded-full bg-gray-800 overflow-visible border border-gray-700/40 mb-1">
+        <div class="absolute top-0 h-full rounded-full bg-gray-700/60 transition-all duration-300"
+             :style="'width:' + Math.max(editSoc, editTouSoc) + '%'"></div>
+        <div class="absolute top-[-3px] bottom-[-3px] w-1 rounded bg-emerald-400 shadow shadow-emerald-400/40 transition-all duration-300"
+             :style="'left:calc(' + editSoc + '% - 2px)'"></div>
+        <div class="absolute top-[-3px] bottom-[-3px] w-1 rounded bg-purple-400 shadow shadow-purple-400/40 transition-all duration-300"
+             :style="'left:calc(' + editTouSoc + '% - 2px)'"></div>
+      </div>
+      <div class="flex gap-4 text-[11px] text-gray-400 mb-1">
+        <span class="flex items-center gap-1.5"><span class="w-2 h-2 bg-emerald-400 rounded-sm"></span>Self&nbsp;<span class="font-black text-emerald-300" x-text="editSoc+'%'"></span></span>
+        <span class="flex items-center gap-1.5"><span class="w-2 h-2 bg-purple-400 rounded-sm"></span>TOU&nbsp;<span class="font-black text-purple-300" x-text="editTouSoc+'%'"></span></span>
+      </div>
+
+      <!-- Self-Consumption Reserve -->
+      <div class="bg-gray-800/50 rounded-xl p-4 border border-emerald-500/15">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-black text-emerald-300 flex items-center gap-1.5">
+            <i class="fas fa-leaf text-[10px]"></i>Self-Consumption Reserve
+          </label>
+          <span class="text-lg font-black text-emerald-300" x-text="editSoc + '%'"></span>
+        </div>
+        <input type="range" x-model.number="editSoc" min="0" max="100" step="1" class="w-full accent-emerald-400">
+        <p class="text-[10px] text-gray-500 mt-1.5">Minimum battery level reserved in Self-Consumption mode</p>
+      </div>
+
+      <!-- TOU Reserve -->
+      <div class="bg-gray-800/50 rounded-xl p-4 border border-purple-500/15">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-black text-purple-300 flex items-center gap-1.5">
+            <i class="fas fa-clock text-[10px]"></i>TOU Reserve
+          </label>
+          <span class="text-lg font-black text-purple-300" x-text="editTouSoc + '%'"></span>
+        </div>
+        <input type="range" x-model.number="editTouSoc" min="0" max="100" step="1" class="w-full accent-purple-400">
+        <p class="text-[10px] text-gray-500 mt-1.5">Minimum battery level reserved in Time-of-Use mode</p>
+      </div>
+
+      <!-- Save result inline -->
+      <div x-show="socSaveResult" x-transition
+           class="flex items-center gap-2 text-sm font-bold px-3 py-2 rounded-lg"
+           :class="socSaveResult==='ok'?'text-emerald-300 bg-emerald-500/10 border border-emerald-500/20':'text-red-300 bg-red-500/10 border border-red-500/20'">
+        <i :class="socSaveResult==='ok'?'fas fa-check-circle':'fas fa-times-circle'"></i>
+        <span x-text="socSaveResult==='ok'?'Reserves saved successfully':'Save failed — please retry'"></span>
+      </div>
+    </div>
+    <div class="flex gap-3 px-6 py-4 border-t border-gray-800 bg-gray-900/60 mt-3">
+      <button @click="showReserveSocModal=false"
+              class="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition">Cancel</button>
+      <button @click="saveReserveSocs()" :disabled="socSaving"
+              class="flex-[2] py-2.5 text-sm font-black rounded-xl bg-teal-500/20 border border-teal-500/40 text-teal-300 hover:bg-teal-500/30 transition disabled:opacity-50 flex items-center justify-center gap-2">
+        <i class="text-xs fas" :class="socSaving?'fa-sync-alt animate-spin':'fa-check'"></i>
+        <span x-text="socSaving?'Saving…':'Apply Both Reserves'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fix 3/4/5: Mode Info Diagnostics Modal ────────────────── -->
+<div x-show="showModeInfoModal" x-cloak x-transition
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+     @click.self="showModeInfoModal=false">
+  <div class="w-full max-w-lg rounded-2xl border border-gray-700/60 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="h-px bg-gradient-to-r from-transparent via-blue-500/30 to-transparent"></div>
+    <div class="flex items-start justify-between px-6 pt-6 pb-4 border-b border-gray-800">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center flex-shrink-0 border border-blue-500/20">
+          <i class="fas fa-circle-info text-blue-300"></i>
+        </div>
+        <div>
+          <h4 class="font-black text-base text-gray-100">Operating Mode Diagnostics</h4>
+          <p class="text-[10px] text-blue-400/70 mt-0.5">Raw data from <code class="text-[9px] font-mono bg-gray-800 px-1 py-0.5 rounded">getGatewayTouListV2</code></p>
+        </div>
+      </div>
+      <button @click="showModeInfoModal=false" class="text-gray-600 hover:text-gray-300 transition mt-0.5">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <div class="px-6 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
+
+      <!-- Loading -->
+      <template x-if="modeInfoLoading">
+        <div class="flex items-center justify-center py-8 gap-3 text-gray-500">
+          <i class="fas fa-sync-alt animate-spin text-blue-400"></i>
+          <span class="text-sm">Fetching from gateway…</span>
+        </div>
+      </template>
+
+      <!-- Mode cards -->
+      <template x-if="!modeInfoLoading">
+        <div class="space-y-3">
+
+          <!-- No-solar note if Self-Consumption absent -->
+          <template x-if="touModeList.length > 0 && !touModeList.find(r => r.workMode === 2)">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/8 border border-amber-500/20 text-amber-400 text-xs font-bold">
+              <i class="fas fa-solar-panel text-[10px]"></i>
+              Self-Consumption mode not available — no solar detected on this gateway
+            </div>
+          </template>
+
+          <!-- Fix 5: iterate touModeList (from tou-raw); enum label as title, API name as subtitle -->
+          <template x-for="r in touModeList" :key="r.workMode">
+            <div class="rounded-xl border p-4 transition-all"
+                 :class="r.workMode === modeInfoCurrentMode?.workMode
+                   ? 'border-primary/40 bg-primary/5 shadow-sm shadow-primary/10'
+                   : 'border-gray-700/50 bg-gray-800/40'">
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs flex-shrink-0"
+                       :style="'background:' + (r.workMode===1?'rgba(168,85,247,.2)':r.workMode===2?'rgba(34,197,94,.2)':'rgba(59,130,246,.2)') + ';color:' + (r.workMode===1?'#c084fc':r.workMode===2?'#4ade80':'#60a5fa')">
+                    <i :class="r.workMode===1?'fas fa-clock':r.workMode===2?'fas fa-leaf':'fas fa-shield-halved'"></i>
+                  </div>
+                  <div>
+                    <!-- Fix 5: enum name is the PRIMARY title -->
+                    <p class="text-sm font-black text-gray-100" x-text="modeEnumLabel(r.workMode)"></p>
+                    <!-- API tariff name + id shown as diagnostic subtitle -->
+                    <p class="text-[10px] text-gray-500 font-mono" x-text="(r.name || '') + (r.id ? ' · id ' + r.id : '')"></p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span x-show="r.workMode === modeInfoCurrentMode?.workMode"
+                        class="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 uppercase tracking-wide">
+                    Active
+                  </span>
+                  <span x-show="r.editSocFlag === false"
+                        class="text-[9px] font-black px-2 py-0.5 rounded-full bg-gray-700 text-gray-500 border border-gray-600 uppercase tracking-wide">
+                    SOC Fixed
+                  </span>
+                  <span x-show="r.multiSOCFlag"
+                        class="text-[9px] font-black px-2 py-0.5 rounded-full bg-purple-900/60 text-purple-400 border border-purple-600/30 uppercase tracking-wide">
+                    Multi-SOC
+                  </span>
+                </div>
+              </div>
+              <!-- Primary SOC fields -->
+              <div class="grid grid-cols-3 gap-2 mb-2">
+                <div class="bg-gray-900/60 rounded-lg px-3 py-2 text-center">
+                  <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Reserve SOC</p>
+                  <p class="text-sm font-black text-gray-200" x-text="r.soc != null ? r.soc + '%' : '—'"></p>
+                </div>
+                <div class="bg-gray-900/60 rounded-lg px-3 py-2 text-center">
+                  <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Min SOC</p>
+                  <p class="text-sm font-black text-gray-200" x-text="r.minSoc != null ? r.minSoc + '%' : '—'"></p>
+                </div>
+                <div class="bg-gray-900/60 rounded-lg px-3 py-2 text-center">
+                  <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Max SOC</p>
+                  <p class="text-sm font-black text-gray-200" x-text="r.maxSoc != null ? r.maxSoc + '%' : '—'"></p>
+                </div>
+              </div>
+              <!-- Extended fields row -->
+              <div class="grid grid-cols-2 gap-2">
+                <div class="bg-gray-900/60 rounded-lg px-3 py-2">
+                  <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Discharge Depth SOC</p>
+                  <p class="text-xs font-black text-gray-300" x-text="r.dischargeDepthSoc != null ? r.dischargeDepthSoc + '%' : '— (not set)'"></p>
+                </div>
+                <div class="bg-gray-900/60 rounded-lg px-3 py-2">
+                  <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Incentives Type</p>
+                  <p class="text-xs font-black text-gray-300" x-text="r.energyIncentivesType != null ? r.energyIncentivesType : '—'"></p>
+                </div>
+              </div>
+              <!-- Active mode extra -->
+              <template x-if="r.workMode === modeInfoCurrentMode?.workMode && modeInfoCurrentMode">
+                <div class="mt-2 grid grid-cols-2 gap-2">
+                  <div class="bg-gray-900/60 rounded-lg px-3 py-2">
+                    <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Run Status</p>
+                    <p class="text-xs font-black text-gray-300" x-text="modeInfoCurrentMode?.run_desc || modeInfoCurrentMode?.run_status || '—'"></p>
+                  </div>
+                  <div class="bg-gray-900/60 rounded-lg px-3 py-2">
+                    <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-0.5">Off-Grid State</p>
+                    <p class="text-xs font-black text-gray-300" x-text="modeInfoCurrentMode?.offgridState || 'None'"></p>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- Fix 3: Raw JSON — explicit text-emerald-300 so it's readable on dark bg -->
+          <div class="rounded-xl border border-gray-700/40 overflow-hidden">
+            <button @click="modeInfoRawExpanded=!modeInfoRawExpanded"
+                    class="w-full flex items-center justify-between px-4 py-2.5 bg-gray-800/40 text-left hover:bg-gray-800/60 transition">
+              <span class="text-[10px] font-black uppercase tracking-widest text-gray-500 flex items-center gap-2">
+                <i class="fas fa-code text-[9px]"></i>Raw API Response
+              </span>
+              <i class="fas text-[10px] text-gray-600 transition-transform duration-200"
+                 :class="modeInfoRawExpanded?'fa-chevron-up':'fa-chevron-down'"></i>
+            </button>
+            <div x-show="modeInfoRawExpanded" x-transition class="bg-gray-950 px-4 py-3">
+              <!-- Fix 3: explicit text-emerald-300 — bg-gray-950 was black-on-black -->
+              <pre class="text-[10px] text-emerald-300 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap"
+                   x-text="JSON.stringify(modeInfoRaw, null, 2) || '(no data)'"></pre>
+            </div>
+          </div>
+
+          <!-- Future note -->
+          <div class="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-gray-800/40 border border-gray-700/30 text-[10px] text-gray-500">
+            <i class="fas fa-flask text-gray-600 mt-0.5 flex-shrink-0"></i>
+            <span>Programmatic SOC level fields (currently not returned by the API) will appear here in a future firmware version.</span>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div class="flex justify-end px-6 py-4 border-t border-gray-800 bg-gray-900/60">
+      <button @click="showModeInfoModal=false"
+              class="px-6 py-2.5 text-sm font-semibold rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fix 2: Go Off-Grid Modal — full clone from power.html ────── -->
+<!-- Handles all 4 GridConnectionState values: Connected | SimulatedOffGrid | Outage | NotGridTied -->
+<div x-show="showOffGridModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+  <div class="w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl border-2 bg-gray-900"
+       :class="{
+         'border-red-600':    pendingGridState === 'Connected',
+         'border-amber-500':  pendingGridState === 'SimulatedOffGrid',
+         'border-yellow-500': pendingGridState === 'Outage',
+         'border-gray-600':   pendingGridState === 'NotGridTied'
+       }">
+
+    <!-- Dynamic header strip -->
+    <div class="px-6 py-4 flex items-center gap-3 text-white"
+         :class="{
+           'bg-red-700':    pendingGridState === 'Connected',
+           'bg-amber-600':  pendingGridState === 'SimulatedOffGrid',
+           'bg-yellow-600': pendingGridState === 'Outage',
+           'bg-gray-700':   pendingGridState === 'NotGridTied'
+         }">
+      <i class="fas flex-shrink-0 text-lg"
+         :class="pendingGridState==='Connected'?'fa-triangle-exclamation':(pendingGridState==='SimulatedOffGrid'?'fa-bolt':'fa-circle-info')"></i>
+      <h3 class="font-black text-lg m-0"
+          x-text="pendingGridState==='Connected'
+            ? 'Go Off-Grid — Simulated Off-Grid Danger Warning!'
+            : pendingGridState==='SimulatedOffGrid' ? 'Reconnect to Utility Grid'
+            : 'Grid Connection Control'"></h3>
+    </div>
+
+    <!-- CURRENT STATE badge -->
+    <div class="mx-6 mt-5 mb-4 bg-gray-800/80 rounded-xl border border-gray-700/60 p-4 text-center">
+      <div class="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1">Current State</div>
+      <div class="text-2xl font-black tracking-tight"
+           :class="{
+             'text-emerald-400': pendingGridState === 'Connected',
+             'text-amber-400':   pendingGridState === 'SimulatedOffGrid',
+             'text-red-400':     pendingGridState === 'Outage',
+             'text-gray-400':    pendingGridState === 'NotGridTied'
+           }"
+           x-text="pendingGridState==='Connected' ? 'CONNECTED'
+                 : pendingGridState==='SimulatedOffGrid' ? 'SIMULATED OFF-GRID'
+                 : pendingGridState==='Outage' ? 'OUTAGE'
+                 : 'NOT GRID-TIED'"></div>
+    </div>
+
+    <div class="px-6 pb-2">
+
+      <!-- Connected → going off-grid (danger path) -->
+      <template x-if="pendingGridState === 'Connected'">
+        <div>
+          <p class="text-gray-200 font-bold mb-3">The utility grid and main electrical panels
+            <span class="text-red-400"> remain physically live and dangerous.</span>
+          </p>
+          <ul class="text-sm text-gray-400 list-disc pl-5 space-y-2 mb-5 font-medium">
+            <li>Do not perform electrical work assuming the grid is dead.</li>
+            <li>The aGate is <strong class="text-gray-200">not a UPS</strong>. A brief cutover delay may reboot sensitive electronics.</li>
+            <li>Loads upstream of the aGate will immediately lose power.</li>
+          </ul>
+
+          <!-- Solar warning — only shown when solar is installed (from DB discover flag) -->
+          <template x-if="$store.app.selectedGatewayObj?.has_solar">
+            <div class="flex items-start gap-3 p-3 rounded-xl bg-amber-500/8 border border-amber-500/25 mb-4">
+              <i class="fas fa-solar-panel text-amber-400 mt-0.5 flex-shrink-0"></i>
+              <p class="text-sm text-amber-300 font-medium leading-relaxed">
+                <strong>Solar PV will be disconnected immediately</strong> when going off-grid
+                and automatically reconnected when the grid is restored. Your solar inverter(s) may reset.
+              </p>
+            </div>
+          </template>
+
+          <!-- UPS warning — always shown -->
+          <div class="flex items-start gap-3 p-3 rounded-xl bg-red-500/8 border border-red-500/25 mb-5">
+            <i class="fas fa-plug-circle-exclamation text-red-400 mt-0.5 flex-shrink-0"></i>
+            <p class="text-sm text-red-300 font-medium leading-relaxed">
+              <strong>Install a true UPS</strong> on the network and server/device running this app.
+              Without one, the brief cutover may crash or render this application inoperable.
+            </p>
+          </div>
+
+          <!-- Auto Re-connection SOC slider -->
+          <div class="bg-gray-800/60 p-4 rounded-xl border border-gray-700/60 mb-5">
+            <div class="flex justify-between items-center mb-2">
+              <h4 class="text-xs font-black uppercase tracking-wider text-gray-300 flex items-center gap-2">
+                <i class="fas fa-battery-half text-primary-light"></i> Auto Re-connection SOC
+              </h4>
+              <span class="text-[10px] uppercase font-bold text-gray-500">
+                Live: <strong class="text-gray-200 ml-1 text-xs" x-text="parseFloat($store.app.selectedGatewayObj?.battery_soc || 0).toFixed(0) + '%'"></strong>
+              </span>
+            </div>
+            <p class="text-[10px] font-bold text-gray-500 mb-4">The aGate automatically reconnects to the utility once the battery reaches this threshold.</p>
+            <div class="flex items-center gap-4">
+              <input type="range" min="5" max="100" x-model.number="reconnectSoc"
+                     class="flex-1 accent-primary h-2 rounded-lg appearance-none cursor-pointer">
+              <span class="text-lg font-black text-primary-light w-12 text-right" x-text="reconnectSoc + '%'"></span>
+            </div>
+          </div>
+
+          <!-- Acknowledgement checkbox -->
+          <label class="flex items-center gap-3 cursor-pointer bg-red-600/10 hover:bg-red-600/20 transition rounded-xl p-4 border border-red-600/30">
+            <input type="checkbox" x-model="ackOffGridRisk" class="w-4 h-4 accent-red-500 cursor-pointer">
+            <span class="text-sm font-bold text-red-400">I acknowledge the physical risks of forced islanding.</span>
+          </label>
+        </div>
+      </template>
+
+      <!-- SimulatedOffGrid → reconnecting (safe path) -->
+      <template x-if="pendingGridState === 'SimulatedOffGrid'">
+        <div>
+          <p class="text-gray-200 font-bold mb-4">The aGate will reconnect to the utility grid and resume normal grid-tied operation. Auto re-connection SOC bounds remain preserved.</p>
+          <label class="flex items-center gap-3 cursor-pointer bg-emerald-500/10 hover:bg-emerald-500/20 transition rounded-xl p-4 border border-emerald-500/30">
+            <input type="checkbox" x-model="ackOffGridRisk" class="w-4 h-4 accent-emerald-500 cursor-pointer">
+            <span class="text-sm font-bold text-emerald-400">I confirm I want to reconnect to the utility grid.</span>
+          </label>
+        </div>
+      </template>
+
+      <!-- Outage → information only -->
+      <template x-if="pendingGridState === 'Outage'">
+        <div>
+          <p class="text-gray-200 font-bold mb-4">The grid contactor has been opened by a hardware fault. Software islanding is not available during a utility outage.</p>
+          <div class="bg-red-500/5 border border-red-500/30 rounded-xl p-4 text-sm font-bold text-red-400">
+            Grid relay is closed — hardware has islanded.<br>
+            <span class="font-medium text-gray-400 text-xs">Please check utility service and/or your main electrical panel.</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- NotGridTied → information only -->
+      <template x-if="pendingGridState === 'NotGridTied'">
+        <div>
+          <p class="text-gray-200 font-bold mb-4">This gateway has no utility grid connection.</p>
+          <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4 text-sm font-bold text-gray-500">
+            No grid service available at this site.<br>
+            <span class="font-medium text-gray-500 text-xs">This gateway is not configured by installer as having any grid service.</span>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div class="px-6 py-4 mt-4 flex justify-end gap-3 bg-gray-900/80 border-t border-gray-800">
+      <button @click="showOffGridModal=false; ackOffGridRisk=false"
+              class="px-5 py-2.5 text-sm font-semibold rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition">Close</button>
+      <template x-if="pendingGridState === 'Connected' || pendingGridState === 'SimulatedOffGrid'">
+        <button :disabled="!ackOffGridRisk || offGridConfirming"
+                @click="executeOffGrid()"
+                class="min-w-[160px] px-5 py-2.5 text-sm font-black rounded-xl transition disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg"
+                :class="pendingGridState==='Connected'
+                  ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/20'
+                  : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/20'">
+          <i class="fas text-xs" :class="offGridConfirming?'fa-sync-alt animate-spin':(pendingGridState==='Connected'?'fa-tower-broadcast':'fa-plug')"></i>
+          <span x-show="!offGridConfirming" x-text="pendingGridState==='Connected'?'Execute Off-Grid':'Execute Reconnect'"></span>
+          <span x-show="offGridConfirming">Sending…</span>
+        </button>
+      </template>
+    </div>
+  </div>
+</div>
+
+<!-- Storm Hedge Modal -->
+<div x-show="showStormHedgeModal" x-cloak x-transition
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+  <div class="w-full max-w-md rounded-2xl border border-gray-700/60 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="h-px bg-gradient-to-r from-transparent via-blue-500/30 to-transparent"></div>
+    <div class="flex items-start justify-between gap-4 px-6 pt-6 pb-4">
+      <div class="flex items-start gap-3">
+        <div class="w-11 h-11 rounded-xl bg-blue-500 flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-500/30">
+          <i class="fas fa-cloud-bolt text-white"></i>
+        </div>
+        <div>
+          <h4 class="font-black text-lg text-gray-100 leading-tight">Storm Hedge</h4>
+          <p class="text-[10px] font-bold text-blue-400 uppercase tracking-wide">Automatic Outage Protection</p>
+        </div>
+      </div>
+      <button @click="showStormHedgeModal=false" class="text-gray-600 hover:text-gray-300 transition mt-1">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="px-6 pb-2 space-y-5">
+      <div @click="stormEn=!stormEn" role="button" tabindex="0"
+           class="flex items-center gap-4 p-4 bg-gray-800/60 rounded-xl cursor-pointer transition select-none border-2"
+           :class="stormEn?'border-emerald-500':'border-gray-700'">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition"
+             :class="stormEn?'bg-emerald-500/15 text-emerald-400':'bg-gray-700 text-gray-600'">
+          <i class="fas fa-bolt"></i>
+        </div>
+        <div class="flex-1">
+          <p class="text-sm font-black text-gray-100">SYSTEM PROTECTION</p>
+          <p class="text-xs mt-0.5" :class="stormEn?'text-emerald-400':'text-gray-600'"
+             x-text="stormEn?'Monitoring for weather alerts':'Protection disabled'"></p>
+        </div>
+        <span class="text-[10px] font-black uppercase px-3 py-1.5 rounded-full border transition"
+              :class="stormEn?'bg-emerald-500/15 text-emerald-400 border-emerald-500/30':'bg-gray-700 text-gray-500 border-gray-700'"
+              x-text="stormEn?'Enabled':'Disabled'"></span>
+      </div>
+      <div>
+        <div class="flex items-end justify-between mb-2">
+          <label class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Enable Backup Before a Storm</label>
+          <span class="text-2xl font-black text-blue-400 leading-none" x-text="parseFloat(stormAdvanceTimeH).toFixed(2).replace(/\.00/,'')+'h'"></span>
+        </div>
+        <input type="range" x-model.number="stormAdvanceTimeH" min="1" max="5.5" step="0.25" class="w-full accent-blue-400">
+        <div class="flex justify-between text-[9px] text-gray-600 mt-1.5 font-bold uppercase">
+          <span>1 Hour</span><span>3.25 Hours</span><span>5.5 Hours</span>
+        </div>
+      </div>
+      <div>
+        <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">Decision Strategy</p>
+        <div class="grid grid-cols-2 gap-3">
+          <button @click="stormDecisionStrategy=1"
+                  class="py-4 rounded-xl border-2 text-sm font-black flex flex-col items-center gap-2 transition"
+                  :class="stormDecisionStrategy===1?'border-blue-500 bg-blue-500/10 text-blue-400':'border-gray-700 text-gray-500 bg-transparent'">
+            <i class="fas fa-bolt"></i>AUTO-ACTIVE
+          </button>
+          <button @click="stormDecisionStrategy=0"
+                  class="py-4 rounded-xl border-2 text-sm font-black flex flex-col items-center gap-2 transition"
+                  :class="stormDecisionStrategy===0?'border-blue-500 bg-blue-500/10 text-blue-400':'border-gray-700 text-gray-500 bg-transparent'">
+            <i class="fas fa-hand"></i>ASK EACH TIME
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 mt-2 leading-relaxed"
+           x-text="stormDecisionStrategy===1?'Charge starts immediately upon alert detection.':'Requires manual approval to charge.'"></p>
+      </div>
+    </div>
+    <div class="flex gap-3 px-6 py-4 border-t border-gray-800 bg-gray-900/60 mt-3">
+      <button @click="showStormHedgeModal=false"
+              class="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 transition">Cancel</button>
+      <button @click="saveStormHedge()" :disabled="busy"
+              class="flex-[2] py-2.5 text-sm font-black rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition disabled:opacity-50 flex items-center justify-center gap-2">
+        <i class="text-xs fas" :class="busy?'fa-sync-alt animate-spin':'fa-save'"></i>
+        APPLY SETTINGS
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- PCS Grid Control Modal -->
+<div x-show="showPcsControlModal" x-cloak x-transition
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+  <div class="w-full max-w-md rounded-2xl border border-gray-700/60 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="h-px bg-gradient-to-r from-transparent via-orange-500/30 to-transparent"></div>
+    <div class="px-6 pt-6 pb-4 border-b border-gray-800">
+      <div class="flex items-center justify-between mb-4">
+        <h4 class="text-base font-black text-gray-100 flex items-center gap-2">
+          <i class="fas fa-plug text-sm text-orange-400"></i>Grid Import
+        </h4>
+        <button @click="showPcsControlModal=false" class="text-gray-600 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      <select x-model="pcsImportMode"
+              class="w-full bg-gray-800 border border-gray-700 text-gray-200 rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none focus:border-primary transition">
+        <option value="unlimited">Unlimited import</option>
+        <option value="custom">Custom Limit</option>
+        <option value="disabled">Charge from grid not allowed</option>
+      </select>
+      <p class="text-xs text-gray-500 mb-3 leading-relaxed">The aPower(s) will charge from the grid during the allowed time period.</p>
+      <div x-show="pcsImportMode==='custom'" x-transition class="relative">
+        <input type="number" x-model="pcsImportMaxKw" step="0.1" min="0" max="100000"
+               class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded-xl px-4 py-3 pr-12 text-base font-bold focus:outline-none focus:border-primary transition">
+        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-semibold">kW</span>
+      </div>
+    </div>
+    <div class="px-6 py-4 border-b border-gray-800">
+      <h4 class="text-base font-black text-gray-100 flex items-center gap-2 mb-4">
+        <i class="fas fa-sun text-sm text-amber-400"></i>Grid Export
+      </h4>
+      <select x-model="pcsExportMode"
+              class="w-full bg-gray-800 border border-gray-700 text-gray-200 rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none focus:border-primary transition">
+        <option value="unlimited">Unlimited export</option>
+        <option value="custom">Custom Limit</option>
+        <option value="disabled">Export not allowed</option>
+      </select>
+      <p class="text-xs text-gray-500 mb-3 leading-relaxed">The aPower(s) will export to the grid during the allowed time period.</p>
+      <div x-show="pcsExportMode==='custom'" x-transition class="relative">
+        <input type="number" x-model="pcsExportMaxKw" step="0.1" min="0" max="100000"
+               class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded-xl px-4 py-3 pr-12 text-base font-bold focus:outline-none focus:border-primary transition">
+        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-semibold">kW</span>
+      </div>
+    </div>
+    <div class="flex gap-3 px-6 py-4 bg-gray-900/60">
+      <button @click="showPcsControlModal=false"
+              class="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 transition">Cancel</button>
+      <button @click="savePcsControl()" :disabled="busy"
+              class="flex-[2] py-2.5 text-sm font-black rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition disabled:opacity-50 flex items-center justify-center gap-2">
+        <i class="text-xs fas" :class="busy?'fa-sync-alt animate-spin':'fa-check'"></i>
+        Confirm
+      </button>
+    </div>
+  </div>
+</div>
+
+  <!-- Smart Dispatch Override Confirmation Modal -->
+  <div x-show="showSdOverrideModal" x-cloak x-transition
+       class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div class="w-full max-w-md rounded-2xl border border-red-500/25 bg-gray-900 shadow-2xl overflow-hidden">
+      <div class="h-px bg-gradient-to-r from-transparent via-red-500/30 to-transparent"></div>
+      <div class="px-6 pt-6 pb-4">
+        <h4 class="text-base font-black text-gray-100 flex items-center gap-2 mb-5">
+          <i class="fas fa-triangle-exclamation text-sm text-red-400"></i> Smart Dispatch Active
+        </h4>
+        <div class="p-4 bg-red-500/10 rounded-xl mb-4 border border-red-500/20">
+          <p class="text-sm font-bold text-red-300">Smart Dispatch is currently managing the battery.</p>
+          <p class="text-xs text-gray-400 mt-1">Starting a manual charge/discharge will override the current automation strategy. Do you want to proceed?</p>
+        </div>
+        
+        <div class="bg-gray-800/80 rounded-xl p-3 border border-gray-700/50 mb-4">
+          <div class="flex items-center justify-between text-[11px] font-bold">
+            <span class="text-gray-500 uppercase">Current Strategy</span>
+            <span class="text-blue-400 uppercase tracking-widest" x-text="smartDispatchConfig?.strategy_mode || '—'"></span>
+          </div>
+        </div>
+      </div>
+      <div class="flex gap-3 px-6 py-4 border-t border-gray-800 bg-gray-900/60">
+        <button @click="showSdOverrideModal=false"
+                class="flex-1 py-2.5 text-sm font-semibold rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition">Cancel</button>
+        <button @click="sendDispatch(true)" :disabled="busy"
+                class="flex-[2] py-2.5 text-sm font-black rounded-xl bg-red-500 text-white hover:bg-red-600 transition disabled:opacity-50 flex items-center justify-center gap-2">
+          <i class="text-xs fas" :class="busy?'fa-sync-alt animate-spin':'fa-bolt'"></i>
+          <span x-text="busy?'Overriding...':'Override & Start'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- controlTab() loaded from admin.html head -->

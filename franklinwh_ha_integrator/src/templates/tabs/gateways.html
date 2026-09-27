@@ -1,0 +1,748 @@
+
+<!-- ── Competing FranklinWH integration ─────────────────────────────────────
+     A second integration polling the same cloud account is what produces the
+     "payload was empty" warnings and stale telemetry: FranklinWH's backend
+     answers the loser with HTTP 200 and result: null. Detection is read-only
+     and runs on load; disabling is a separate, explicitly typed confirmation,
+     because it changes an integration this add-on does not own. -->
+<div x-data="integrationConflicts()" x-init="check()" x-show="conflicts.length" x-cloak
+     class="rounded-lg border-l-4 border-[var(--warn)] bg-[rgba(217,119,6,0.08)] p-4 mb-4">
+  <template x-for="c in conflicts" :key="c.domain">
+    <div>
+      <div class="text-sm font-bold text-[var(--text-primary)] mb-1">
+        Another FranklinWH integration is running
+      </div>
+      <p class="text-xs text-[var(--text-secondary)] leading-relaxed">
+        <span class="font-bold" x-text="c.name"></span>
+        (<span x-text="c.source"></span>) is installed and polls the same
+        FranklinWH cloud account as this add-on. FranklinWH serves only one
+        client per account: the other one gets an empty payload, so telemetry
+        goes stale and the log fills with
+        <code class="font-mono">get_stats: API payload was empty</code>.
+        You also get two sets of entities for one battery.
+      </p>
+      <div class="flex flex-wrap items-center gap-2 mt-3">
+        <button type="button" x-show="!confirming" @click="confirming = true"
+                class="px-3 py-1.5 rounded-lg bg-[var(--warn)]/15 border border-[var(--warn)]/40 text-[var(--warn)] text-[11px] font-bold hover:bg-[var(--warn)]/25 transition">
+          Disable it for me
+        </button>
+        <span x-show="!confirming" class="text-[10px] text-[var(--text-secondary)] opacity-80">
+          or do it yourself: Settings &rarr; Devices &amp; Services &rarr; FranklinWH &rarr; Disable
+        </span>
+
+        <template x-if="confirming">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-[11px] text-[var(--text-secondary)]">
+              Type <code class="font-mono font-bold">disable</code> to confirm:
+            </span>
+            <input type="text" x-model="confirm" placeholder="disable" autocomplete="off"
+                   class="px-2 py-1 rounded bg-[var(--surface-1)] border border-[var(--border)] text-xs font-mono w-28">
+            <button type="button" @click="doDisable(c.domain)"
+                    :disabled="busy || confirm.trim().toLowerCase() !== 'disable'"
+                    class="px-3 py-1.5 rounded-lg bg-[var(--warn)] text-white text-[11px] font-bold disabled:opacity-40 transition">
+              Confirm
+            </button>
+            <button type="button" @click="confirming = false; confirm = ''"
+                    class="px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-secondary)] text-[11px] font-bold transition">
+              Cancel
+            </button>
+          </div>
+        </template>
+      </div>
+      <p x-show="message" x-cloak class="text-[11px] mt-2"
+         :class="error ? 'text-[var(--danger)]' : 'text-[var(--ok)]'" x-text="message"></p>
+    </div>
+  </template>
+</div>
+<!-- gateways v2 — Tailwind/Alpine gateway management -->
+<div x-data="gatewaysTab()" x-init="initTab()" class="max-w-7xl">  <!-- Header -->
+  <!-- Header -->
+  <div class="mb-4 flex items-start gap-3">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#server"/></svg>
+        Gateways
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Registered aGate devices, polling status, and credentials</p>
+    </div>
+  </div>
+
+  <!-- Summary Counters -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="card p-4 flex flex-col justify-center bg-[var(--surface-0)] border border-[var(--border)] rounded-xl shadow-sm">
+      <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1">Registered</span>
+      <span class="text-2xl font-extrabold tracking-tight text-[var(--text-primary)]" x-text="gateways.length"></span>
+    </div>
+    <div class="card p-4 flex flex-col justify-center bg-[var(--surface-0)] border border-[var(--border)] rounded-xl shadow-sm">
+      <span class="text-[10px] font-bold c-ok uppercase tracking-wider mb-1">Polling Active</span>
+      <span class="text-2xl font-extrabold tracking-tight c-ok" x-text="(gateways || []).filter(g => g.poll_status === 'ok').length"></span>
+    </div>
+    <div class="card p-4 flex flex-col justify-center bg-[var(--surface-0)] border border-[var(--border)] rounded-xl shadow-sm">
+      <span class="text-[10px] font-bold c-danger uppercase tracking-wider mb-1">Unavailable</span>
+      <span class="text-2xl font-extrabold tracking-tight c-danger" x-text="(gateways || []).filter(g => g.poll_status !== 'ok' && g.poll_status !== 'stopped' && g.poll_status !== 'not_started' && g.poll_status).length"></span>
+    </div>
+    <div class="card p-4 flex flex-col justify-center bg-[var(--surface-0)] border border-[var(--border)] rounded-xl shadow-sm">
+      <span class="text-[10px] font-bold c-warn uppercase tracking-wider mb-1">Stopped</span>
+      <span class="text-2xl font-extrabold tracking-tight c-warn" x-text="(gateways || []).filter(g => g.poll_status === 'stopped' || !g.poll_status || g.poll_status === 'not_started').length"></span>
+    </div>
+  </div>
+
+  <!-- Actions Bar -->
+  <div class="flex items-center justify-between mb-2">
+    <span class="text-[1.1rem] font-bold text-[var(--text-primary)]" x-text="'aGates (' + gateways.length + ' Total)'"></span>
+    <div class="flex items-center gap-2">
+      <button class="btn btn-secondary btn-sm py-1 px-3" @click="refresh()">↻ Refresh</button>
+      <button class="btn btn-primary btn-sm py-1 px-3" @click="openDiscoveryModal()">⊕ Add Gateway</button>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <template x-if="loading && gateways.length === 0">
+    <div class="card flex items-center justify-center gap-3 py-16 text-[var(--text-muted)] border border-[var(--border)] bg-[var(--surface-0)] rounded-xl">
+      <svg class="icon fa-spin fa-2x" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+      <span>Loading gateways…</span>
+    </div>
+  </template>
+
+  <!-- Empty state -->
+  <template x-if="!loading && gateways.length === 0">
+    <div class="card flex flex-col items-center justify-center gap-4 py-16 text-center border border-[var(--border)] bg-[var(--surface-0)] rounded-xl">
+      <div class="text-4xl mb-2">🌐</div>
+      <h3 class="text-lg font-bold text-[var(--text-primary)]">No gateways registered</h3>
+      <p class="text-sm text-[var(--text-secondary)] max-w-sm mb-2">Click <strong>Add Gateway</strong> to discover and register your aGate devices using your FranklinWH Cloud account.</p>
+      <button class="btn btn-primary" @click="openDiscoveryModal()">Discover Gateways →</button>
+    </div>
+  </template>
+
+  <!-- Sites + Gateway Table -->
+  <template x-if="gateways.length > 0">
+    <div class="flex flex-col gap-4">
+      <template x-for="site in groupedSites" :key="site.site_id">
+        <div class="card p-0 overflow-hidden bg-[var(--surface-0)] border border-[var(--border)] rounded-xl">
+          
+          <!-- Site Header -->
+          <div class="bg-[var(--surface-50)] px-4 py-3 border-b border-[var(--border)] flex justify-between items-center">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-[var(--surface-200)] flex items-center justify-center text-[var(--text-secondary)]">
+                <svg class="icon absolute" aria-hidden="true" viewBox="0 0 24 24"><use href="#home"/></svg>
+              </div>
+              <div>
+                <div class="font-bold text-[0.95rem] leading-tight text-[var(--text-primary)]" x-text="site.site_name"></div>
+                <div class="text-[0.7rem] leading-tight text-[var(--text-muted)] font-mono" x-text="site.site_id !== 'ungrouped' ? site.site_id : 'Manual Configuration'"></div>
+              </div>
+            </div>
+            <div class="text-[0.8rem] font-bold text-[var(--text-muted)] bg-[var(--surface-100)] px-3 py-0.5 rounded-full">
+              <span x-text="site.gateways.length"></span> Node(s)
+            </div>
+          </div>
+
+          <!-- Data Table -->
+          <div class="overflow-x-auto max-h-[45vh] overflow-y-auto">
+            <table class="w-full text-left text-sm whitespace-nowrap">
+              <thead class="text-[0.7rem] uppercase text-[var(--text-muted)] bg-[var(--surface-0)] border-b border-[var(--border)] sticky top-0 z-10">
+                <tr>
+                  <th class="px-3 py-2 font-semibold">Name</th>
+                  <th class="px-3 py-2 font-semibold">Model (SKU)</th>
+                  <th class="px-3 py-2 font-semibold">Device Status</th>
+                  <th class="px-3 py-2 font-semibold">Connectivity & Relays</th>
+                  <th class="px-3 py-2 font-semibold">Accessories</th>
+                  <th class="px-3 py-2 font-semibold">Run Status</th>
+                  <th class="px-3 py-2 font-semibold">SOC</th>
+                  <th class="px-3 py-2 font-semibold">Poll Status</th>
+                  <th class="px-3 py-2 font-semibold">Gateway Time</th>
+                  <th class="px-3 py-2 font-semibold">Last Seen</th>
+                  <th class="px-3 py-2 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[var(--border)] [&>tr:nth-child(even)]:bg-[var(--surface-50)]">
+                <template x-for="gw in site.gateways" :key="gw.short_id">
+                  <tr class="hover:bg-[var(--surface-50)] transition-colors">
+                    <td class="px-3 py-1.5 align-middle">
+                     <div class="font-bold text-[var(--text-primary)] leading-tight" x-text="$store.app.gatewayName(gw)"></div>
+                      <div class="text-[0.7rem] text-[var(--text-muted)] font-mono leading-tight" x-text="gw.full_serial"></div>
+                    </td>
+                    <td class="px-3 py-1.5 align-middle">
+                      <div class="text-[var(--text-primary)] leading-tight text-[0.85rem]" x-text="gw.model || '—'"></div>
+                    </td>
+                    <td class="px-3 py-1.5 align-middle">
+                      <!-- Device Status: derived from poll_status (device_status never set by cloud) -->
+                      <span class="chip" style="transform: scale(0.9); transform-origin: left"
+                            :class="gw.poll_status === 'ok' ? 'ok' : (gw.poll_status && !['stopped','not_started'].includes(gw.poll_status) ? 'error' : 'muted')">
+                        <span class="status-dot"
+                              :class="gw.poll_status === 'ok' ? 'online' : (['error','retrying','circuit_breaker_tripped'].includes(gw.poll_status) ? 'offline' : '')"></span>
+                        <span x-text="gw.poll_status === 'ok' ? 'Normal' : (['error','retrying'].includes(gw.poll_status) ? 'Fault' : 'Unknown')"></span>
+                      </span>
+                    </td>
+                    <td class="px-3 py-1.5 align-middle">
+                      <div class="flex flex-col text-[0.65rem] font-mono leading-tight gap-0.5">
+                        <div class="flex gap-2">
+                          <!-- network_connection: 1=ETH 2=WiFi 3=4G per FranklinWH API -->
+                          <span :class="gw.network_connection ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'">NET:<span x-text="gw.network_connection === 1 ? 'ETH' : (gw.network_connection === 2 ? 'WiFi' : (gw.network_connection === 3 ? '4G' : '-'))"></span></span>
+                          <span :class="gw.wifi_signal > 20 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'">WiFi:<span x-text="gw.wifi_signal != null ? gw.wifi_signal + 'dBm' : '-'"></span></span>
+                          <span :class="gw.mobile_signal > 10 ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'">4G:<span x-text="gw.mobile_signal != null ? gw.mobile_signal + 'dBm' : '-'"></span></span>
+                        </div>
+                        <div class="flex gap-2">
+                          <span :class="$store.app.relayClass(gw.grid_relay1, 'text-[var(--ok)]')" :title="$store.app.relayTitle('GRD', gw.grid_relay1)">GRD:<span x-text="$store.app.relayLabel(gw.grid_relay1)"></span></span>
+                          <span :class="$store.app.relayClass(gw.generator_relay, 'text-[var(--warn)]')" :title="$store.app.relayTitle('GEN', gw.generator_relay)">GEN:<span x-text="$store.app.relayLabel(gw.generator_relay)"></span></span>
+                          <span :class="$store.app.relayClass(gw.solar_relay1, 'text-[var(--solar)]')" :title="$store.app.relayTitle('SOL', gw.solar_relay1)">SOL:<span x-text="$store.app.relayLabel(gw.solar_relay1)"></span></span>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="px-3 py-1.5 align-middle">
+                      <div class="flex items-center gap-1.5 text-[var(--text-muted)]">
+                        <template x-if="!gw.accessories || gw.accessories.length === 0">
+                          <span class="text-[0.8rem]">—</span>
+                        </template>
+                        <template x-if="gw.solar_kw > 0 || gw.has_solar">
+                          <svg class="icon text-[var(--solar)]" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#sun"/></svg>
+                        </template>
+                        <template x-if="gw.accessories?.includes('smart_circuits')">
+                          <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#power"/></svg>
+                        </template>
+                        <template x-if="gw.accessories?.includes('generator')">
+                          <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#ev-station"/></svg>
+                        </template>
+                        <template x-if="gw.accessories?.includes('ahub')">
+                          <svg class="icon" style="width:14px;height:14px" aria-hidden="true" viewBox="0 0 24 24"><use href="#server"/></svg>
+                        </template>
+                      </div>
+                    </td>
+                    <td class="px-3 py-1.5 align-middle">
+                      <!-- Run Status: operating mode label + derived charging state -->
+                      <div class="font-bold text-[0.8rem] leading-tight"
+                           :class="gw.runtime_mode === 'VPP Mode' ? 'text-[var(--live)]' : 'text-[var(--text-primary)]'"
+                           x-text="gw.runtime_mode === 'VPP Mode' ? 'VPP Mode' : (gw.operating_mode || '—')"></div>
+                      <div class="text-[0.65rem] text-[var(--text-muted)] leading-tight"
+                           x-text="$store.app.getBatteryStateText(gw)"></div>
+                    </td>
+                    <td class="px-3 py-1.5 font-bold text-[var(--ok)] text-[0.85rem] align-middle">
+                      <span x-text="gw.battery_soc != null ? parseFloat(gw.battery_soc).toFixed(1) + '%' : '—'"></span>
+                    </td>
+                    <td class="px-3 py-1.5 align-middle">
+                      <div class="flex flex-col items-start gap-0.5">
+                        <span class="chip" style="transform: scale(0.9); transform-origin: left"
+                          :class="{
+                            ok:    gw.poll_status === 'ok',
+                            error: ['error','no_credentials','auth_failed'].includes(gw.poll_status),
+                            warn:  ['retrying','circuit_breaker_tripped'].includes(gw.poll_status),
+                            muted: !gw.poll_status || ['stopped','not_started'].includes(gw.poll_status),
+                          }">
+                          <span class="status-dot"
+                            :class="{online: gw.poll_status === 'ok', offline: ['error','no_credentials','auth_failed'].includes(gw.poll_status)}"></span>
+                          <span x-text="gw.poll_status === 'no_credentials' ? 'No Credentials' : (gw.poll_status === 'auth_failed' ? 'Auth Failed' : (gw.poll_status === 'circuit_breaker_tripped' ? 'Circuit Breaker' : (gw.poll_status || 'not started')))"></span>
+                        </span>
+                        <template x-if="!gw.has_credentials">
+                          <span class="chip error text-[0.6rem] py-0 px-1 mt-0" title="No Cloud API credentials stored">
+                            ⚠ No Creds
+                          </span>
+                        </template>
+                      </div>
+                    </td>
+                    <!-- The gateway's own local time. TOU blocks are local
+                         wall-clock, so a schedule cannot be read correctly
+                         without knowing which local it means. This is the
+                         current instant rendered in the gateway's configured
+                         zone, not a reading of the device clock — the cloud
+                         API exposes no such field. -->
+                    <td class="px-3 py-1.5 text-[0.7rem] align-middle whitespace-nowrap">
+                      <template x-if="gw.timezone">
+                        <div>
+                          <span class="font-mono text-[var(--text)]"
+                                x-text="$store.app.gatewayTime(gw.timezone) || '—'"></span>
+                          <span class="block text-[0.65rem] text-[var(--text-muted)]"
+                                x-text="gw.timezone"></span>
+                        </div>
+                      </template>
+                      <template x-if="!gw.timezone">
+                        <span class="text-[var(--text-muted)]" title="No zoneInfo from discovery">—</span>
+                      </template>
+                    </td>
+                    <!-- last_seen is SQLite datetime('now'), which is UTC and
+                         stored without a marker. new Date() parsed it as local
+                         and displayed a time a whole UTC offset out. -->
+                    <td class="px-3 py-1.5 text-[0.7rem] text-[var(--text-muted)] align-middle whitespace-nowrap"
+                        x-text="$store.app.formatUtcStamp(gw.last_seen, gw.timezone)"></td>
+                    <td class="px-3 py-1.5 align-middle text-right">
+                      <div class="flex flex-wrap justify-end gap-1.5">
+                        <template x-if="gw.poll_status === 'stopped' || gw.poll_status === 'not_started' || !gw.poll_status">
+                          <button class="btn btn-secondary text-[0.7rem] py-0.5 px-2" @click="startGateway(gw.short_id)" :id="'btn-start-' + gw.short_id">▶ Start</button>
+                        </template>
+                        <template x-if="gw.poll_status && !['stopped','not_started'].includes(gw.poll_status)">
+                          <button class="btn btn-secondary text-[0.7rem] py-0.5 px-2" @click="stopGateway(gw.short_id)" :id="'btn-stop-' + gw.short_id">⏸ Stop</button>
+                        </template>
+                        <button class="btn btn-secondary text-[0.7rem] py-0.5 px-1.5" @click="openEdit(gw)" :id="'btn-edit-' + gw.short_id">✏</button>
+                        <button class="btn btn-secondary text-[0.7rem] py-0.5 px-1.5" @click="validateCreds(gw.short_id)" :id="'btn-validate-' + gw.short_id" title="Test Cloud API credentials">🔑</button>
+                        <button class="btn btn-secondary text-[0.7rem] py-0.5 px-1.5 text-[var(--danger)]" @click="confirmDelete(gw)" :id="'btn-delete-' + gw.short_id">🗑</button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+    </div>
+  </template>
+
+  <!-- ── Add / Edit Panel ──────────────────────────────────────────────────── -->
+  <div x-show="panelOpen" x-cloak class="modal-backdrop" x-transition.opacity @click.self="panelOpen = false">
+    <div class="modal-panel max-w-lg">
+      <div class="modal-header flex justify-between items-center">
+        <h3 class="font-bold" x-text="editMode ? 'Edit Gateway' : 'Add Gateway'"></h3>
+        <button class="icon-btn" @click="panelOpen = false"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg></button>
+      </div>
+      <form @submit.prevent="saveGateway()" class="modal-body p-6 flex flex-col gap-4">
+        
+        <div class="text-sm font-bold text-[var(--text-secondary)] tracking-wider">☁ Authenticate with FranklinWH Cloud</div>
+        
+        <!-- Credential status banner (edit mode only) -->
+        <template x-if="editMode && form._has_credentials">
+          <div class="rounded-lg bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] p-2 text-xs text-[var(--ok)]">
+            ✅ Credentials stored — leave blank to keep existing, or enter new values to update.
+          </div>
+        </template>
+        <template x-if="editMode && !form._has_credentials">
+          <div class="rounded-lg bg-[rgba(239,68,68,0.1)] border border-[rgba(239,68,68,0.3)] p-2 text-xs text-[var(--danger)]">
+            ⚠️ No credentials stored — polling is suspended. Enter email and password below.
+          </div>
+        </template>
+
+        <div class="mb-4">
+          <label class="block text-[0.85rem] font-semibold text-[var(--text-primary)] mb-1.5">FranklinWH Account Email</label>
+          <input class="w-full px-3 py-2 bg-[var(--surface-100)] border border-[var(--border)] rounded-md text-[0.85rem] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]" type="email" autocomplete="email" x-model="form.email" placeholder="you@example.com">
+        </div>
+        <div class="mb-4">
+          <label class="block text-[0.85rem] font-semibold text-[var(--text-primary)] mb-1.5">Password</label>
+          <div class="relative">
+            <input class="w-full px-3 py-2 bg-[var(--surface-100)] border border-[var(--border)] rounded-md text-[0.85rem] text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)] pr-10" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" x-model="form.password" placeholder="••••••••">
+            <button type="button" @click="showPassword = !showPassword" class="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] text-lg hover:text-[var(--text-primary)] focus:outline-none">
+              <span x-text="showPassword ? '🙈' : '👁'"></span>
+            </button>
+          </div>
+        </div>
+
+        <div x-show="!editMode" class="mt-2">
+          <button type="button" class="btn btn-secondary w-full justify-center py-2.5 text-[0.9rem] font-medium" @click="openDiscoveryModal()" :disabled="!form.email || !form.password">
+            🔍 Securely Sync FranklinWH Account
+          </button>
+        </div>
+
+        <div x-show="editMode" class="text-sm font-bold text-[var(--text-secondary)] tracking-wider mt-4 mb-2">📡 Gateway Details</div>
+
+        <div class="mb-4" x-show="editMode">
+          <label class="block text-[0.85rem] font-semibold text-[var(--text-primary)] mb-1.5">Full Serial</label>
+          <input class="w-full px-3 py-2 bg-[var(--surface-50)] border border-[var(--border)] rounded-md text-[0.85rem] text-[var(--text-muted)] cursor-not-allowed" x-model="form.full_serial" placeholder="e.g. FW012345ABCD" disabled>
+          <template x-if="form.full_serial">
+            <span class="block text-[0.7rem] text-[var(--text-muted)] mt-1.5">Short ID: <strong x-text="form.full_serial.slice(-8)"></strong></span>
+          </template>
+        </div>
+        <div class="mb-4" x-show="editMode">
+          <label class="block text-[0.85rem] font-semibold text-[var(--text-primary)] mb-1.5">Display Name</label>
+          <input class="w-full px-3 py-2 bg-[var(--surface-50)] border border-[var(--border)] rounded-md text-[0.85rem] text-[var(--text-muted)] cursor-not-allowed" x-model="form.name" placeholder="e.g. Home Gateway" disabled>
+        </div>
+        <div class="mb-4" x-show="editMode">
+          <label class="block text-[0.85rem] font-semibold text-[var(--text-primary)] mb-1.5">Model (optional)</label>
+          <input class="w-full px-3 py-2 bg-[var(--surface-50)] border border-[var(--border)] rounded-md text-[0.85rem] text-[var(--text-muted)] cursor-not-allowed" x-model="form.model" placeholder="aGate" disabled>
+        </div>
+      </form>
+      <div class="dialog-footer p-4 border-t border-[var(--border)] bg-[var(--surface-1)]">
+        <button class="btn btn-cancel" type="button" @click="panelOpen = false">Cancel</button>
+        <button class="btn btn-confirm" @click="saveGateway()" :disabled="saving">
+          <svg class="icon fa-spin" x-show="saving" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+          <span x-text="editMode ? 'Update' : 'Add Gateway'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Cloud Discovery Modal ─────────────────────────────────────────────── -->
+  <template x-if="discoveryModal.open">
+    <div class="modal-backdrop" x-transition.opacity @click.self="closeDiscoveryModal()">
+      <div class="modal-panel max-w-2xl flex flex-col" style="max-height:85vh">
+        <!-- Header -->
+        <div class="modal-header flex justify-between items-center flex-shrink-0">
+          <div>
+            <h3 class="font-bold">Cloud Gateway Discovery</h3>
+            <p class="text-xs text-[var(--text-muted)] mt-0.5" x-text="discoveryModal.accountEmail ? 'Account: ' + discoveryModal.accountEmail : 'Fetching account info…'"></p>
+          </div>
+          <button class="icon-btn" @click="closeDiscoveryModal()" :disabled="discoveryModal.onboarding">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg>
+          </button>
+        </div>
+
+        <!-- Step indicator. Only shown when the site step is real — a single-site
+             account skips straight to choosing gateways, and numbering a
+             one-answer question is noise. -->
+        <template x-if="discoverySiteCount > 1">
+          <div class="px-6 py-3 border-b border-[var(--border)] flex items-center gap-2 flex-shrink-0">
+            <template x-for="(label, idx) in ['Site', 'Gateways']" :key="idx">
+              <div class="flex items-center gap-2">
+                <button type="button"
+                        :disabled="discoveryModal.onboarding || (idx + 1) >= discoveryModal.step"
+                        @click="if (!discoveryModal.onboarding && (idx + 1) < discoveryModal.step) backToSites()"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border-0 transition-colors"
+                        :class="(idx + 1) < discoveryModal.step
+                          ? 'bg-emerald-500/15 text-emerald-400 cursor-pointer'
+                          : (idx + 1) === discoveryModal.step
+                            ? 'bg-[rgba(99,102,241,.15)] text-[var(--primary)]'
+                            : 'bg-[var(--surface-1)] text-[var(--text-muted)]'">
+                  <span x-show="(idx + 1) < discoveryModal.step">&#10003;</span>
+                  <span x-show="(idx + 1) >= discoveryModal.step" x-text="idx + 1"></span>
+                  <span x-text="label"></span>
+                </button>
+                <span x-show="idx === 0" class="text-[var(--text-muted)] text-[0.6rem]">&#9654;</span>
+              </div>
+            </template>
+            <span class="ml-auto text-xs text-[var(--text-muted)]"
+                  x-show="chosenSite" x-text="chosenSite ? chosenSite.site_name : ''"></span>
+          </div>
+        </template>
+
+        <!-- Body -->
+        <div class="flex-1 overflow-y-auto p-6">
+          <!-- Loading -->
+          <template x-if="discoveryModal.loading">
+            <div class="flex flex-col items-center justify-center gap-3 py-12 text-[var(--text-muted)]">
+              <svg class="icon fa-spin fa-2x" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+              <span class="text-sm">Discovering gateways from cloud…</span>
+            </div>
+          </template>
+
+          <!-- Error -->
+          <!-- Sign in. A fresh install has no credentials, and Discover used to
+               report that as an error naming a setup wizard that does not
+               exist. Entering them is the first thing the add-on needs. -->
+          <template x-if="discoveryModal.needsCredentials">
+            <div class="space-y-3 mb-4">
+              <p class="text-xs text-[var(--text-muted)]">
+                Sign in with the same account you use in the FranklinWH app. The
+                credentials are stored on this device and used only to reach the
+                FranklinWH cloud.
+              </p>
+              <div>
+                <label class="block text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] mb-1.5">Email</label>
+                <input type="email" autocomplete="username" x-model="discoveryModal.email"
+                       @keydown.enter.prevent="submitDiscoveryCredentials()"
+                       class="w-full bg-[var(--surface-1)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm"
+                       placeholder="you@example.com">
+              </div>
+              <div>
+                <label class="block text-[10px] font-black uppercase tracking-widest text-[var(--text-muted)] mb-1.5">Password</label>
+                <input type="password" autocomplete="current-password" x-model="discoveryModal.password"
+                       @keydown.enter.prevent="submitDiscoveryCredentials()"
+                       class="w-full bg-[var(--surface-1)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm">
+              </div>
+              <button type="button" @click="submitDiscoveryCredentials()"
+                      :disabled="discoveryModal.signingIn"
+                      class="btn btn-primary w-full disabled:opacity-50">
+                <span x-text="discoveryModal.signingIn ? 'Signing in…' : 'Sign in and discover'"></span>
+              </button>
+            </div>
+          </template>
+
+          <template x-if="discoveryModal.error">
+            <div class="rounded-lg bg-[rgba(239,68,68,0.1)] border border-[rgba(239,68,68,0.3)] py-0.5 px-3 text-[var(--danger)] text-xs mb-4" x-text="discoveryModal.error"></div>
+          </template>
+
+          <!-- Site list -->
+          <template x-if="!discoveryModal.loading && !discoveryModal.error && discoveryModal.sites.length > 0">
+            <div>
+              <!-- Search + select-all bar -->
+              <div class="flex gap-2 mb-4">
+                <input type="text" x-model="discoveryModal.search" placeholder="Filter gateways…" class="form-control flex-1">
+                <button class="btn btn-secondary text-xs" @click="toggleSelectAll()" x-text="allVisibleSelected ? 'Deselect All' : 'Select All'"></button>
+              </div>
+
+              <!-- Multi-gateway warning -->
+              <template x-if="discoveryModal.selected.length >= 2">
+                <div class="rounded-lg border border-[rgba(245,158,11,.3)] bg-[rgba(245,158,11,.1)] py-0.5 px-3 text-xs text-[var(--warn)] flex items-center gap-2 mb-4">
+                  <svg class="icon flex-shrink-0" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+                  <span><strong>Service restart required.</strong> Adding <span x-text="discoveryModal.selected.length"></span> gateways will trigger an automatic MQTT restart after onboarding.</span>
+                </div>
+              </template>
+
+              <!-- ── STEP 1: choose ONE site ───────────────────────────────
+                   Deliberately single-select. An installer account can be linked
+                   to every customer they have commissioned; listing all those
+                   sites' gateways in one selectable list meant a stray
+                   "Select All" could enrol a stranger's battery. Choosing a site
+                   first makes that impossible rather than merely unlikely. -->
+              <!-- Consent notice.
+                   The cloud authenticates homeowners and installers through one
+                   endpoint, discriminated by a type field, and the login result
+                   reports which this account is — so this is the cloud's own
+                   answer, not a guess. Only when it says nothing do we fall back
+                   to site count, which over-triggers for a second home and is
+                   therefore worded as a reminder rather than an accusation.
+
+                   Sits above the step gate on purpose: an installer with a
+                   single site never sees the site step, and is exactly the
+                   person who most needs to read this. -->
+              <template x-if="installerWarning">
+                <div class="mb-4 rounded-lg border-l-4 border-[var(--warn)] bg-[rgba(217,119,6,0.08)] p-3">
+                  <div class="text-sm font-bold text-[var(--text-primary)] mb-1">
+                    <span x-show="installerWarning === 'confirmed'">This looks like an installer account</span>
+                    <span x-show="installerWarning === 'suspected'">More than one site on this account</span>
+                  </div>
+                  <p class="text-xs text-[var(--text-secondary)] leading-relaxed">
+                    This integration is meant for your own system. It is
+                    <strong>not intended for installer or fleet accounts</strong>.
+                    If any of these sites belong to a customer, do not register
+                    their gateway without their express permission — enrolling it
+                    here streams their telemetry into this Home Assistant and can
+                    issue control commands to their battery. Permission to operate
+                    is not permission to monitor.
+                  </p>
+                  <p x-show="installerWarningReasons.length"
+                     class="text-[11px] text-[var(--text-secondary)] opacity-70 mt-1.5">
+                    Why we think so: <span x-text="installerWarningReasons.join('; ')"></span>.
+                  </p>
+                </div>
+              </template>
+
+              <template x-if="discoveryModal.step === 1 && discoverySiteCount > 1">
+                <div>
+                  <div class="mb-3">
+                    <input type="text" x-model="discoveryModal.siteSearch"
+                           placeholder="Search sites — name, address, site ID, or a gateway serial"
+                           class="input w-full text-sm">
+                    <div class="text-xs text-[var(--text-muted)] mt-1.5">
+                      <span x-text="filteredSites.length"></span> of
+                      <span x-text="discoverySiteCount"></span> site(s)
+                    </div>
+                  </div>
+
+                  <template x-if="filteredSites.length === 0">
+                    <div class="text-center py-10 text-sm text-[var(--text-muted)]">
+                      No sites match that search.
+                    </div>
+                  </template>
+
+                  <template x-for="site in filteredSites" :key="site.site_id">
+                    <button type="button" @click="chooseSite(site.site_id)"
+                            class="w-full text-left mb-2 rounded-lg border border-[var(--border)] px-4 py-3 flex items-center gap-3 hover:bg-[var(--surface-1)] transition-colors">
+                      <svg class="icon text-[var(--text-muted)] flex-shrink-0" aria-hidden="true" viewBox="0 0 24 24"><use href="#home"/></svg>
+                      <div class="flex-1 min-w-0">
+                        <div class="font-semibold text-sm text-[var(--text-primary)]" x-text="site.site_name"></div>
+                        <div class="text-xs text-[var(--text-muted)] truncate" x-text="site.address || ('Site ' + site.site_id)"></div>
+                      </div>
+                      <span class="chip text-xs flex-shrink-0">
+                        <span x-text="(site.gateways || []).length"></span>&nbsp;aGate(s)
+                      </span>
+                      <span class="text-[var(--text-muted)] flex-shrink-0">&#9654;</span>
+                    </button>
+                  </template>
+                </div>
+              </template>
+
+              <!-- ── STEP 2: choose aGates within that one site ──────────────── -->
+              <template x-if="discoveryModal.step === 2 && chosenSite">
+                <div>
+                  <div class="mb-3">
+                    <input type="text" x-model="discoveryModal.search"
+                           placeholder="Search gateways — name or full/partial serial"
+                           class="input w-full text-sm">
+                    <div class="text-xs text-[var(--text-muted)] mt-1.5">
+                      <span x-text="discoveryGateways.length"></span> of
+                      <span x-text="(chosenSite.gateways || []).length"></span>
+                      aGate(s) in <span class="font-semibold" x-text="chosenSite.site_name"></span>
+                    </div>
+                  </div>
+
+                  <template x-if="discoveryGateways.length === 0">
+                    <div class="text-center py-10 text-sm text-[var(--text-muted)]">
+                      No gateways match that search.
+                    </div>
+                  </template>
+
+                  <div class="rounded-lg border border-[var(--border)] overflow-hidden"
+                       x-show="discoveryGateways.length > 0">
+                    <div class="flex items-center justify-between px-4 py-2.5 bg-[var(--surface-1)] border-b border-[var(--border)]">
+                      <span class="font-semibold text-sm" x-text="chosenSite.site_name"></span>
+                      <button class="btn btn-secondary text-xs py-1 px-2"
+                              @click="toggleSiteAll({ ...chosenSite, gateways: discoveryGateways })"
+                              x-text="allSiteSelected({ ...chosenSite, gateways: discoveryGateways }) ? 'Deselect all' : 'Select all'"></button>
+                    </div>
+                    <template x-for="gw in discoveryGateways" :key="gw.serial">
+                      <label class="flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-[var(--border)] last:border-0 transition-colors"
+                             :class="discoveryModal.selected.includes(gw.serial) ? 'bg-[rgba(59,130,246,.06)]' : 'hover:bg-[var(--surface-1)]'"
+                             :for="'chk-' + gw.serial">
+                        <input :id="'chk-' + gw.serial" type="checkbox" :value="gw.serial"
+                               :checked="discoveryModal.selected.includes(gw.serial)"
+                               @change="toggleGateway(gw.serial)"
+                               class="w-4 h-4 accent-[var(--accent)] flex-shrink-0">
+                        <div class="flex-1 min-w-0">
+                          <div class="font-semibold text-sm text-[var(--text-primary)]" x-text="gw.name"></div>
+                          <div class="font-mono text-xs text-[var(--text-muted)]" x-text="gw.serial"></div>
+                        </div>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                          <span class="text-xs text-[var(--text-muted)]" x-text="gw.model"></span>
+                          <span class="chip text-xs" :class="gw.online ? 'ok' : 'muted'">
+                            <span class="status-dot" :class="gw.online ? 'online' : ''"></span>
+                            <span x-text="gw.online ? 'online' : 'offline'"></span>
+                          </span>
+                        </div>
+                      </label>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Legacy flat list — retained only for the single-site case,
+                   where there is no site step to scope it. -->
+              <template x-if="discoverySiteCount <= 1">
+              <template x-for="site in filteredDiscoverySites" :key="site.site_id">
+                <div class="mb-4 rounded-lg border border-[var(--border)] overflow-hidden">
+                  <div class="flex items-center justify-between px-4 py-2.5 bg-[var(--surface-1)] border-b border-[var(--border)]">
+                    <div class="flex items-center gap-2">
+                      <svg class="icon text-[var(--text-muted)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#home"/></svg>
+                      <span class="font-semibold text-sm" x-text="site.site_name"></span>
+                      <span class="text-xs text-[var(--text-muted)] font-mono" x-text="site.address || site.site_id"></span>
+                    </div>
+                    <button class="btn btn-secondary text-xs py-1 px-2" @click="toggleSiteAll(site)" x-text="allSiteSelected(site) ? 'Deselect' : 'Select All'"></button>
+                  </div>
+                  <template x-for="gw in site.gateways" :key="gw.serial">
+                    <label class="flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-[var(--border)] last:border-0 transition-colors"
+                           :class="discoveryModal.selected.includes(gw.serial) ? 'bg-[rgba(59,130,246,.06)]' : 'hover:bg-[var(--surface-1)]'"
+                           :for="'chk-' + gw.serial">
+                      <input :id="'chk-' + gw.serial" type="checkbox" :value="gw.serial"
+                             :checked="discoveryModal.selected.includes(gw.serial)"
+                             @change="toggleGateway(gw.serial)"
+                             class="w-4 h-4 accent-[var(--accent)] flex-shrink-0">
+                      <div class="flex-1 min-w-0">
+                        <div class="font-semibold text-sm text-[var(--text-primary)]" x-text="gw.name"></div>
+                        <div class="font-mono text-xs text-[var(--text-muted)]" x-text="gw.serial"></div>
+                      </div>
+                      <div class="flex items-center gap-2 flex-shrink-0">
+                        <span class="text-xs text-[var(--text-muted)]" x-text="gw.model"></span>
+                        <span class="chip text-xs" :class="gw.online ? 'ok' : 'muted'">
+                          <span class="status-dot" :class="gw.online ? 'online' : ''"></span>
+                          <span x-text="gw.online ? 'online' : 'offline'"></span>
+                        </span>
+                      </div>
+                    </label>
+                  </template>
+                </div>
+              </template>
+              </template>
+
+              <!-- Onboarding progress -->
+              <template x-if="discoveryModal.onboarding">
+                <div class="mt-4 p-4 rounded-lg bg-[var(--surface-1)] border border-[var(--border)]">
+                  <div class="text-sm font-semibold mb-2" x-text="'Onboarding ' + discoveryModal.progressCurrent + ' of ' + discoveryModal.progressTotal + '…'"></div>
+                  <div class="h-2 bg-[var(--surface-0)] rounded-full overflow-hidden">
+                    <div class="h-full bg-[var(--accent)] rounded-full transition-all duration-300"
+                         :style="'width:' + (discoveryModal.progressCurrent / discoveryModal.progressTotal * 100) + '%'"></div>
+                  </div>
+                  <div class="text-xs text-[var(--text-muted)] mt-2" x-text="discoveryModal.progressDetail"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- Empty -->
+          <template x-if="!discoveryModal.loading && !discoveryModal.error && discoveryModal.sites.length === 0">
+            <div class="flex flex-col items-center justify-center py-16 text-center">
+              <div class="text-[2.5rem] leading-none mb-3">✅</div>
+              <h3 class="text-[1.1rem] font-bold text-[var(--text-primary)] mb-1.5">All gateways are registered</h3>
+              <p class="text-[0.85rem] text-[var(--text-muted)]">Every aGate on this account is already in the system.</p>
+            </div>
+          </template>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex-shrink-0 flex items-center justify-between p-4 border-t border-[var(--border)] bg-[var(--surface-1)]">
+          <span class="text-sm text-[var(--text-muted)]">
+            <template x-if="!discoveryModal.onboarding && discoveryModal.step === 1">
+              <span>Choose a site to continue</span>
+            </template>
+            <template x-if="!discoveryModal.onboarding && discoveryModal.step === 2">
+              <span x-text="discoveryModal.selected.length ? discoveryModal.selected.length + ' selected' : 'No gateways selected'"></span>
+            </template>
+            <template x-if="discoveryModal.onboarding">
+              <span class="text-[var(--warn)]">Onboarding in progress…</span>
+            </template>
+          </span>
+          <div class="dialog-footer">
+            <!-- Back only exists when the site step is real; with one site there
+                 is nowhere to go back to. -->
+            <button class="btn btn-cancel text-xs" x-show="discoveryModal.step === 2 && discoverySiteCount > 1"
+                    @click="backToSites()" :disabled="discoveryModal.onboarding">&#9664; Sites</button>
+            <button class="btn btn-cancel text-xs" @click="closeDiscoveryModal()" :disabled="discoveryModal.onboarding">Cancel</button>
+            <button class="btn btn-confirm text-xs" @click="onboardSelected()"
+                    x-show="discoveryModal.step === 2 || discoverySiteCount <= 1"
+                    :disabled="discoveryModal.selected.length === 0 || discoveryModal.onboarding"
+                    x-text="discoveryModal.onboarding ? '⧗ Adding…' : '⊕ Add Selected (' + discoveryModal.selected.length + ')'">
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Delete confirm modal -->
+  <template x-if="deleteTarget">
+    <div class="modal-backdrop" @click.self="deleteTarget = null">
+      <div class="modal-panel max-w-sm border border-[var(--danger)]">
+        <div class="bg-[rgba(239,68,68,.15)] px-4 py-3 border-b border-[var(--danger)]">
+          <h3 class="font-bold flex items-center gap-2 text-[var(--danger)]">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg> Confirm Delete
+          </h3>
+        </div>
+        <div class="p-5">
+          <p class="text-sm font-semibold text-[var(--text-primary)]">Remove <strong x-text="deleteTarget.name || deleteTarget.short_id"></strong>?</p>
+          <p class="text-xs text-[var(--text-muted)] mt-2">The poll loop will be stopped and all DB records deleted. MQTT entities will remain in Home Assistant until manually removed.</p>
+        </div>
+        <div class="p-4 bg-[var(--surface-1)] border-t border-[var(--border)] flex justify-end gap-3">
+          <button class="btn btn-secondary" @click="deleteTarget = null">Cancel</button>
+          <button class="btn text-white bg-[var(--danger)] border-[var(--danger)] hover:bg-red-600" @click="deleteGateway(deleteTarget.short_id)">Delete</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Validate result modal -->
+  <template x-if="validateModal.show">
+    <div class="modal-backdrop" @click.self="validateModal.show = false">
+      <div class="modal-panel max-w-md border" :class="validateModal.ok ? 'border-[var(--ok)]' : 'border-[var(--danger)]'">
+        <div class="px-4 py-3 border-b" :class="validateModal.ok ? 'bg-[rgba(16,185,129,.15)] border-[var(--ok)]' : 'bg-[rgba(239,68,68,.15)] border-[var(--danger)]'">
+          <h3 class="font-bold flex items-center gap-2" :class="validateModal.ok ? 'text-[var(--ok)]' : 'text-[var(--danger)]'">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use :href="validateModal.ok ? '#check-circle' : '#alert-triangle'"/></svg>
+            <span x-text="validateModal.ok ? 'Credentials Valid' : 'Validation Failed'"></span>
+          </h3>
+        </div>
+        <div class="p-5">
+          <template x-if="validateModal.warning">
+            <div class="mb-3 rounded-lg bg-[rgba(245,158,11,.1)] border border-[var(--warn)] p-3 text-xs text-[var(--warn)] flex gap-2">
+              <span x-text="validateModal.warning"></span>
+            </div>
+          </template>
+          <template x-if="!validateModal.ok">
+            <div class="text-sm text-[var(--danger)] break-words whitespace-pre-wrap" x-text="validateModal.error"></div>
+          </template>
+          <template x-if="validateModal.ok && validateModal.gateways && validateModal.gateways.length">
+            <div class="mt-2">
+              <div class="text-xs font-semibold text-[var(--text-secondary)] mb-2">Gateways on this account:</div>
+              <div class="border border-[var(--border)] rounded-lg overflow-hidden bg-[var(--surface-0)]">
+                <template x-for="gw in validateModal.gateways" :key="gw.serial">
+                  <div class="flex justify-between items-center p-3 border-b border-[var(--border)] last:border-0 text-sm">
+                    <div>
+                      <strong x-text="gw.name || gw.serial" class="text-[var(--text-primary)]"></strong>
+                      <span class="text-xs text-[var(--text-muted)] font-mono ml-1" x-text="gw.serial"></span>
+                    </div>
+                    <span class="text-xs font-bold" :class="gw.online ? 'text-[var(--ok)]' : 'text-[var(--text-muted)]'" x-text="gw.online ? '● online' : '○ offline'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="p-3 bg-[var(--surface-1)] border-t border-[var(--border)] flex justify-end">
+          <button class="btn btn-secondary" @click="validateModal.show = false">Close</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+</div>

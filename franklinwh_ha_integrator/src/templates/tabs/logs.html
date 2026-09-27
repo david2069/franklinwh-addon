@@ -1,0 +1,414 @@
+<!-- ── Logs Tab v2 ── App Logs & Audit Trail ── -->
+<div x-data="systemLogs()" x-init="init()" class="space-y-5 max-w-6xl">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#scroll-text"/></svg>
+        System Logs
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5"
+         x-text="activeTab === 'app' ? totalEntries + ' app entries' : auditEntries.length + ' audit events'"></p>
+    </div>
+    <div x-show="activeTab === 'app'" class="flex items-center gap-2 flex-wrap">
+      <button @click="exportJSON()"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-300 hover:border-gray-500 transition">
+        <i class="fas fa-download text-[9px]"></i>JSON
+      </button>
+      <button @click="exportCSV()"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-300 hover:border-gray-500 transition">
+        <i class="fas fa-file-csv text-[9px]"></i>CSV
+      </button>
+      <button @click="showFilters = !showFilters"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition"
+              :class="showFilters
+                ? 'border-red-500/50 bg-red-500/10 text-red-400'
+                : (filters.level || filters.source || filters.search)
+                  ? 'border-amber-500/50 bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/20'
+                  : 'border-gray-600 bg-gray-800 text-gray-300 hover:border-gray-500'"
+              :title="(filters.level || filters.source || filters.search) ? 'Filter ACTIVE — click to edit' : 'Filter'">
+        <i class="fas fa-filter text-[9px]"></i>Filter
+        <!-- Active-filter indicator: amber dot shown when panel is closed but filters are set -->
+        <span x-show="!showFilters && (filters.level || filters.source || filters.search)"
+              class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0 shadow shadow-amber-400/50"
+              title="Filter active"></span>
+      </button>
+      <!-- Column toggle dropdown -->
+      <div class="relative" x-data @click.outside="showColMenu = false">
+        <button @click="showColMenu = !showColMenu"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition"
+                :class="showColMenu ? 'border-primary/50 bg-primary/10 text-primary-light' : 'border-gray-600 bg-gray-800 text-gray-300 hover:border-gray-500'"
+                title="Toggle columns">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#settings"/></svg>
+          Cols
+        </button>
+        <div x-show="showColMenu" x-transition
+             class="absolute right-0 top-full mt-1.5 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 min-w-[160px]">
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-2 px-1">Columns</p>
+          <template x-for="col in colDefs" :key="col.key">
+            <label class="flex items-center gap-2.5 px-1 py-1 rounded cursor-pointer hover:bg-gray-800/60 select-none"
+                   :class="!col.hideable ? 'opacity-50 cursor-not-allowed' : ''">
+              <input type="checkbox"
+                     :checked="isColVisible(col.key)"
+                     :disabled="!col.hideable"
+                     @change="if(col.hideable) toggleCol(col.key)"
+                     class="w-3.5 h-3.5 accent-primary rounded">
+              <span class="text-xs text-gray-300" x-text="col.label"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+      <button @click="openSettings()"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-600 bg-gray-800 text-xs font-bold text-gray-300 hover:border-gray-500 transition">
+        <i class="fas fa-cog text-[9px]"></i>Settings
+      </button>
+    </div>
+  </div>
+
+  <!-- Sub-tabs -->
+  <div class="flex gap-1 border-b border-gray-700">
+    <button @click="activeTab='app'"
+            class="px-5 py-2.5 text-xs font-bold border-b-2 transition"
+            :class="activeTab==='app' ? 'border-primary text-primary-light' : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-terminal text-[9px] mr-1.5"></i>Application Logs
+    </button>
+    <button @click="activeTab='audit'"
+            class="px-5 py-2.5 text-xs font-bold border-b-2 transition"
+            :class="activeTab==='audit' ? 'border-primary text-primary-light' : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-shield-alt text-[9px] mr-1.5"></i>Audit Trail
+    </button>
+    {% if is_admin %}
+    <!-- Security events lived in their own table with no reader at all: every
+         login, credential change, MFA enrolment and TLS change was written and
+         then shown nowhere. Folding them into the tab above would not have
+         helped — that table is 96% scheduler activity, which is exactly how
+         they would stay unfindable. -->
+    <button @click="activeTab='security_events'; if (!securityEntries.length) loadSecurityAudit()"
+            class="px-5 py-2.5 text-xs font-bold border-b-2 transition"
+            :class="activeTab==='security_events' ? 'border-primary text-primary-light' : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-user-shield text-[9px] mr-1.5"></i>Security Events
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- App Logs -->
+  <div x-show="activeTab === 'app'" class="space-y-5">
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-5 gap-3">
+      <template x-for="lvl in ['DEBUG','INFO','WARNING','ERROR','CRITICAL']" :key="lvl">
+        <button @click="setFilterLevel(lvl)"
+                class="rounded-xl border bg-gray-800/60 p-4 text-left hover:scale-[1.02] transition-transform cursor-pointer"
+                :class="{
+                  'border-red-500/40 bg-red-500/5': lvl==='ERROR'||lvl==='CRITICAL',
+                  'border-amber-500/30 bg-amber-500/5': lvl==='WARNING',
+                  'border-emerald-500/25 bg-emerald-500/5': lvl==='INFO',
+                  'border-gray-700': lvl==='DEBUG',
+                }">
+          <p class="text-[8px] font-black uppercase tracking-widest mb-2"
+             :class="{'text-red-500':lvl==='ERROR'||lvl==='CRITICAL','text-amber-500':lvl==='WARNING','text-emerald-500':lvl==='INFO','text-gray-600':lvl==='DEBUG'}"
+             x-text="lvl"></p>
+          <p class="text-2xl font-black tabular-nums"
+             :class="{'text-red-400':lvl==='ERROR'||lvl==='CRITICAL','text-amber-400':lvl==='WARNING','text-emerald-400':lvl==='INFO','text-gray-400':lvl==='DEBUG'}"
+             x-text="summary[lvl] || 0"></p>
+        </button>
+      </template>
+    </div>
+
+    <!-- Filters -->
+    <div x-show="showFilters" x-transition class="rounded-xl border border-gray-700 bg-gray-800/60 p-4">
+      <div class="flex flex-wrap items-end gap-4">
+        <div class="min-w-28">
+          <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Level</label>
+          <select x-model="filters.level"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+            <option value="">All</option>
+            <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option><option>CRITICAL</option>
+          </select>
+        </div>
+        <div class="flex-1 min-w-36">
+          <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Source</label>
+          <input type="text" x-model="filters.source" placeholder="e.g. src.main"
+                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+        </div>
+        <div class="flex-[2] min-w-48">
+          <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Search</label>
+          <input type="text" x-model="filters.search" placeholder="Search message text…"
+                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary"
+                 @keydown.enter="applyFilters()">
+        </div>
+        <div class="flex gap-2">
+          <button @click="clearFilters()"
+                  class="px-4 py-2 rounded-lg border border-gray-600 text-xs font-bold text-gray-400 hover:text-gray-200 hover:border-gray-500 transition">Clear</button>
+          <button @click="applyFilters()"
+                  class="px-4 py-2 rounded-lg bg-primary/20 border border-primary/30 text-primary-light text-xs font-bold hover:bg-primary/30 transition">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log Table -->
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+      <div class="overflow-x-auto max-h-[60vh] overflow-y-auto">
+        <table class="w-full text-xs min-w-[700px]">
+          <thead class="sticky top-0 bg-gray-800 border-b border-gray-700 z-10">
+            <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+              <!-- Time — always visible, sortable -->
+              <th class="px-4 py-3 text-left w-44 cursor-pointer select-none hover:text-gray-400 transition"
+                  @click="cycleSort('ts')">
+                Time <span x-text="sortIcon('ts')" class="ml-0.5 opacity-60"></span>
+              </th>
+              <!-- Level — sortable + hideable -->
+              <th class="px-4 py-3 text-left w-24 cursor-pointer select-none hover:text-gray-400 transition"
+                  x-show="isColVisible('level')"
+                  @click="cycleSort('level')">
+                Level <span x-text="sortIcon('level')" class="ml-0.5 opacity-60"></span>
+              </th>
+              <!-- Source — sortable + hideable -->
+              <th class="px-4 py-3 text-left w-48 cursor-pointer select-none hover:text-gray-400 transition"
+                  x-show="isColVisible('source')"
+                  @click="cycleSort('source')">
+                Source <span x-text="sortIcon('source')" class="ml-0.5 opacity-60"></span>
+              </th>
+              <!-- Message — sortable + hideable -->
+              <th class="px-4 py-3 text-left cursor-pointer select-none hover:text-gray-400 transition"
+                  x-show="isColVisible('message')"
+                  @click="cycleSort('message')">
+                Message <span x-text="sortIcon('message')" class="ml-0.5 opacity-60"></span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr x-show="loading"><td colspan="4" class="text-center py-12 text-gray-500">
+              <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading logs…
+            </td></tr>
+            <tr x-show="!loading && entries.length === 0"><td colspan="4" class="text-center py-12 text-gray-500">
+              <i class="fas fa-inbox text-2xl text-gray-700 block mb-2"></i>No matching log entries.
+            </td></tr>
+            <template x-for="(row, index) in sortedEntries()" :key="index + '_' + row.ts">
+              <tr class="border-b border-gray-700/30 font-mono hover:bg-gray-800/40" :class="index % 2 === 1 ? 'bg-gray-800/20' : ''">
+                <td class="px-4 py-2 text-gray-500 whitespace-nowrap" x-text="row.ts.replace('T',' ').substring(0,19)"></td>
+                <td class="px-4 py-2" x-show="isColVisible('level')">
+                  <span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold"
+                        :class="{
+                          'bg-red-500/20 text-red-400':row.level==='ERROR'||row.level==='CRITICAL',
+                          'bg-amber-500/15 text-amber-400':row.level==='WARNING',
+                          'bg-emerald-500/15 text-emerald-400':row.level==='INFO',
+                          'bg-gray-700 text-gray-400':row.level==='DEBUG',
+                        }"
+                        x-text="row.level"></span>
+                </td>
+                <td class="px-4 py-2 text-gray-400" x-show="isColVisible('source')" x-text="row.source"></td>
+                <td class="px-4 py-2 text-gray-200 break-all" x-show="isColVisible('message')" x-text="row.message"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  
+    <div class="flex items-center justify-between gap-3 pt-2 text-xs">
+      <span class="text-[var(--text-muted)] font-mono" x-text="appPageLabel"></span>
+      <div class="flex gap-2">
+        <button @click="appPage(-1)" :disabled="appOffset === 0"
+                :class="appOffset === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:border-[var(--border-accent)]'"
+                class="px-3 py-1.5 rounded-lg border border-[var(--border)] font-semibold text-[var(--text-secondary)] transition">Previous</button>
+        <button @click="appPage(1)" :disabled="!appHasNext"
+                :class="!appHasNext ? 'opacity-30 cursor-not-allowed' : 'hover:border-[var(--border-accent)]'"
+                class="px-3 py-1.5 rounded-lg border border-[var(--border)] font-semibold text-[var(--text-secondary)] transition">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audit Trail -->
+  <div x-show="activeTab === 'audit'" class="space-y-3">
+    <!-- Unfiltered, this table shows one automation firing every five minutes
+         and nothing else, whatever the row limit. Filtering happens in SQL, so
+         a match older than the visible window is still found. -->
+    <div class="flex gap-2">
+      <input type="text" x-model="auditSearch" @keydown.enter="auditOffset = 0; loadAudit()"
+             placeholder="Filter audit trail — event, user, source or details"
+             class="flex-1 bg-[var(--surface-1)] border border-[var(--border)] rounded-xl px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none focus:border-primary">
+      <button @click="auditOffset = 0; loadAudit()"
+              class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition">Apply</button>
+      <button @click="auditSearch=''; auditOffset = 0; loadAudit()"
+              class="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-semibold text-[var(--text-secondary)] hover:border-[var(--border-accent)] transition">Clear</button>
+    </div>
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+      <div class="overflow-x-auto max-h-[70vh] overflow-y-auto">
+        <table class="w-full text-xs min-w-[700px]">
+          <thead class="sticky top-0 bg-gray-800 border-b border-gray-700 z-10">
+            <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+              <th class="px-4 py-3 text-left w-44">Time</th>
+              <th class="px-4 py-3 text-left w-36">Event</th>
+              <th class="px-4 py-3 text-left w-28">Source</th>
+              <th class="px-4 py-3 text-left w-32">User</th>
+              <th class="px-4 py-3 text-left">Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr x-show="auditLoading"><td colspan="5" class="text-center py-12 text-gray-500">
+              <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading audit trail…
+            </td></tr>
+            <tr x-show="!auditLoading && auditEntries.length === 0"><td colspan="5" class="text-center py-12 text-gray-500">
+              <i class="fas fa-shield-alt text-2xl text-gray-700 block mb-2"></i>No admin events recorded.
+            </td></tr>
+            <template x-for="(row, i) in auditEntries" :key="row.id">
+              <tr class="border-b border-gray-700/30 hover:bg-gray-800/40" :class="i % 2 === 1 ? 'bg-gray-800/20' : ''">
+                <td class="px-4 py-2 text-gray-500 font-mono whitespace-nowrap" x-text="formatDate(row.timestamp)"></td>
+                <td class="px-4 py-2">
+                  <span class="px-2 py-0.5 rounded bg-primary/15 text-primary-light border border-primary/20 text-[9px] font-bold"
+                        x-text="row.event"></span>
+                </td>
+                <td class="px-4 py-2 text-gray-400 font-mono" x-text="row.source"></td>
+                <td class="px-4 py-2 text-gray-200 font-semibold" x-text="row.user"></td>
+                <td class="px-4 py-2 text-gray-400 break-all" x-text="row.details"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div x-show="showSettings" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+       @click.self="showSettings=false">
+    <div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-sliders-h text-primary-light"></i>Backend Log Settings
+        </h4>
+        <button @click="showSettings=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-6 space-y-5">
+        <div class="text-xs text-gray-500 bg-gray-800 rounded-lg px-3 py-2 border-l-2 border-primary leading-relaxed">
+          Modifying rotation values requires a backend restart to take effect.
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-300 mb-2">Log Level</label>
+          <select x-model="settings.log_level"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-100 focus:outline-none focus:border-primary">
+            <option value="DEBUG">DEBUG (Verbose)</option>
+            <option value="INFO">INFO (Standard)</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-gray-300 mb-2">Filename</label>
+          <input type="text" x-model="settings.log_filename"
+                 class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-100 focus:outline-none focus:border-primary">
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-gray-300 mb-2">Max File Size (MB)</label>
+            <input type="number" x-model.number="settings.log_max_mb" min="1" max="100"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-100 focus:outline-none focus:border-primary">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-300 mb-2">Backups to Keep</label>
+            <input type="number" x-model.number="settings.log_backups" min="0" max="20"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-100 focus:outline-none focus:border-primary">
+          </div>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="showSettings=false"
+                class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Cancel</button>
+        <button @click="saveSettings()" :disabled="saving"
+                class="flex-[2] py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-2">
+          <i class="text-[10px] fas" :class="saving ? 'fa-sync-alt animate-spin' : 'fa-save'"></i>
+          <span x-text="saving ? 'Saving…' : 'Apply Settings'"></span>
+        </button>
+      </div>
+    </div>
+  
+    <!-- Pager. Page size follows the window height — see computePageSize(). -->
+    <div class="flex items-center justify-between gap-3 pt-2 text-xs">
+      <span class="text-[var(--text-muted)] font-mono" x-text="auditPageLabel"></span>
+      <div class="flex gap-2">
+        <button @click="auditPage(-1)" :disabled="auditOffset === 0"
+                :class="auditOffset === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:border-[var(--border-accent)]'"
+                class="px-3 py-1.5 rounded-lg border border-[var(--border)] font-semibold text-[var(--text-secondary)] transition">Previous</button>
+        <button @click="auditPage(1)" :disabled="!auditHasNext"
+                :class="!auditHasNext ? 'opacity-30 cursor-not-allowed' : 'hover:border-[var(--border-accent)]'"
+                class="px-3 py-1.5 rounded-lg border border-[var(--border)] font-semibold text-[var(--text-secondary)] transition">Next</button>
+      </div>
+    </div>
+  </div>
+
+
+  {% if is_admin %}
+  <!-- Security Events — admin only.
+       The trail names accounts, records failed sign-ins and shows how the
+       instance is reachable. None of that belongs in a viewer's page, and
+       server-side the endpoint is reached only by an admin session anyway.
+       Inside the guard, not above it: comments are shipped to the browser,
+       so one that names an admin surface leaks it just the same. -->
+  <div x-show="activeTab === 'security_events'" class="space-y-3">
+    <div class="flex gap-2">
+      <input type="text" x-model="securitySearch" @keydown.enter="securityOffset = 0; loadSecurityAudit()"
+             placeholder="Filter security events — e.g. TLS, LOGIN, TOTP, a username"
+             class="flex-1 bg-[var(--surface-1)] border border-[var(--border)] rounded-xl px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none focus:border-primary">
+      <button @click="securityOffset = 0; loadSecurityAudit()"
+              class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition">Apply</button>
+      <button @click="securitySearch=''; securityOffset = 0; loadSecurityAudit()"
+              class="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-semibold text-[var(--text-secondary)] hover:border-[var(--border-accent)] transition">Clear</button>
+    </div>
+
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+      <div class="overflow-x-auto max-h-[70vh] overflow-y-auto">
+        <table class="w-full text-xs min-w-[700px]">
+          <thead class="sticky top-0 bg-gray-800 border-b border-gray-700 z-10">
+            <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+              <th class="px-4 py-3 text-left w-44">Time</th>
+              <th class="px-4 py-3 text-left w-52">Event</th>
+              <th class="px-4 py-3 text-left w-28">Source</th>
+              <th class="px-4 py-3 text-left">Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr x-show="securityLoading"><td colspan="4" class="text-center py-12 text-gray-500">
+              <i class="fas fa-sync-alt animate-spin mr-2"></i>Loading security events…
+            </td></tr>
+            <tr x-show="!securityLoading && securityEntries.length === 0"><td colspan="4" class="text-center py-12 text-gray-500">
+              No security events match.
+            </td></tr>
+            <template x-for="row in securityEntries" :key="row.id">
+              <tr class="border-b border-gray-700/40 hover:bg-gray-800/40">
+                <td class="px-4 py-2.5 font-mono text-gray-400 whitespace-nowrap" x-text="row.ts"></td>
+                <td class="px-4 py-2.5">
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap"
+                        :class="(row.event || '').includes('FAILED') || (row.event || '').includes('DISABLED')
+                                  ? 'bg-red-500/15 text-red-400 border border-red-500/30'
+                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'"
+                        x-text="row.event"></span>
+                </td>
+                <td class="px-4 py-2.5 font-mono text-gray-500" x-text="row.source"></td>
+                <td class="px-4 py-2.5 text-gray-300" x-text="row.detail"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  
+    <!-- Pager. Page size follows the window height — see computePageSize(). -->
+    <div class="flex items-center justify-between gap-3 pt-2 text-xs">
+      <span class="text-[var(--text-muted)] font-mono" x-text="securityPageLabel"></span>
+      <div class="flex gap-2">
+        <button @click="securityPage(-1)" :disabled="securityOffset === 0"
+                :class="securityOffset === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:border-[var(--border-accent)]'"
+                class="px-3 py-1.5 rounded-lg border border-[var(--border)] font-semibold text-[var(--text-secondary)] transition">Previous</button>
+        <button @click="securityPage(1)" :disabled="!securityHasNext"
+                :class="!securityHasNext ? 'opacity-30 cursor-not-allowed' : 'hover:border-[var(--border-accent)]'"
+                class="px-3 py-1.5 rounded-lg border border-[var(--border)] font-semibold text-[var(--text-secondary)] transition">Next</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+<!-- systemLogs() loaded from admin.html head -->

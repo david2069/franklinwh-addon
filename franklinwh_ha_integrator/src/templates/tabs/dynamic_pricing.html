@@ -1,0 +1,1054 @@
+<!-- dynamic_pricing v2 — Pricing (formerly "Pricing Model"; renamed 2026-08-08 BD-02) — live forecast dashboard -->
+<div x-data="dynamicPricingTab()" x-init="init()" class="w-full">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#trending-up"/></svg>
+        Pricing
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Wholesale electricity forecast and real-time dispatch signals</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <!-- Compact HA Connection Status Stub -->
+      <div x-data="{
+             haConnected: false,
+             haHost: '',
+             async loadHAStatus() {
+               try {
+                 const res = await fetch('api/automation/notifications/settings');
+                 const data = await res.json();
+                 this.haConnected = data.ha_connected;
+                 this.haHost = data.ha_host || '';
+               } catch(e) {}
+             },
+             navigateToHA() {
+               this.$store.app.activeTab = 'home_automation';
+               const haEl = document.querySelector('[x-data=\'homeAutomationTab()\']');
+               if (haEl && window.Alpine) {
+                 const data = Alpine.$data(haEl);
+                 if (data) {
+                   data.activeView = 'config';
+                   data.loadConfig();
+                 }
+               }
+             }
+           }" 
+           x-init="loadHAStatus()"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--border)]" 
+           style="background:var(--surface-1)">
+        <span class="w-2 h-2 rounded-full" :class="haConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'"></span>
+        <span class="text-[9px] font-black uppercase tracking-wider text-[var(--text-secondary)]" 
+              x-text="haConnected ? 'HA: Connected' : 'HA: Disconnected'"></span>
+        <button @click="navigateToHA()" 
+                class="text-[8px] font-black uppercase text-primary hover:underline ml-1">
+          Edit
+        </button>
+      </div>
+
+      <button class="btn btn-secondary" @click="refresh()" :disabled="loading">
+        <svg class="icon" :class="loading ? 'fa-spin' : ''" aria-hidden="true" viewBox="0 0 24 24"><use :href="loading ? '#loader' : '#refresh-cw'"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <template x-if="error">
+    <div class="card bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.3)] text-[var(--danger)] p-5 mb-6 text-sm" x-text="error"></div>
+  </template>
+
+  <!-- Loading -->
+  <template x-if="!error && loading">
+    <div class="card flex items-center justify-center gap-3 py-16 text-[var(--text-muted)]">
+      <svg class="icon fa-spin" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg> Fetching live pricing data…
+    </div>
+  </template>
+
+  <!-- Navigation Sub-Tabs -->
+  <div class="flex items-center gap-2 border-b border-[var(--border)] mb-6 px-2 overflow-x-auto no-scrollbar">
+    <template x-for="t in ['overview', 'setup', 'amber', 'localvolts', 'aemo', 'tou', 'comend', 'alerts']" :key="t">
+      <button @click="dynamicPricingView = t"
+              class="flex items-center gap-1.5 px-4 py-2.5 border-b-2 -mb-px transition-all"
+              :class="dynamicPricingView === t
+                ? 'border-[var(--primary-light)] text-[var(--primary-light)] text-sm font-bold'
+                : 'border-transparent text-gray-400 font-medium text-xs hover:text-gray-200 hover:border-gray-500'">
+        <i class="fas fa-fw" :class="{
+          'overview': 'fa-chart-line',
+          'setup': 'fa-cog',
+          'amber': 'fa-bolt',
+          'localvolts': 'fa-plug',
+          'aemo': 'fa-industry',
+          'tou': 'fa-clock',
+          'comend': 'fa-plug-circle-bolt',
+          'alerts': 'fa-bell'
+        }[t]"></i>
+        <span x-text="{
+          'overview': 'Overview',
+          'setup': 'Setup',
+          'amber': 'Amber',
+          'localvolts': 'Localvolts',
+          'aemo': 'AEMO',
+          'tou': 'FranklinWH TOU Schedule',
+          'comend': 'ComEd',
+          'alerts': 'Alerts'
+        }[t]"></span>
+      </button>
+    </template>
+  </div>
+
+  <div x-show="dynamicPricingView === 'overview'" x-transition>
+
+  <!-- Main dashboard -->
+  <template x-if="!error && pricingData">
+    <div class="space-y-6">
+
+      <!-- VPP Override Banner -->
+      <template x-if="$store.app.isVppMode">
+        <div class="rounded-2xl border p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 transition-all"
+             style="background: linear-gradient(135deg, rgba(6,182,212,0.1) 0%, rgba(168,85,247,0.1) 100%); border-color: rgba(6,182,212,0.3); backdrop-filter: blur(12px);">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center relative flex-shrink-0"
+                 style="background: rgba(6,182,212,0.15); border: 1px solid rgba(6,182,212,0.25);">
+               <i class="fas fa-network-wired text-cyan-400 animate-pulse text-lg"></i>
+               <span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-cyan-400 rounded-full animate-ping"></span>
+               <span class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-cyan-400 rounded-full"></span>
+            </div>
+            <div>
+              <h4 class="text-sm font-black text-gray-100 flex items-center gap-2">
+                Virtual Power Plant (VPP) Control Active
+              </h4>
+              <p class="text-xs text-gray-300 mt-0.5">
+                The system is being controlled remotely by a third-party VPP provider or local Modbus TCP command.
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 bg-gray-900/60 px-4 py-2.5 rounded-xl border border-gray-800 self-start sm:self-auto font-mono text-xs">
+            <span class="text-gray-400 uppercase tracking-widest text-[9px] font-bold">VPP Flow</span>
+            <span class="h-4 w-px bg-gray-800"></span>
+            <template x-if="$store.app.vppPowerKw > 0.05">
+              <span class="text-emerald-400 font-bold flex items-center gap-1.5">
+                <i class="fas fa-arrow-up text-[10px]"></i> Discharging <span class="text-gray-100" x-text="Math.abs($store.app.vppPowerKw).toFixed(2) + ' kW'"></span>
+              </span>
+            </template>
+            <template x-if="$store.app.vppPowerKw &lt; -0.05">
+              <span class="text-purple-400 font-bold flex items-center gap-1.5">
+                <i class="fas fa-arrow-down text-[10px]"></i> Charging <span class="text-gray-100" x-text="Math.abs($store.app.vppPowerKw).toFixed(2) + ' kW'"></span>
+              </span>
+            </template>
+            <template x-if="Math.abs($store.app.vppPowerKw) &lt;= 0.05">
+              <span class="text-gray-400 font-bold flex items-center gap-1">
+                <i class="fas fa-minus text-[10px]"></i> Idle / Standby
+              </span>
+            </template>
+          </div>
+        </div>
+      </template>
+      
+      <!-- TOP SECTION: CONCISE PRICING & SOURCE SUMMARY -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Card 1: Pricing Type & Source -->
+        <div class="col-span-1 md:col-span-1 rounded-2xl p-5 border border-gray-700 bg-gray-800/40 flex flex-col justify-between shadow-xl">
+          <div>
+            <span class="text-[9px] font-black uppercase tracking-widest text-gray-500 block mb-1">Pricing Model</span>
+            
+            <!-- Service Selector Dropdown -->
+            <template x-if="services.length > 0">
+              <div class="space-y-3 mt-1.5 mb-2">
+                <select :value="selectedServiceId"
+                        @change="selectService($event.target.value)"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs font-bold text-gray-100 focus:outline-none focus:border-primary-light">
+                  <template x-for="s in services" :key="s.id">
+                    <option :value="s.id" x-text="s.name + (s.id === activeServiceId ? ' (Active)' : '')"></option>
+                  </template>
+                </select>
+                
+                <!-- Status Pills and Action Button -->
+                <div class="flex items-center gap-2">
+                  <template x-if="selectedServiceId === activeServiceId">
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Active for Gateway
+                    </span>
+                  </template>
+                  <template x-if="selectedServiceId !== activeServiceId">
+                    <button @click="activateServiceForGateway()"
+                            class="w-full btn btn-primary py-1.5 text-xs font-bold rounded-xl flex items-center justify-center gap-1">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                        <use href="#check-circle"/>
+                      </svg>
+                      Activate Model
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </template>
+            
+            <template x-if="services.length === 0">
+              <div class="mt-2 text-xs text-gray-400">
+                No pricing models configured. 
+                <button @click="$store.app.setTab('pricing')" class="text-primary hover:underline font-bold block mt-1">
+                  Configure Pricing in Setup →
+                </button>
+              </div>
+            </template>
+
+            <p class="text-[10px] text-gray-400 mt-3 leading-relaxed"
+               x-text="{
+                 'amber': 'Dynamic Pricing API — wholesale market prices synced live.',
+                 'franklinwh_tou': 'Time-of-Use (TOU) Schedule — static peak/shoulder/off-peak rates.',
+                 'localvolts': 'Peer-to-Peer (P2P) Wholesale — direct access to 5-min retail market.',
+                 'aemo': 'National Electricity Market (NEM) — 30-min regional dispatch pricing.',
+                 'comed': 'ComEd Hourly Pricing — real-time wholesale pricing for Illinois.',
+                 'flat': 'Flat Tariff — fixed import and export rates.'
+               }[pricingData?.provider] || 'Static or manual price configuration.'">
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-gray-700/50 flex items-center justify-between text-[9px] font-bold text-gray-500 uppercase tracking-widest">
+            <span>Interval: <strong class="text-gray-300" x-text="(pricingData?.interval_min || 30) + 'm'"></strong></span>
+            <span>Region: <strong class="text-gray-300" x-text="pricingData?.region || '—'"></strong></span>
+          </div>
+        </div>
+
+        <!-- Card 2: Current Buy from Grid Rate -->
+        <div class="col-span-1 rounded-2xl p-5 border border-blue-500/20 bg-blue-500/5 flex flex-col justify-between shadow-xl">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-[9px] font-black uppercase tracking-widest text-blue-400">Buy from Grid</span>
+              <span class="text-[9px] font-bold px-2 py-0.5 rounded-full"
+                    :style="'background:' + getPricingBgColor(pricingData?.import_c_kwh, pricingData?.demand_window, 'import') + '22; color:' + getPricingBgColor(pricingData?.import_c_kwh, pricingData?.demand_window, 'import')"
+                    x-text="pricingData?.tariff_type || 'CURRENT'"></span>
+            </div>
+            <div class="flex items-baseline gap-1 mt-3">
+              <span class="text-4xl font-black text-gray-100 tracking-tight" x-text="Math.round(pricingData?.import_c_kwh || 0)">0</span>
+              <span class="text-lg font-bold text-gray-400">¢<span class="text-xs font-normal">/kWh</span></span>
+            </div>
+            <p class="text-[9px] text-gray-400 mt-2 leading-relaxed" x-text="summary || 'Live import rate.'"></p>
+          </div>
+        </div>
+
+        <!-- Card 3: Current Sell to Grid Rate -->
+        <div class="col-span-1 rounded-2xl p-5 border border-yellow-500/20 bg-yellow-500/5 flex flex-col justify-between shadow-xl">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-[9px] font-black uppercase tracking-widest text-yellow-500">Sell to Grid</span>
+              <span class="text-[9px] font-bold px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">FEED-IN</span>
+            </div>
+            <div class="flex items-baseline gap-1 mt-3">
+              <span class="text-4xl font-black text-yellow-400 tracking-tight"
+                    x-text="pricingData?.export_c_kwh != null ? Math.round(pricingData.export_c_kwh) : '—'">—</span>
+              <span class="text-lg font-bold text-yellow-500/80" x-show="pricingData?.export_c_kwh != null">¢<span class="text-xs font-normal">/kWh</span></span>
+            </div>
+            <p class="text-[9px] text-gray-400 mt-2 leading-relaxed"
+               x-text="pricingData?.export_c_kwh != null
+                 ? (pricingData.export_c_kwh < 0 ? 'Export penalty active — exporting costs money.' : 'Solar export feed-in credit active.')
+                 : 'Export credit not supported by this provider.'">
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Demand Window & Spike strips -->
+      <div class="flex items-center justify-center gap-3 mt-4 mb-2 flex-wrap">
+        <span x-show="pricingData?.demand_window"
+              class="text-[10px] font-black tracking-widest uppercase px-3 py-1.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/30 flex items-center gap-1.5 animate-pulse">
+          <i class="fas fa-tachometer-alt text-[9px]"></i> DEMAND WINDOW ACTIVE
+        </span>
+        <span x-show="pricingData?.spike_status && pricingData.spike_status !== 'NONE'"
+              class="text-[10px] font-black tracking-widest uppercase px-3 py-1.5 rounded-full border flex items-center gap-1.5 animate-pulse"
+              :class="pricingData?.spike_status === 'SPIKE' ? 'bg-red-500/15 text-red-400 border-red-500/40' : 'bg-amber-500/10 text-amber-400 border-amber-500/30'"
+              x-text="'⚡ PRICE ' + (pricingData?.spike_status || '')"></span>
+      </div>
+
+      <!-- TWO-COLUMN LAYOUT FOR FORECAST + DAILY STATS -->
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+        
+        <!-- Left: Daily Buy & Sell Ranges (Peak/Low stats card) -->
+        <div class="col-span-1 flex flex-col gap-4">
+          <div class="bg-gray-800/40 rounded-2xl p-4 shadow-xl border border-gray-700/50 flex flex-col justify-between space-y-4">
+            <div>
+              <h5 class="text-[9px] font-black uppercase tracking-widest text-gray-400 mb-2 flex items-center gap-2">
+                <i class="fas fa-chart-line text-blue-500"></i> Daily Buy Range
+              </h5>
+              <div class="space-y-2">
+                <div class="flex justify-between items-center group">
+                  <div>
+                    <div class="text-[9px] text-gray-500 uppercase font-bold tracking-tighter">Daily Low</div>
+                    <div class="text-xs text-gray-400 font-mono"
+                        x-text="pricingData?.stats?.import?.min_time ? new Date(pricingData?.stats?.import?.min_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false}) : '--:--'">
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <span class="text-xl font-black text-green-500 leading-none"
+                        x-text="Math.round(pricingData?.stats?.import?.min || 0)">0</span>
+                    <span class="text-[10px] font-bold text-green-500/60 uppercase">¢</span>
+                  </div>
+                </div>
+                <div class="flex justify-between items-center group">
+                  <div>
+                    <div class="text-[9px] text-gray-500 uppercase font-bold tracking-tighter">Daily Peak</div>
+                    <div class="text-xs text-gray-400 font-mono"
+                        x-text="pricingData?.stats?.import?.max_time ? new Date(pricingData?.stats?.import?.max_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false}) : '--:--'">
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <span class="text-xl font-black text-red-500 leading-none"
+                        x-text="Math.round(pricingData?.stats?.import?.max || 0)">0</span>
+                    <span class="text-[10px] font-bold text-red-500/60 uppercase">¢</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-gray-700/50">
+              <h5 class="text-[9px] font-black uppercase tracking-widest text-gray-400 mb-2 flex items-center gap-2">
+                <i class="fas fa-sun text-yellow-500"></i> Daily Sell Range
+              </h5>
+              <div class="space-y-2">
+                <div class="flex justify-between items-center group">
+                  <div>
+                    <div class="text-[9px] text-gray-500 uppercase font-bold tracking-tighter">Solar Low</div>
+                    <div class="text-xs text-gray-400 font-mono"
+                        x-text="pricingData?.stats?.export?.min_time ? new Date(pricingData?.stats?.export?.min_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false}) : '--:--'">
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <span class="text-xl font-black text-orange-400 leading-none"
+                        x-text="Math.round(pricingData?.stats?.export?.min || 0)">0</span>
+                    <span class="text-[10px] font-bold text-orange-400/60 uppercase">¢</span>
+                  </div>
+                </div>
+                <div class="flex justify-between items-center group">
+                  <div>
+                    <div class="text-[9px] text-gray-500 uppercase font-bold tracking-tighter">Solar Peak</div>
+                    <div class="text-xs text-gray-400 font-mono"
+                        x-text="pricingData?.stats?.export?.max_time ? new Date(pricingData?.stats?.export?.max_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false}) : '--:--'">
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <span class="text-xl font-black text-yellow-500 leading-none"
+                        x-text="Math.round(pricingData?.stats?.export?.max || 0)">0</span>
+                    <span class="text-[10px] font-bold text-yellow-500/60 uppercase">¢</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right / Main bottom area: Forecast list or provider-specific view -->
+        <div class="col-span-1 lg:col-span-3 space-y-4">
+          
+          <!-- Forecast Providers View: Amber / TOU / AEMO / ComEd -->
+          <div x-show="['amber', 'franklinwh_tou', 'aemo', 'comed'].includes(pricingData?.provider)">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-[10px] font-black uppercase tracking-widest text-gray-500">Buy &amp; Sell Forecasts</span>
+              <span class="text-[9px] text-gray-600">Unified dual-channel 24h view</span>
+            </div>
+            
+            <div class="card p-0 overflow-hidden">
+              <!-- Grid Header -->
+              <div class="flex items-center px-4 py-2 bg-gray-800/60 text-[9px] font-black uppercase tracking-wider text-gray-500 border-b border-gray-700">
+                <span class="w-1.5 mr-2.5"></span>
+                <span class="w-24">Interval / Time</span>
+                <span class="w-28 text-right pr-6">Buy (Import)</span>
+                <span class="w-28 text-right pr-6">Sell (Export)</span>
+                <span class="w-32 text-center">Recommendation</span>
+                <span class="w-28 text-center">Spike</span>
+                <span class="flex-1">Tariff Period</span>
+              </div>
+
+              <!-- List rows -->
+              <template x-for="group in getGroupedForecast().slice(0, 48)" :key="group.key">
+                <div class="border-b border-[var(--border)] last:border-0">
+                   <!-- Group header (click to expand) -->
+                  <div class="flex items-center cursor-pointer px-4 py-3 transition-colors hover:bg-[var(--surface-1)]" @click="toggleGroup(group.key)">
+                    
+                    <!-- Double Price color bars -->
+                    <div class="flex gap-0.5 w-1.5 h-10 mr-2.5 flex-shrink-0">
+                      <div class="w-0.5 h-full rounded-full"
+                           :style="'background:' + getPricingBgColor(group.avg_import, group.is_demand, 'import')"></div>
+                      <div class="w-0.5 h-full rounded-full"
+                           :style="'background:' + getPricingBgColor(group.avg_export, group.is_demand, 'export')"></div>
+                    </div>
+
+                    <!-- Time info -->
+                    <div class="w-24 flex-shrink-0">
+                      <div class="text-sm font-bold text-[var(--text-primary)]" x-text="formatTime(group.start_time)"></div>
+                      <div class="text-[9px] text-[var(--text-muted)]" x-text="group.duration_mins + ' min'"></div>
+                    </div>
+
+                    <!-- Buy Averages -->
+                    <div class="w-28 text-right pr-6 flex-shrink-0">
+                      <span class="text-sm font-black" :style="'color:' + getPricingBgColor(group.avg_import, group.is_demand, 'import')"
+                            x-text="group.avg_import.toFixed(2) + '¢'"></span>
+                    </div>
+
+                    <!-- Sell Averages -->
+                    <div class="w-28 text-right pr-6 flex-shrink-0">
+                      <span class="text-sm font-black" :style="'color:' + getPricingBgColor(group.avg_export, group.is_demand, 'export')"
+                            x-text="group.avg_export != null ? group.avg_export.toFixed(2) + '¢' : '—'"></span>
+                    </div>
+
+                    <!-- Recommendation -->
+                    <div class="w-32 text-center flex-shrink-0">
+                      <span class="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider"
+                            :style="getRecommendationStyle(group)"
+                            x-text="getRecommendationText(group)"></span>
+                    </div>
+
+                    <!-- Spike Column -->
+                    <div class="w-28 text-center flex-shrink-0">
+                      <template x-if="group.spike_status && group.spike_status.toLowerCase() !== 'none'">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-red-500/20 text-red-400"
+                              x-text="group.spike_status"></span>
+                      </template>
+                      <template x-if="!group.spike_status || group.spike_status.toLowerCase() === 'none'">
+                        <span class="text-gray-600 text-xs">—</span>
+                      </template>
+                    </div>
+
+                    <!-- Badges -->
+                    <div class="flex-1 flex flex-wrap items-center gap-1.5 min-w-0">
+                      <span x-show="group.items[0]?.tariff_type" class="chip text-[9px] font-bold py-0.5" style="background:var(--surface-2)" x-text="group.items[0]?.tariff_type"></span>
+                      <span x-show="group.is_demand" class="chip text-[9px] font-bold py-0.5" style="background:rgba(147,51,234,.2);color:#a855f7">DEMAND</span>
+                      <span x-show="group.avg_renewables != null && group.avg_renewables > 0" class="text-[9px] font-bold text-[var(--ok)]"
+                            x-text="Math.round(group.avg_renewables) + '% 🌱'"></span>
+                    </div>
+
+                    <!-- Expand icon -->
+                    <svg class="icon text-[var(--text-muted)] flex-shrink-0 transition-transform ml-2" aria-hidden="true"
+                         :style="(expandedGroups || []).includes(group.key) ? 'transform:rotate(90deg)' : ''" viewBox="0 0 24 24"><use href="#chevron-right"/></svg>
+                  </div>
+
+                  <!-- Expanded sub-rows -->
+                  <template x-if="(expandedGroups || []).includes(group.key)">
+                    <div class="bg-[var(--surface-0)] px-4 pb-3 border-t border-gray-700/30">
+                      <template x-for="item in group.items" :key="item.start">
+                        <div class="flex items-center py-2 border-b border-gray-700/20 last:border-0 text-xs">
+                          <span class="text-[var(--text-muted)] font-mono text-[10px] w-28 flex-shrink-0 pl-4" x-text="formatTime(item.start)"></span>
+                          
+                          <!-- Buy Sub-interval -->
+                          <div class="w-28 text-right pr-6 flex-shrink-0 font-semibold"
+                               :style="'color:' + getPricingBgColor(item.import_c_kwh, item.demand_window, 'import')"
+                               x-text="item.import_c_kwh.toFixed(3) + '¢'"></div>
+                          
+                          <!-- Sell Sub-interval -->
+                          <div class="w-28 text-right pr-6 flex-shrink-0 font-semibold"
+                               :style="'color:' + getPricingBgColor(item.export_c_kwh, item.demand_window, 'export')"
+                               x-text="item.export_c_kwh != null ? item.export_c_kwh.toFixed(3) + '¢' : '—'"></div>
+
+                          <!-- Recommendation Sub-interval -->
+                          <div class="w-32 text-center flex-shrink-0">
+                            <span class="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider"
+                                  :style="getItemRecommendationStyle(item)"
+                                  x-text="getItemRecommendationText(item)"></span>
+                          </div>
+
+                          <!-- Spike Sub-interval -->
+                          <div class="w-28 text-center flex-shrink-0">
+                            <template x-if="item.spike_status && item.spike_status.toLowerCase() !== 'none'">
+                              <span class="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-red-500/20 text-red-400"
+                                    x-text="item.spike_status"></span>
+                            </template>
+                            <template x-if="!item.spike_status || item.spike_status.toLowerCase() === 'none'">
+                              <span class="text-gray-600 text-xs">—</span>
+                            </template>
+                          </div>
+
+                          <!-- Sub badges -->
+                          <span class="text-[10px] text-[var(--text-muted)] flex-1" x-text="item.tariff_type || '—'"></span>
+                          <span class="text-[10px] text-[var(--ok)] pr-6" x-show="item.renewables_pct != null" x-text="item.renewables_pct + '% 🌱'"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                </div>
+              </template>
+              
+              <template x-if="getGroupedForecast().length === 0">
+                <div class="flex flex-col items-center justify-center gap-3 py-16 text-center text-[var(--text-muted)]">
+                  <div>No forecast data from provider.</div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- LocalVolts Specific View -->
+          <div x-show="pricingData?.provider === 'localvolts'" class="rounded-xl border border-gray-700 bg-gray-800/40 p-5 space-y-4 shadow-xl">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                <i class="fas fa-plug text-emerald-400 text-lg"></i>
+              </div>
+              <div>
+                <h4 class="font-bold text-gray-100">LocalVolts P2P Active</h4>
+                <p class="text-[10px] text-gray-500">Australia — 5-minute peer-to-peer retail wholesale market</p>
+              </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4 bg-gray-900/60 p-4 rounded-lg border border-gray-800">
+              <div class="text-center">
+                <span class="text-[9px] uppercase tracking-wider text-gray-500 font-bold block mb-1">Live Import Price</span>
+                <span class="text-2xl font-black text-emerald-400 font-mono" x-text="(pricingData?.import_c_kwh ?? '—') + '¢'"></span>
+              </div>
+              <div class="text-center border-l border-gray-800">
+                <span class="text-[9px] uppercase tracking-wider text-gray-500 font-bold block mb-1">Live P2P Export Price</span>
+                <span class="text-2xl font-black text-yellow-400 font-mono" x-text="(pricingData?.export_c_kwh != null ? pricingData.export_c_kwh + '¢' : '—')"></span>
+              </div>
+            </div>
+            
+            <p class="text-xs text-gray-400 text-center leading-relaxed">
+              Navigate to the <a href="#" @click.prevent="dynamicPricingView = 'localvolts'" class="text-emerald-400 hover:underline font-bold">LocalVolts tab</a> to view NMI metrics, full setup parameters, and active peer matching status.
+            </p>
+          </div>
+
+          <!-- Flat Tariff Specific View -->
+          <div x-show="pricingData?.provider === 'flat'" class="rounded-xl border border-gray-700 bg-gray-800/40 p-5 space-y-4 text-center shadow-xl">
+            <i class="fas fa-info-circle text-blue-400 text-2xl"></i>
+            <div>
+              <h4 class="font-bold text-gray-100">Flat Rate / Static Tariff Active</h4>
+              <p class="text-xs text-gray-500 mt-1">Rates are fixed and do not follow real-time wholesale or dynamic spot markets.</p>
+            </div>
+            <div class="inline-grid grid-cols-2 gap-8 bg-gray-900/60 px-6 py-4 rounded-lg border border-gray-800 mx-auto">
+              <div>
+                <span class="text-[9px] uppercase tracking-wider text-gray-500 font-bold block mb-1">Flat Buy</span>
+                <span class="text-xl font-black text-blue-400 font-mono" x-text="(pricingData?.import_c_kwh ?? '—') + '¢'"></span>
+              </div>
+              <div>
+                <span class="text-[9px] uppercase tracking-wider text-gray-500 font-bold block mb-1">Flat Sell (FiT)</span>
+                <span class="text-xl font-black text-yellow-400 font-mono" x-text="(pricingData?.export_c_kwh != null ? pricingData.export_c_kwh + '¢' : '—')"></span>
+              </div>
+            </div>
+            <p class="text-xs text-gray-400">
+              Want dynamic rates? Go to <strong class="text-gray-300">Services → Edit Utility Service</strong> to configure a dynamic pricing provider.
+            </p>
+          </div>
+
+          <!-- Bottom metadata bar -->
+          <div class="flex flex-wrap items-center justify-between text-xs text-[var(--text-muted)] mt-4 gap-2 px-1">
+            <span>Interval: <b x-text="(pricingData?.interval_min || 30) + ' minutes'"></b></span>
+            <span>Provider: <b class="text-[var(--text-secondary)]" x-text="pricingData?.provider || '—'"></b></span>
+            <span>Region: <b x-text="pricingData?.region || '—'"></b></span>
+            <span>Currency: <b x-text="pricingData?.currency || '—'"></b></span>
+            <span x-show="pricingData?.last_updated" x-text="'Updated: ' + new Date(pricingData?.last_updated).toLocaleTimeString()"></span>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  </template>
+
+  </div> <!-- Close the Overview x-show wrapper -->
+  
+  <div x-show="dynamicPricingView === 'amber'" x-transition>
+    <div x-data="sdPricesPanel()" x-init="init(); $watch('$store.app.selectedGateway', () => init())" class="pb-12">
+      {% include 'tabs/components/amber_prices.html' %}
+    </div>
+  </div>
+
+  <div x-show="dynamicPricingView === 'alerts'" x-transition>
+    <div x-data="sdNotificationsPanel()" x-init="init(); $watch('$store.app.selectedGateway', () => init())" class="pb-12">
+      {% include 'tabs/components/amber_alerts.html' %}
+    </div>
+  </div>
+
+  <!-- ── Setup Sub-Tab ────────────────────────────────────────────────── -->
+  <div x-show="dynamicPricingView === 'setup'" x-transition class="space-y-6 pb-12">
+    <div class="rounded-xl border border-gray-700 bg-gray-800/40 p-5 shadow-xl">
+      <h3 class="text-sm font-black text-gray-100 uppercase tracking-widest flex items-center gap-2 mb-2">
+        <i class="fas fa-cog text-blue-400"></i> Pricing Models Setup
+      </h3>
+      <p class="text-xs text-gray-400 mb-6">Configure credentials, developer emulation modes, and test connection diagnostics for each pricing model provider.</p>
+
+      <div class="space-y-4">
+        <template x-for="model in pricingModels" :key="model.id">
+          <div class="rounded-xl border border-gray-700 bg-gray-900/30 overflow-hidden">
+            <!-- Accordion Header -->
+            <div class="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-800/40 transition-colors" @click="toggleModelSetup(model.id)">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">
+                  <i class="fas fa-fw" :class="{
+                    'flat': 'fa-file-invoice-dollar',
+                    'amber': 'fa-bolt',
+                    'localvolts': 'fa-plug',
+                    'aemo': 'fa-industry',
+                    'franklinwh_tou': 'fa-clock',
+                    'comed': 'fa-plug-circle-bolt'
+                  }[model.id]"></i>
+                </div>
+                <div>
+                  <span class="font-bold text-gray-200 text-sm" x-text="model.name"></span>
+                  <span class="text-[10px] text-gray-500 font-mono ml-2" x-text="model.id"></span>
+                </div>
+              </div>
+              
+              <div class="flex items-center gap-3">
+                <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border"
+                      :class="{
+                        'Active': 'bg-green-500/10 text-green-400 border-green-500/25',
+                        'Available': 'bg-blue-500/10 text-blue-400 border-blue-500/25',
+                        'Unavailable': 'bg-amber-500/10 text-amber-400 border-amber-500/25'
+                      }[model.status]"
+                      x-text="model.status"></span>
+                <i class="fas" :class="expandedModelSetup === model.id ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:10px; color:var(--text-muted)"></i>
+              </div>
+            </div>
+
+            <!-- Accordion Content -->
+            <div x-show="expandedModelSetup === model.id" class="p-5 border-t border-gray-800 bg-gray-900/50 space-y-4" x-cloak x-transition>
+              
+              <!-- Flat Rate -->
+              <template x-if="model.id === 'flat'">
+                <div class="space-y-4">
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Flat Buy Rate (¢/kWh)</label>
+                      <input type="number" step="0.01" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono focus:outline-none focus:border-blue-500"
+                             x-model.number="model.settings.import_c_kwh">
+                    </div>
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Flat Sell Rate (¢/kWh)</label>
+                      <input type="number" step="0.01" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono focus:outline-none focus:border-blue-500"
+                             x-model.number="model.settings.export_c_kwh">
+                    </div>
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Tariff Period Label</label>
+                      <input type="text" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full focus:outline-none focus:border-blue-500"
+                             x-model="model.settings.tariff_type" placeholder="e.g. SHOULDER">
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Amber Electric -->
+              <template x-if="model.id === 'amber'">
+                <div class="space-y-4">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">API Token</label>
+                      <input type="password" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono focus:outline-none focus:border-blue-500"
+                             x-model="model.credentials.api_token" placeholder="psk_••••••••">
+                    </div>
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Site ID (optional — auto-detected)</label>
+                      <input type="text" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono focus:outline-none focus:border-blue-500"
+                             x-model="model.credentials.site_id" placeholder="01J23BAP…">
+                    </div>
+                  </div>
+                  <label class="flex items-center gap-3 cursor-pointer mt-2">
+                    <input type="checkbox" x-model="model.settings.amber_emulation_mode" class="accent-blue-500">
+                    <span class="text-xs text-gray-300">Developer emulation mode</span>
+                    <i class="fas fa-info-circle text-gray-500 text-[10px]"
+                       title="Returns canned mock data instead of hitting the real Amber API. Use only for testing the rest of the pipeline without credentials or internet round-trips. Turn OFF for normal use."></i>
+                  </label>
+                </div>
+              </template>
+
+              <!-- LocalVolts -->
+              <template x-if="model.id === 'localvolts'">
+                <div class="space-y-4">
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">API Key</label>
+                      <input type="password" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono focus:outline-none focus:border-blue-500"
+                             x-model="model.credentials.api_key">
+                    </div>
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Partner ID</label>
+                      <input type="text" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono focus:outline-none focus:border-blue-500"
+                             x-model="model.credentials.partner_id">
+                    </div>
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">NMI ID</label>
+                      <input type="text" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono focus:outline-none focus:border-blue-500"
+                             x-model="model.credentials.nmi_id">
+                    </div>
+                  </div>
+                  <label class="flex items-center gap-3 cursor-pointer mt-2">
+                    <input type="checkbox" x-model="model.settings.localvolts_emulation_mode" class="accent-blue-500">
+                    <span class="text-xs text-gray-300">Developer emulation mode</span>
+                    <i class="fas fa-info-circle text-gray-500 text-[10px]"
+                       title="Returns canned mock data instead of hitting the real LocalVolts API. Use only for testing the rest of the pipeline without credentials or internet round-trips. Turn OFF for normal use."></i>
+                  </label>
+                </div>
+              </template>
+
+              <!-- AEMO NEM -->
+              <template x-if="model.id === 'aemo'">
+                <div class="space-y-4">
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">NEM Region</label>
+                      <select class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full focus:outline-none focus:border-blue-500"
+                              x-model="model.settings.region">
+                        <option value="nsw">NSW — New South Wales</option>
+                        <option value="qld">QLD — Queensland</option>
+                        <option value="vic">VIC — Victoria</option>
+                        <option value="sa">SA — South Australia</option>
+                        <option value="tas">TAS — Tasmania</option>
+                      </select>
+                    </div>
+                  </div>
+                  <label class="flex items-center gap-3 cursor-pointer mt-2">
+                    <input type="checkbox" x-model="model.settings.aemo_emulation_mode" class="accent-blue-500">
+                    <span class="text-xs text-gray-300">Developer emulation mode</span>
+                    <i class="fas fa-info-circle text-gray-500 text-[10px]"
+                       title="Returns canned mock data instead of hitting the real AEMO NEMWEB feed. Use only for testing the rest of the pipeline without internet round-trips. AEMO NEMWEB is public and credential-free, so you almost always want this OFF for real use."></i>
+                  </label>
+                </div>
+              </template>
+
+              <!-- FranklinWH TOU -->
+              <template x-if="model.id === 'franklinwh_tou'">
+                <div class="text-xs text-gray-400 italic">
+                  Static rates are synchronized automatically from the active gateway. Go to the <a href="?tab=schedule" class="text-blue-400 hover:underline font-bold">Schedule</a> tab to manage FranklinWH TOU parameters.
+                </div>
+              </template>
+
+              <!-- ComEd -->
+              <template x-if="model.id === 'comed'">
+                <div class="space-y-4">
+                  <label class="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" x-model="model.settings.comed_emulation_mode" class="accent-blue-500">
+                    <span class="text-xs text-gray-300">Developer emulation mode</span>
+                    <i class="fas fa-info-circle text-gray-500 text-[10px]"
+                       title="Returns canned mock data instead of hitting the real ComEd hourly pricing API. Use only for testing the rest of the pipeline without internet round-trips. Turn OFF for normal use."></i>
+                  </label>
+                </div>
+              </template>
+
+              <!-- Action Buttons -->
+              <div class="flex flex-wrap items-center gap-3 pt-3 border-t border-gray-800">
+                <button class="btn btn-primary text-xs" @click="saveModelSetup(model)" :disabled="setupSaving[model.id]">
+                  <svg class="icon fa-spin" x-show="setupSaving[model.id]" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+                  Save Config
+                </button>
+
+                <!-- Only show Test Connection if not 'flat' and not 'franklinwh_tou' -->
+                <template x-if="model.id !== 'flat' && model.id !== 'franklinwh_tou'">
+                  <button class="btn btn-secondary text-xs" @click="testModelSetup(model)" :disabled="setupTesting[model.id]">
+                    <svg class="icon" :class="setupTesting[model.id] ? 'fa-spin' : ''" aria-hidden="true" viewBox="0 0 24 24">
+                      <use :href="setupTesting[model.id] ? '#loader' : '#wifi'"/>
+                    </svg>
+                    Test Connection
+                  </button>
+                </template>
+
+                <!-- Use for Gateway — green pill if already active, else "Use for Gateway X" button -->
+                <template x-if="isActiveModelForGateway(model.id)">
+                  <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Active for Gateway <span x-text="activeGatewayLabel()"></span>
+                  </span>
+                </template>
+                <template x-if="!isActiveModelForGateway(model.id) && currentGatewayId()">
+                  <button class="btn btn-success text-xs"
+                          @click="useModelForCurrentGateway(model)"
+                          :disabled="setupActivating[model.id]"
+                          :title="'Make Gateway ' + activeGatewayLabel() + ' use ' + model.name + ' (preserves your tariff & billing settings)'">
+                    <svg class="icon" :class="setupActivating[model.id] ? 'fa-spin' : ''" aria-hidden="true" viewBox="0 0 24 24">
+                      <use :href="setupActivating[model.id] ? '#loader' : '#check-circle'"/>
+                    </svg>
+                    <span x-text="setupActivating[model.id] ? 'Activating…' : 'Use for Gateway ' + activeGatewayLabel()"></span>
+                  </button>
+                </template>
+
+                <span class="text-xs text-gray-500 font-mono" x-show="setupStatusMsg[model.id]" x-text="setupStatusMsg[model.id]"></span>
+              </div>
+
+              <!-- Diagnostic test result panel -->
+              <template x-if="setupTestResult[model.id]">
+                <div class="rounded-lg p-3 border text-sm mt-3"
+                     :class="setupTestResult[model.id].ok ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-red-500/10 border-red-500/30 text-red-400'"
+                     x-text="setupTestResult[model.id].message"></div>
+              </template>
+
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LocalVolts Sub-Tab ──────────────────────────────────────────────── -->
+  <div x-show="dynamicPricingView === 'localvolts'" x-transition class="space-y-4">
+    <!-- Header card -->
+    <div class="rounded-xl border border-gray-700 bg-gray-800/50 p-5">
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+            <i class="fas fa-plug text-emerald-400 text-sm"></i>
+          </div>
+          <div>
+            <p class="font-bold text-gray-100 text-sm">LocalVolts (P2P)</p>
+            <p class="text-[10px] text-gray-500">Australia — 5-minute P2P wholesale market</p>
+          </div>
+        </div>
+        <!-- Status derived from pricingData -->
+        <template x-if="pricingData?.provider === 'localvolts'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+            ● Active
+          </span>
+        </template>
+        <template x-if="pricingData?.source === 'emulation' && pricingData?.provider === 'localvolts'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25 ml-1">
+            ⚙ Mock
+          </span>
+        </template>
+        <template x-if="pricingData?.provider !== 'localvolts'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-gray-700 text-gray-500 border border-gray-600">
+            ○ Not active
+          </span>
+        </template>
+      </div>
+
+      <!-- Capability matrix -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+        <template x-for="cap in [
+          {label:'Import price',   ok:true,  note:'5-min live'},
+          {label:'Export price',   ok:true,  note:'P2P feed-in'},
+          {label:'24h forecast',   ok:false, note:'No endpoint'},
+          {label:'Tariff label',   ok:false, note:'Price only'},
+          {label:'Renewables %',   ok:false, note:'Not available'},
+          {label:'Spike status',   ok:false, note:'Not available'},
+          {label:'VPP data',       ok:false, note:'Via FWH API'}
+        ]" :key="cap.label">
+          <div class="flex items-center gap-1.5 bg-gray-900/60 rounded-lg px-2.5 py-1.5 text-[10px]">
+            <span x-text="cap.ok ? '✅' : '❌'" class="text-[11px]"></span>
+            <span class="font-semibold text-gray-300" x-text="cap.label"></span>
+            <span class="text-gray-600" x-text="'· ' + cap.note"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Live price (when active) -->
+      <template x-if="pricingData?.provider === 'localvolts'">
+        <div class="flex items-center gap-4 p-3 bg-gray-900/60 rounded-lg border border-gray-700">
+          <div class="text-center">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Import</p>
+            <p class="text-xl font-black text-primary-light font-mono" x-text="(pricingData?.import_c_kwh ?? '—') + '¢'"></p>
+          </div>
+          <div class="text-gray-700">/</div>
+          <div class="text-center">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Export</p>
+            <p class="text-xl font-black text-yellow-400 font-mono" x-text="(pricingData?.export_c_kwh != null ? pricingData.export_c_kwh + '¢' : '—')"></p>
+          </div>
+          <div class="ml-auto text-[10px] text-gray-500">
+            <span>5-min interval · NMI-based pricing</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- Config note when not active -->
+      <template x-if="pricingData?.provider !== 'localvolts'">
+        <div class="rounded-lg border border-dashed border-gray-700 p-4 text-center text-xs text-gray-500">
+          To activate LocalVolts, go to <strong class="text-gray-400">Setup Utility → Edit Utility Service</strong> and set the pricing provider to LocalVolts with your <code class="font-mono">api_key</code>, <code class="font-mono">partner_id</code>, and <code class="font-mono">nmi_id</code>.
+        </div>
+      </template>
+    </div>
+
+    <!-- SD/AB integration note -->
+    <div class="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-300">
+      <i class="fas fa-info-circle mr-1.5"></i>
+      <strong>SD/AB integration:</strong> LocalVolts provides <code>import_c_kwh</code> and <code>export_c_kwh</code> live. Forecast and renewables % are not available — AB rules using those fields will evaluate as <em>SKIP (unknown)</em>, not false.
+    </div>
+  </div>
+
+  <!-- ── AEMO Sub-Tab ────────────────────────────────────────────────────── -->
+  <div x-show="dynamicPricingView === 'aemo'" x-transition class="space-y-4">
+    <div class="rounded-xl border border-gray-700 bg-gray-800/50 p-5">
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-orange-500/15 border border-orange-500/30 flex items-center justify-center">
+            <i class="fas fa-industry text-orange-400 text-sm"></i>
+          </div>
+          <div>
+            <p class="font-bold text-gray-100 text-sm">AEMO NEM Wholesale</p>
+            <p class="text-[10px] text-gray-500">Australia — 30-minute National Electricity Market dispatch</p>
+          </div>
+        </div>
+        <template x-if="pricingData?.provider === 'aemo'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">● Active</span>
+        </template>
+        <template x-if="pricingData?.source === 'emulation' && pricingData?.provider === 'aemo'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25 ml-1">⚙ Mock</span>
+        </template>
+        <template x-if="pricingData?.provider !== 'aemo'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-gray-700 text-gray-500 border border-gray-600">○ Not active</span>
+        </template>
+      </div>
+
+      <!-- Capability matrix -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+        <template x-for="cap in [
+          {label:'Import price',   ok:true,  note:'30-min dispatch'},
+          {label:'Export price',   ok:false, note:'Wholesale only'},
+          {label:'24h forecast',   ok:true,  note:'48×30min slots'},
+          {label:'Tariff label',   ok:true,  note:'Derived from price'},
+          {label:'Renewables %',   ok:true,  note:'NEMWEB data'},
+          {label:'Spike status',   ok:true,  note:'Price threshold'},
+          {label:'VPP data',       ok:false, note:'Via FWH API'}
+        ]" :key="cap.label">
+          <div class="flex items-center gap-1.5 bg-gray-900/60 rounded-lg px-2.5 py-1.5 text-[10px]">
+            <span x-text="cap.ok ? '✅' : '❌'" class="text-[11px]"></span>
+            <span class="font-semibold text-gray-300" x-text="cap.label"></span>
+            <span class="text-gray-600" x-text="'· ' + cap.note"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Region badge -->
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
+        <p class="text-[10px] font-black uppercase tracking-widest text-gray-500">NEM Region:</p>
+        <template x-if="pricingData?.provider === 'aemo' && pricingData?.region">
+          <span class="px-2 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25 text-[10px] font-bold" x-text="pricingData.region"></span>
+        </template>
+        <template x-if="pricingData?.provider !== 'aemo'">
+          <span class="text-[10px] text-gray-600">NSW1 / QLD1 / SA1 / TAS1 / VIC1 — set in provider config</span>
+        </template>
+      </div>
+
+      <!-- Live price -->
+      <template x-if="pricingData?.provider === 'aemo'">
+        <div class="flex items-center gap-4 p-3 bg-gray-900/60 rounded-lg border border-gray-700">
+          <div class="text-center">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Import</p>
+            <p class="text-xl font-black text-primary-light font-mono" x-text="(pricingData?.import_c_kwh ?? '—') + '¢'"></p>
+          </div>
+          <div class="text-center ml-4">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Renewables</p>
+            <p class="text-xl font-black text-emerald-400 font-mono" x-text="(pricingData?.renewables_pct != null ? pricingData.renewables_pct + '%' : '—')"></p>
+          </div>
+          <div class="ml-auto text-[10px] text-gray-500">No export pricing (wholesale only)</div>
+        </div>
+      </template>
+      <template x-if="pricingData?.provider !== 'aemo'">
+        <div class="rounded-lg border border-dashed border-gray-700 p-4 text-center text-xs text-gray-500">
+          AEMO uses the public NEMWEB API — no credentials required. Set provider to <code class="font-mono">aemo</code> in Setup Utility and select your NEM region.
+        </div>
+      </template>
+    </div>
+
+    <div class="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-300">
+      <i class="fas fa-info-circle mr-1.5"></i>
+      <strong>SD/AB integration:</strong> AEMO provides import price, renewables %, and 48-slot forecast. Export price is not available — AB export rules will evaluate as <em>SKIP (unknown)</em>.
+    </div>
+  </div>
+
+  <!-- ── FranklinWH TOU Schedule Sub-Tab ────────────────────────────────── -->
+  <div x-show="dynamicPricingView === 'tou'" x-transition class="space-y-4">
+    <div class="rounded-xl border border-gray-700 bg-gray-800/50 p-5">
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center">
+            <i class="fas fa-clock text-primary-light text-sm"></i>
+          </div>
+          <div>
+            <p class="font-bold text-gray-100 text-sm">FranklinWH TOU Schedule</p>
+            <p class="text-[10px] text-gray-500">Static rates from the gateway's TOU schedule — any country</p>
+          </div>
+        </div>
+        <template x-if="pricingData?.provider === 'franklinwh_tou'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">● Active</span>
+        </template>
+        <template x-if="pricingData?.provider !== 'franklinwh_tou'">
+          <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-gray-700 text-gray-500 border border-gray-600">○ Not active</span>
+        </template>
+      </div>
+
+      <!-- Capability matrix -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+        <template x-for="cap in [
+          {label:'Import price',   ok:true,  note:'From schedule'},
+          {label:'Export price',   ok:true,  note:'FiT from schedule'},
+          {label:'24h forecast',   ok:true,  note:'From season blocks'},
+          {label:'Tariff label',   ok:true,  note:'Native wave type'},
+          {label:'Renewables %',   ok:false, note:'Not available'},
+          {label:'Spike status',   ok:false, note:'Not applicable'},
+          {label:'VPP data',       ok:false, note:'Via FWH API'}
+        ]" :key="cap.label">
+          <div class="flex items-center gap-1.5 bg-gray-900/60 rounded-lg px-2.5 py-1.5 text-[10px]">
+            <span x-text="cap.ok ? '✅' : '❌'" class="text-[11px]"></span>
+            <span class="font-semibold text-gray-300" x-text="cap.label"></span>
+            <span class="text-gray-600" x-text="'· ' + cap.note"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Current rate from pricingData -->
+      <template x-if="pricingData?.provider === 'franklinwh_tou'">
+        <div class="p-3 bg-gray-900/60 rounded-lg border border-gray-700 space-y-2">
+          <div class="flex items-center gap-4">
+            <div class="text-center">
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Buy</p>
+              <p class="text-xl font-black text-primary-light font-mono" x-text="(pricingData?.import_c_kwh ?? '—') + '¢'"></p>
+            </div>
+            <div class="text-center">
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Sell</p>
+              <p class="text-xl font-black text-yellow-400 font-mono" x-text="(pricingData?.export_c_kwh != null ? pricingData.export_c_kwh + '¢' : '—')"></p>
+            </div>
+            <div class="ml-auto">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold border"
+                    :class="{OFFPEAK:'bg-emerald-500/10 text-emerald-400 border-emerald-500/25',SHOULDER:'bg-amber-500/10 text-amber-400 border-amber-500/25',PEAK:'bg-red-500/10 text-red-400 border-red-500/25'}[pricingData?.tariff_type] || 'bg-gray-700 text-gray-400 border-gray-600'"
+                    x-text="pricingData?.tariff_type || '—'"></span>
+            </div>
+          </div>
+          <p class="text-[10px] text-gray-500">
+            To change TOU rates or seasons →
+            <a href="?tab=schedule" class="text-primary-light underline underline-offset-2 hover:text-primary transition">Schedule tab</a>
+          </p>
+        </div>
+      </template>
+      <template x-if="pricingData?.provider !== 'franklinwh_tou'">
+        <div class="rounded-lg border border-dashed border-gray-700 p-4 text-center text-xs text-gray-500">
+          Set provider to <code class="font-mono">franklinwh_tou</code> in Setup Utility. TOU rates are read directly from the gateway's cloud schedule.
+        </div>
+      </template>
+    </div>
+
+    <div class="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-300">
+      <i class="fas fa-info-circle mr-1.5"></i>
+      <strong>SD/AB integration:</strong> Provides full import + export price, tariff label, and schedule-derived 24h forecast. No real-time market data — rates change only when the TOU schedule is edited. Works globally with any utility.
+    </div>
+  </div>
+
+  <!-- ── ComEd Hourly Pricing Sub-Tab ─────────────────────────────── -->
+  <div x-show="dynamicPricingView === 'comend'" x-transition class="pb-12">
+    <div class="rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-6 space-y-4">
+      <div class="flex items-start gap-4">
+        <div class="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-plug-circle-bolt text-blue-400"></i>
+        </div>
+        <div>
+          <p class="font-bold text-gray-100 text-sm">ComEd Hourly Pricing</p>
+          <p class="text-[11px] text-gray-500 mt-0.5">Real-time hourly wholesale electricity prices for ComEd (Illinois, US)</p>
+        </div>
+        <span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25 ml-auto">
+          US · Illinois
+        </span>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4 space-y-2">
+          <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">What it provides</p>
+          <ul class="text-xs text-gray-400 space-y-1.5">
+            <li><i class="fas fa-check text-blue-400 mr-2"></i>Real-time hourly import price (¢/kWh)</li>
+            <li><i class="fas fa-check text-blue-400 mr-2"></i>Next-hour forecast from ComEd API</li>
+            <li><i class="fas fa-times text-gray-600 mr-2"></i>Export/feed-in price — not available (net metering)</li>
+            <li><i class="fas fa-times text-gray-600 mr-2"></i>Renewables % — not available</li>
+          </ul>
+        </div>
+        <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4 space-y-2">
+          <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Setup</p>
+          <p class="text-xs text-gray-400">No API key required. ComEd publishes hourly prices publicly.</p>
+          <p class="text-xs text-gray-400 mt-2">To activate, go to <strong class="text-gray-300">Services → Edit Utility Service</strong> and set the pricing provider to <code class="font-mono text-blue-400 bg-blue-500/10 px-1 rounded">comed</code>.</p>
+          <p class="text-xs text-gray-400 mt-2"><strong>SD/AB integration:</strong> ComEd provides <code>import_c_kwh</code> live. Spike detection and demand window are not available — AB rules using those fields will evaluate as <em>SKIP (unknown)</em>.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  

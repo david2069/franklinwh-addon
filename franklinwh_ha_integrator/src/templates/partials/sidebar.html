@@ -1,0 +1,273 @@
+<!-- ── Sidebar v2 — FEM style ─────────────────────────────────
+     Collapsible: expanded=w-60, collapsed=w-16
+     Uses $store.app.sidebarCollapsed and $store.app.setTab()
+──────────────────────────────────────────────────────────── -->
+
+<!-- On a phone the sidebar is an overlay or it is nothing.
+     Collapsed used to mean a 56px icon rail, which on a 390px screen is 14% of
+     the width permanently gone and not dismissable — and open used to sit in
+     the flow, squeezing the content rather than covering it. Both now behave
+     as a drawer below 1024px; the rail is a desktop affordance. -->
+<aside class="flex flex-col bg-gray-900 border-r border-gray-700 transition-all duration-300 flex-shrink-0 h-screen sticky top-0 z-40"
+       :class="$store.app.isNarrow
+                 ? ($store.app.sidebarCollapsed
+                      ? 'w-0 overflow-hidden border-r-0'
+                      : 'fixed inset-y-0 left-0 w-60 shadow-2xl')
+                 : ($store.app.sidebarCollapsed ? 'w-14' : 'w-60')"
+       x-data="{ hoverText: '', hoverTop: 0 }"
+       @mouseleave="hoverText = ''">
+
+  <!-- Logo / Brand -->
+  <div class="flex items-center gap-3 px-3 py-2.5 border-b border-gray-700 flex-shrink-0 min-h-[52px]">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden"
+         style="background: linear-gradient(135deg, var(--primary-light), var(--primary-dark));">
+      <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#zap"/></svg>
+    </div>
+    <div x-show="!$store.app.sidebarCollapsed" x-transition.opacity class="overflow-hidden min-w-0">
+      <p class="text-sm font-bold text-gray-100 leading-tight truncate">FranklinWH</p>
+      <p class="text-[10px] text-gray-500 font-medium truncate">HA Integrator</p>
+    </div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2 space-y-0.5"
+       x-data="{ NAV_LABELS: {
+         dashboard: 'Dashboard', control: 'Control', smart_circuits: 'Smart Circuits',
+         battery: 'Battery', schedule: 'Schedule', automations: 'Automations',
+         solar_setup: 'Solar Setup',
+         metrics: 'Reporting', weather: 'Weather & Radar',
+         gateways: 'Gateways', mqtt_admin: 'MQTT Admin', ha_entities: 'HA Entities',
+         home_automation: 'Home Automation',
+         power: 'Power / Hardware', pricing: 'Services', dynamic_pricing: 'Pricing',
+         security: 'Security',
+         smart_dispatch: 'Smart Dispatch',
+         engine_diag: 'Engine Diagnostics',
+         health: 'Health', logs: 'Logs', terminal: 'Terminal', support: 'Admin',
+         apimetrics: 'API Metrics'
+       }}">
+
+    <!-- PRIMARY section -->
+    <div x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+         class="px-2 pt-1 pb-1.5 text-[10px] font-black uppercase tracking-widest text-gray-600">
+      Primary
+    </div>
+    <div x-show="$store.app.sidebarCollapsed" class="border-t border-gray-700 mx-1 mb-1"></div>
+
+    <template x-for="item in [
+      { tab: 'dashboard',     icon: 'layout-dashboard' },
+      { tab: 'control',       icon: 'sliders-horizontal' },
+      { tab: 'smart_circuits',icon: 'plug' },
+      { tab: 'battery',       icon: 'battery' },
+    ]" :key="item.tab">
+      <button x-show="!$store.app.isTabSuppressed(item.tab)"
+              @click="$store.app.setTab(item.tab)"
+              @mouseenter="if ($store.app.sidebarCollapsed) { hoverText = NAV_LABELS[item.tab]; hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12); }"
+              class="nav-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 relative group"
+              :class="$store.app.activeTab === item.tab
+                ? 'bg-primary/15 text-primary-light border-l-2 border-primary-light pl-[10px]'
+                : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <use :href="'#' + item.icon"/>
+        </svg>
+        <span x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+              class="truncate" x-text="NAV_LABELS[item.tab]"></span>
+      </button>
+    </template>
+
+    <!-- Schedule — dedicated button for TOU mode badge -->
+    <button x-show="!$store.app.isTabSuppressed('schedule')"
+            @click="$store.app.setTab('schedule')"
+            @mouseenter="if ($store.app.sidebarCollapsed) { const b = $store.app.scheduleBadge(); hoverText = 'Schedule' + (b ? ' [' + b.label + ']' : ''); hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12); }"
+            class="nav-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 relative group"
+            :class="$store.app.activeTab === 'schedule'
+              ? 'bg-primary/15 text-primary-light border-l-2 border-primary-light pl-[10px]'
+              : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+        <use href="#calendar-clock"/>
+      </svg>
+      <span x-show="!$store.app.sidebarCollapsed" x-transition.opacity class="truncate flex-1">Schedule</span>
+      <!-- TOU mode badge pill — only when in TOU mode and sidebar expanded -->
+      <template x-if="!$store.app.sidebarCollapsed && $store.app.scheduleBadge()">
+        <span class="text-[9px] font-black px-1.5 py-0.5 rounded border flex-shrink-0 leading-none"
+              :class="$store.app.scheduleBadge()?.cls"
+              :title="$store.app.scheduleBadge()?.title"
+              x-text="$store.app.scheduleBadge()?.label">
+        </span>
+      </template>
+    </button>
+
+
+    <!-- Smart Dispatch — dedicated button so impairment indicator can be appended -->
+    <button x-show="!$store.app.isTabSuppressed('smart_dispatch')"
+            @click="$store.app.setTab('smart_dispatch')"
+            @mouseenter="if ($store.app.sidebarCollapsed) { hoverText = 'Smart Dispatch [' + $store.app.sdModeBadge().label + ']' + ($store.app.haImpaired ? ' ⚠ HA impaired' : ''); hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12); }"
+            class="nav-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 relative group"
+            :class="$store.app.activeTab === 'smart_dispatch'
+              ? 'bg-primary/15 text-primary-light border-l-2 border-primary-light pl-[10px]'
+              : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+        <use href="#zap"/>
+      </svg>
+      <span x-show="!$store.app.sidebarCollapsed" x-transition.opacity class="truncate flex-1">Smart Dispatch</span>
+      <!-- SD mode pill (expanded sidebar only) -->
+      <span x-show="!$store.app.sidebarCollapsed"
+            x-cloak
+            x-transition.opacity
+            class="text-[9px] font-black px-1.5 py-0.5 rounded border flex-shrink-0 leading-none"
+            :class="[$store.app.sdModeBadge().cls, $store.app.sdModeBadge().glowing ? 'animate-pulse' : '']"
+            x-text="$store.app.sdModeBadge().label">
+      </span>
+      <!-- ⚠ HA impairment indicator — only when User Approval mode but HA not configured -->
+      <svg x-show="$store.app.haImpaired" x-cloak
+           xmlns="http://www.w3.org/2000/svg"
+           class="w-3.5 h-3.5 flex-shrink-0 text-amber-400"
+           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+        <path d="M12 9v4"/><path d="M12 17h.01"/>
+      </svg>
+    </button>
+
+
+    <template x-for="item in [
+      { tab: 'automations',   icon: 'bot' },
+      { tab: 'solar_setup',   icon: 'sun-medium' },
+      { tab: 'weather',       icon: 'cloud-sun' },
+      { tab: 'metrics',       icon: 'bar-chart-2' },
+    ]" :key="item.tab">
+      <button x-show="!$store.app.isTabSuppressed(item.tab)"
+              @click="$store.app.setTab(item.tab)"
+              @mouseenter="if ($store.app.sidebarCollapsed) { hoverText = NAV_LABELS[item.tab]; hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12); }"
+              class="nav-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 relative group"
+              :class="$store.app.activeTab === item.tab
+                ? 'bg-primary/15 text-primary-light border-l-2 border-primary-light pl-[10px]'
+                : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <use :href="'#' + item.icon"/>
+        </svg>
+        <span x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+              class="truncate" x-text="NAV_LABELS[item.tab]"></span>
+      </button>
+    </template>
+
+    <!-- CONFIGURATION section -->
+    <div x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+         class="px-2 pt-4 pb-1.5 text-[10px] font-black uppercase tracking-widest text-gray-600">
+      Configuration
+    </div>
+    <div x-show="$store.app.sidebarCollapsed" class="border-t border-gray-700 mx-1 my-1.5"></div>
+
+    <template x-for="item in [
+      { tab: 'gateways',        icon: 'server' },
+      {% if is_admin %}{ tab: 'mqtt_admin',      icon: 'network' },{% endif %}
+      { tab: 'ha_entities',     icon: 'house' },
+      { tab: 'home_automation', icon: 'satellite-dish' },
+      { tab: 'power',           icon: 'zap' },
+      { tab: 'pricing',         icon: 'tag' },
+      { tab: 'dynamic_pricing', icon: 'trending-up' },
+    ]" :key="item.tab">
+      <button x-show="!$store.app.isTabSuppressed(item.tab)"
+              @click="$store.app.setTab(item.tab)"
+              @mouseenter="if ($store.app.sidebarCollapsed) { hoverText = NAV_LABELS[item.tab]; hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12); }"
+              class="nav-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 relative group"
+              :class="$store.app.activeTab === item.tab
+                ? 'bg-primary/15 text-primary-light border-l-2 border-primary-light pl-[10px]'
+                : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <use :href="'#' + item.icon"/>
+        </svg>
+        <span x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+              class="truncate flex-1" x-text="NAV_LABELS[item.tab]"></span>
+        <!-- Gateway count badge — V1 parity -->
+        <span x-show="item.tab === 'gateways' && !$store.app.sidebarCollapsed && $store.app.gateways.length > 0"
+              x-transition.opacity x-cloak
+              class="ml-auto text-[10px] font-black leading-none px-1.5 py-0.5 rounded-full flex-shrink-0"
+              style="background: var(--primary-light); color: var(--bg);"
+              x-text="$store.app.gateways.length"></span>
+      </button>
+    </template>
+
+    <!-- Security Configuration button — admin only, gated server-side -->
+    {% if is_admin %}
+    <button x-show="!$store.app.isTabSuppressed('security')"
+            @click="$store.app.setTab('security')"
+            @mouseenter="if ($store.app.sidebarCollapsed) { hoverText = 'Security'; hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12); }"
+            class="nav-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 relative group"
+            :class="$store.app.activeTab === 'security'
+              ? 'bg-primary/15 text-primary-light border-l-2 border-primary-light pl-[10px]'
+              : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+      <span x-show="!$store.app.sidebarCollapsed" x-transition.opacity class="truncate flex-1">Security</span>
+    </button>
+    {% endif %}
+
+    <!-- (Amber Electric moved to PRIMARY above) -->
+
+    <!-- DIAGNOSTICS section -->
+    <div x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+         class="px-2 pt-4 pb-1.5 text-[10px] font-black uppercase tracking-widest text-gray-600">
+      Diagnostics
+    </div>
+    <div x-show="$store.app.sidebarCollapsed" class="border-t border-gray-700 mx-1 my-1.5"></div>
+
+    <template x-for="item in [
+      { tab: 'engine_diag', icon: 'activity' },
+      { tab: 'health',      icon: 'activity' },
+      { tab: 'logs',        icon: 'scroll-text' },
+      {% if is_admin %}{ tab: 'terminal',    icon: 'terminal' },{% endif %}
+      { tab: 'support',     icon: 'shield-check' },
+      { tab: 'apimetrics',  icon: 'cloud' },
+    ]" :key="item.tab">
+      <button x-show="!$store.app.isTabSuppressed(item.tab)"
+              @click="$store.app.setTab(item.tab)"
+              @mouseenter="if ($store.app.sidebarCollapsed) { hoverText = NAV_LABELS[item.tab]; hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12); }"
+              class="nav-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 relative group"
+              :class="$store.app.activeTab === item.tab
+                ? 'bg-primary/15 text-primary-light border-l-2 border-primary-light pl-[10px]'
+                : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <use :href="'#' + item.icon"/>
+        </svg>
+        <span x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+              class="truncate" x-text="NAV_LABELS[item.tab]"></span>
+      </button>
+    </template>
+
+  </nav>
+
+  <!-- Global Sidebar Tooltip — only renders in icon-only (collapsed) mode -->
+  <div x-show="$store.app.sidebarCollapsed && hoverText !== ''"
+       x-transition:enter.duration.150ms
+       x-transition:leave.duration.100ms
+       class="fixed left-[60px] text-xs px-2.5 py-1.5 rounded-md shadow-xl whitespace-nowrap pointer-events-none z-[9999] font-bold"
+       style="background:#1f2937; color:#fff; border:1px solid #374151; opacity:1;"
+       :style="`top: ${hoverTop}px; background:#1f2937; color:#fff; border:1px solid #374151; opacity:1;`"
+       x-text="hoverText">
+  </div>
+
+  <!-- Footer: version -->
+  <div class="border-t border-gray-700 p-3 flex-shrink-0 h-14 flex items-center justify-center">
+    <div x-show="!$store.app.sidebarCollapsed" x-transition.opacity
+         class="text-[9px] text-gray-500 font-mono text-center px-1"
+         x-text="'v' + $store.app.version"></div>
+    <div x-show="$store.app.sidebarCollapsed"
+         class="flex justify-center text-gray-600 hover:text-gray-400 transition" @mouseenter="hoverText = 'Version ' + $store.app.version; hoverTop = Math.round($el.getBoundingClientRect().top + ($el.offsetHeight / 2) - 12)">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#git-pull-request"/></svg>
+    </div>
+  </div>
+
+</aside>
+
+<!-- Mobile overlay backdrop -->
+<!-- window.innerWidth inside x-show is evaluated once and never
+     re-evaluated, so rotating the phone left this stale. $store.app.isNarrow
+     is kept current by a matchMedia listener. -->
+<div x-show="!$store.app.sidebarCollapsed && $store.app.isNarrow" x-cloak
+     @click="$store.app.sidebarCollapsed = true"
+     class="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden"
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100">
+</div>

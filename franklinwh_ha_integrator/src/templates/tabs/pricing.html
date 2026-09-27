@@ -1,0 +1,1050 @@
+<!-- pricing.html — Services (formerly "Services Setup"; renamed 2026-08-08 BD-02) -->
+<div x-data="pricingTab()" x-init="init()" class="max-w-6xl pb-12">
+
+  <!-- ═══ EDITOR MODAL ═══ -->
+  <div x-show="showEditorModal" x-cloak class="modal-backdrop" x-transition.opacity>
+    <div class="modal-panel max-w-4xl" style="max-height:90vh;overflow-y:auto">
+      <div class="modal-header flex justify-between items-center sticky top-0 bg-gray-800 z-10 border-b border-gray-700 py-4 px-6">
+        <h3 class="font-bold" x-text="editingService?.id ? 'Edit Utility Service' : 'Add Utility Service'"></h3>
+        <button class="icon-btn" @click="showEditorModal=false"><svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg></button>
+      </div>
+      <div class="modal-body p-6 space-y-6 bg-gray-800">
+
+        <!-- Service Name -->
+        <div class="grid grid-cols-2 gap-4">
+          <div class="col-span-2">
+            <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Service Name (Internal)</label>
+            <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 w-full" x-model="editingService.name" placeholder="e.g. Main House Grid">
+          </div>
+          <div>
+            <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Site ID <span class="font-normal text-gray-600 normal-case tracking-normal ml-1">— location reference</span></label>
+            <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 w-full font-mono" x-model="editingService.site_id" placeholder="e.g. SITE-001">
+          </div>
+          <div>
+            <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Site Name <span class="font-normal text-gray-600 normal-case tracking-normal">(optional)</span></label>
+            <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 w-full" x-model="editingService.site_name" placeholder="e.g. Home">
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+
+        <!-- Associated Site -->
+        <div>
+          <h4 class="font-bold text-gray-200 mb-3 flex items-center gap-2 text-sm"><i class="fas fa-network-wired text-blue-400"></i> Physical Association</h4>
+          <div class="grid grid-cols-1 gap-4">
+            <div>
+              <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Associated Site</label>
+              <select class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full"
+                      x-model="editingService.associated_site_id"
+                      @change="onSiteChange()">
+                <option value="">(None — Split Grid CT only)</option>
+                <template x-for="site in sites" :key="site.site_id">
+                  <option :value="site.site_id"
+                          :disabled="site.gateways.some(g => g.grid_type === 'off_grid')"
+                          x-text="(site.site_name || 'Site ' + site.site_id) + (site.gateways.some(g => g.grid_type === 'off_grid') ? ' 🚫 (Disabled — Off-Grid Site)' : '')">
+                  </option>
+                </template>
+              </select>
+              <p class="text-[10px] text-gray-600 mt-2"><i class="fas fa-info-circle mr-1"></i>Linking this service to an on-grid site automatically registers all its gateways under this tariff plan. Off-grid sites cannot be linked to utility services.</p>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+        <!-- Pricing Model Selection -->
+        <div>
+          <h4 class="font-bold text-gray-200 mb-4 flex items-center gap-2"><i class="fas fa-bolt text-amber-500"></i> Pricing Model</h4>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Pricing Model</label>
+              <select class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 w-full" x-model="editingService.pricing_model_id">
+                <template x-for="model in pricingModels" :key="model.id">
+                  <option :value="model.id" x-text="model.name + ' (' + model.status + ')'"></option>
+                </template>
+              </select>
+              <p class="text-[10px] text-gray-500 mt-2">
+                <i class="fas fa-info-circle mr-1"></i> Configure credentials, settings, and developer emulation for API-based models under the <strong>Pricing</strong> tab.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+
+        <!-- Utility Details -->
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <h4 class="font-bold text-gray-200 flex items-center gap-2 text-sm"><i class="fas fa-receipt text-blue-500"></i> Utility Details</h4>
+            <template x-if="isAutoOverrideProvider && providerConnected && !billingManualOverride">
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25">Managed by <span x-text="providerLabel(editingService.pricing_provider)"></span></span>
+                <button class="text-[10px] text-gray-500 hover:text-gray-300 underline" @click="billingManualOverride=true">Edit manually</button>
+              </div>
+            </template>
+            <template x-if="billingManualOverride">
+              <button class="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1" @click="billingManualOverride=false">
+                <i class="fas fa-lock text-[9px]"></i> Restore provider lock
+              </button>
+            </template>
+          </div>
+
+          <div class="space-y-4" :class="(isAutoOverrideProvider && providerConnected && !billingManualOverride) ? 'opacity-50 pointer-events-none select-none' : ''">
+
+            <!-- Same entity checkbox -->
+            <label class="flex items-center gap-3 cursor-pointer bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+              <input type="checkbox" x-model="retailerIsSameAsUtility" @change="onRetailerSameChange()" class="accent-blue-500">
+              <span class="text-xs text-gray-300">Electricity retailer is the <strong class="text-gray-100">same entity</strong> as the grid operator / network</span>
+            </label>
+
+            <div class="grid grid-cols-2 gap-4">
+              <!-- Retailer -->
+              <div class="col-span-2" x-show="!retailerIsSameAsUtility">
+                <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Retailer / Electricity Provider Name</label>
+                <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full" x-model="editingService.retailer_name" placeholder="e.g. AGL, Origin, Amber Electric">
+              </div>
+              <div class="col-span-2" x-show="retailerIsSameAsUtility">
+                <p class="text-[10px] text-gray-500 italic"><i class="fas fa-check-circle text-green-500 mr-1"></i>Retailer name will be the same as the service name: <span class="text-gray-300" x-text="editingService.name || '(set service name above)'"></span></p>
+              </div>
+
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Account Holder Name</label>
+                <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full" x-model="editingService.account_name" placeholder="e.g. John Smith"></div>
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Account Number</label>
+                <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono" x-model="editingService.account_number"></div>
+
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">NMI / Meter ID</label>
+                <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono" x-model="editingService.nmi_id"></div>
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Meter Serial</label>
+                <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono" x-model="editingService.meter_serial"></div>
+
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Network Area</label>
+                <input class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full" x-model="editingService.network_area" placeholder="e.g. Ausgrid"></div>
+
+              <!-- Bill Frequency -->
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Billing Period</label>
+                <select class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full" x-model="editingService.bill_frequency">
+                  <option value="monthly">Monthly</option>
+                  <option value="bimonthly">Bi-monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                  <option value="half_yearly">Half-Yearly</option>
+                  <option value="annual">Annual</option>
+                  <option value="pre_paid">Pre-Paid</option>
+                </select>
+              </div>
+
+              <!-- Bill Start Day -->
+              <div>
+                <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Bill Start Day</label>
+                <div class="flex items-center gap-2">
+                  <input type="number" min="1" max="31"
+                         class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-24 font-mono"
+                         x-model.number="editingService.bill_start_day"
+                         :disabled="!editingService.bill_start_day"
+                         placeholder="1">
+                  <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+                    <input type="checkbox" class="accent-gray-500" :checked="!editingService.bill_start_day" @change="toggleBillStartNA()">
+                    N/A
+                  </label>
+                  <span class="text-[10px] text-gray-600" x-text="billStartDayDisplay"></span>
+                </div>
+              </div>
+
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Supply Charge (¢/day)</label>
+                <input type="number" step="0.01" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono" x-model.number="editingService.supply_charge_day">
+                <!-- Cents, like every other rate field and like the bill it is
+                     copied from. The guard now catches the opposite mistake:
+                     dollars typed into a cents field, which understates by 100x
+                     and is easy to miss because the number looks reasonable. -->
+                <p x-show="editingService.supply_charge_day > 0 && editingService.supply_charge_day < 5"
+                   class="text-[10px] text-amber-500 mt-1 leading-snug">
+                  That is only
+                  <span class="font-mono" x-text="'$' + (editingService.supply_charge_day * 365 / 100).toFixed(2)"></span>
+                  a year. This field is in <strong>cents</strong> per day — if your bill says
+                  <span class="font-mono" x-text="'$' + editingService.supply_charge_day + '/day'"></span>,
+                  enter
+                  <span class="font-mono" x-text="(editingService.supply_charge_day * 100).toFixed(3)"></span>.
+                </p>
+              </div>
+              <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Solar FiT Rate (¢/kWh)</label>
+                <input type="number" step="0.01" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono" x-model.number="editingService.fit_rate_c_kwh"></div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+        <!-- ── Real-world tariff ──────────────────────────────────────────
+             The FranklinWH TOU profile below is the Cloud API's shape: four
+             wave types with a buy and a sell rate, which is what the battery
+             is told. It cannot express a demand charge, a two-way export
+             charge or a standing charge, so none of those reached a bill.
+             This section is the plan as billed; that one stays as the plan as
+             configured. -->
+        <div x-data="{open:true}">
+          <button class="flex w-full items-center justify-between text-sm font-bold text-gray-200 mb-3" @click="open=!open">
+            <span class="flex items-center gap-2"><i class="fas fa-file-invoice-dollar text-amber-500"></i> Billing / Tariff</span>
+            <i class="fas" :class="open?'fa-chevron-up':'fa-chevron-down'" style="font-size:10px"></i>
+          </button>
+          <div x-show="open" x-cloak class="space-y-4">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Plan timezone (IANA)</label>
+                <input type="text" placeholder="Australia/Sydney"
+                       class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono"
+                       x-model="editingService.plan_timezone">
+                <!-- The windows below are wall-clock. Without knowing which
+                     wall clock they are written in, a seasonal peak fires at
+                     the wrong hour and nothing says so. -->
+                <p class="text-[10px] text-gray-600 mt-1">The zone your peak/off-peak windows are written in.</p>
+                <p x-show="planTzMismatch" class="text-[10px] text-amber-500 mt-1" x-text="planTzMismatch"></p>
+              </div>
+              <div>
+                <!-- Informational. pricing_model_id decides which engine runs;
+                     this records what the retailer calls the plan, which is
+                     what appears on the bill and is rarely the same word. -->
+                <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Plan type (informational)</label>
+                <select class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full"
+                        x-model="editingService.plan_type">
+                  <option value="">Not stated</option>
+                  <option value="tou">Time of use (TOU)</option>
+                  <option value="flat">Flat / single rate</option>
+                  <option value="demand">Demand</option>
+                  <option value="tou_demand">Time of use + demand</option>
+                  <option value="two_way">Two-way (export charge)</option>
+                  <option value="spot">Spot / wholesale</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Export limit (kW, 0 = unlimited)</label>
+                <input type="number" step="0.1" min="0"
+                       class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono"
+                       x-model.number="editingService.export_limit_kw">
+              </div>
+              <div>
+                <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Minimum monthly bill (¢)</label>
+                <input type="number" step="1" min="0"
+                       class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono"
+                       x-model.number="editingService.min_monthly_bill_c">
+              </div>
+            </div>
+
+            <!-- Plan rules. Recorded so an Automation can reference them; they
+                 do not block a dispatch that breaks them. Saying so matters —
+                 a checkbox that looks like an interlock and is not is worse
+                 than no checkbox. -->
+            <div class="flex flex-wrap gap-4">
+              <label class="flex items-center gap-1.5 text-xs text-gray-300 cursor-pointer">
+                <input type="checkbox" class="accent-emerald-500" x-model="editingService.export_allowed">Export to grid allowed</label>
+              <label class="flex items-center gap-1.5 text-xs text-gray-300 cursor-pointer">
+                <input type="checkbox" class="accent-emerald-500" x-model="editingService.battery_charge_permitted">Battery charging permitted</label>
+              <label class="flex items-center gap-1.5 text-xs text-gray-300 cursor-pointer">
+                <input type="checkbox" class="accent-emerald-500" x-model="editingService.battery_discharge_permitted">Battery discharging permitted</label>
+            </div>
+            <p class="text-[10px] text-gray-600 -mt-2">Plan requirements, not interlocks — referenceable in Automations; they do not yet block a dispatch that breaks them.</p>
+
+                                                <!-- Windows live in Time Windows, below — one list covering
+                 demand, export and discharge, with times, day type, months and
+                 a rate each. A fixed set of columns here would allow exactly
+                 one window of each kind, which is less than a plan needs and
+                 less than already exists. These are the plan-level properties
+                 that have nowhere else to live. -->
+            <div class="border border-gray-800 rounded-xl p-3">
+              <p class="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-2">Demand charge — how the peak is measured</p>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div><label class="block text-[10px] text-gray-500 mb-1">Interval (min)</label>
+                  <input type="number" step="1" min="1" class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-100 w-full font-mono" x-model.number="editingService.demand_interval_min"></div>
+                <div><label class="block text-[10px] text-gray-500 mb-1">× count</label>
+                  <input type="number" step="1" min="1" class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-100 w-full font-mono" x-model.number="editingService.demand_interval_count"></div>
+                <div><label class="block text-[10px] text-gray-500 mb-1">Charge basis</label>
+                  <select class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-100 w-full" x-model="editingService.demand_charge_basis">
+                    <option value="kw_rate_days">kW × rate × days</option>
+                    <option value="kw_rate">kW × rate (once)</option>
+                  </select></div>
+              </div>
+              <p class="text-[10px] text-gray-600 mt-1">
+                Peak averaged over <span class="font-mono" x-text="(editingService.demand_interval_min||30) * (editingService.demand_interval_count||1)"></span> minutes —
+                “30 × 2” is one 60-minute average, not two half-hours.
+              </p>
+              <!-- These rules govern windows defined elsewhere, so say whether
+                   any exist. Configuring an interval and a basis for a charge
+                   that has no window is silently inert. -->
+              <p class="text-[10px] mt-1" :class="windowSummary('demand').count ? 'text-gray-500' : 'text-amber-500'">
+                <span x-text="windowSummary('demand').text"></span>
+                <a href="#tariff-time-windows" class="underline hover:text-gray-300 ml-1">Time Windows ↓</a>
+              </p>
+            </div>
+
+            <div class="border border-gray-800 rounded-xl p-3">
+              <p class="text-[10px] font-black uppercase tracking-widest text-orange-500 mb-2">Export charge — free allowance</p>
+              <div class="w-48">
+                <label class="block text-[10px] text-gray-500 mb-1">Free export (kWh/day)</label>
+                <input type="number" step="0.01" min="0" class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-100 w-full font-mono" x-model.number="editingService.export_free_kwh_day">
+              </div>
+              <p class="text-[10px] text-gray-600 mt-1">
+                Accrues across the billing period — kWh/day × days — so only export above the total is charged.
+                Applies to an <span class="text-gray-400">export</span> window whose direction is
+                <span class="text-gray-400">Charge</span>; a Credit window is a feed-in tariff and the allowance does not touch it.
+              </p>
+              <p class="text-[10px] mt-1" :class="windowSummary('export').count ? 'text-gray-500' : 'text-amber-500'">
+                <span x-text="windowSummary('export').text"></span>
+                <a href="#tariff-time-windows" class="underline hover:text-gray-300 ml-1">Time Windows ↓</a>
+              </p>
+            </div>
+
+            <!-- Standing charges -->
+            <div class="border border-gray-800 rounded-xl p-3">
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-[10px] font-black uppercase tracking-widest text-purple-400">Fixed / standing charges</p>
+              </div>
+              <p class="text-[10px] text-gray-600 mb-2">Charged whatever you use. The Supply Charge above is counted too — these are for fees it cannot name.</p>
+              <template x-if="!standingCharges.length">
+                <p class="text-[10px] text-gray-600 italic">No extra standing charges.</p>
+              </template>
+              <!-- Inline entry. The Add button previously had nothing to read
+                   from, so every charge would have been saved as "Fixed
+                   charge" at 0c. -->
+              <div class="flex flex-wrap items-end gap-2 mb-2">
+                <div class="flex-1 min-w-[8rem]">
+                  <label class="block text-[10px] text-gray-500 mb-1">Label</label>
+                  <input type="text" placeholder="Membership fee" x-model="_newChargeLabel"
+                         class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 w-full">
+                </div>
+                <div class="w-24">
+                  <label class="block text-[10px] text-gray-500 mb-1">Amount (¢)</label>
+                  <input type="number" step="0.001" x-model.number="_newChargeAmount"
+                         class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 w-full font-mono">
+                </div>
+                <div class="w-32">
+                  <label class="block text-[10px] text-gray-500 mb-1">Basis</label>
+                  <select x-model="_newChargeBasis"
+                          class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-100 w-full">
+                    <option value="per_day">per day</option>
+                    <option value="per_period">per period</option>
+                  </select>
+                </div>
+                <button type="button" @click="addStandingCharge()"
+                        class="text-[10px] font-bold text-purple-300 border border-purple-500/40 hover:border-purple-500/70 px-3 py-1.5 rounded transition">+ Add</button>
+              </div>
+              <template x-for="c in standingCharges" :key="c.id">
+                <div class="flex items-center gap-2 py-1 border-t border-gray-800/60">
+                  <span class="flex-1 text-xs text-gray-300" x-text="c.label"></span>
+                  <span class="text-xs font-mono text-gray-400" x-text="c.amount_c + '¢'"></span>
+                  <span class="text-[10px] text-gray-600" x-text="c.basis === 'per_day' ? 'per day' : 'per period'"></span>
+                  <button type="button" @click="removeStandingCharge(c.id)"
+                          class="text-[10px] text-red-500/70 hover:text-red-400 px-1.5 py-0.5">
+                    <i class="fas fa-trash-alt"></i></button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+        <!-- Time Windows -->
+        <div id="tariff-time-windows" x-data="{open:true}">
+          <button class="flex w-full items-center justify-between text-sm font-bold text-gray-200 mb-3" @click="open=!open">
+            <span class="flex items-center gap-2"><i class="fas fa-calendar-alt text-blue-400"></i> Time Windows <span class="text-[10px] text-gray-500">(demand, export, discharge)</span></span>
+            <i class="fas" :class="open?'fa-chevron-up':'fa-chevron-down'" style="font-size:10px"></i>
+          </button>
+          <div x-show="open" x-cloak class="space-y-3">
+            <template x-if="serviceWindows.length===0">
+              <div class="text-xs text-gray-500 italic">No time windows defined.</div>
+            </template>
+            <template x-for="w in serviceWindows" :key="w.id">
+              <div class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border border-gray-700 bg-gray-900/50 text-xs">
+                <div class="flex items-center gap-3">
+                  <span class="px-2 py-0.5 rounded-full font-bold uppercase text-[9px] tracking-wide"
+                        :class="w.window_type==='demand'?'bg-red-500/15 text-red-400 border border-red-500/25':w.window_type==='export'?'bg-green-500/15 text-green-400 border border-green-500/25':'bg-blue-500/15 text-blue-400 border border-blue-500/25'"
+                        x-text="w.window_type"></span>
+                  <span class="text-gray-300 font-semibold" x-text="w.label||'—'"></span>
+                  <span class="text-gray-500 font-mono" x-text="w.start_time+'–'+w.end_time"></span>
+                  <span x-show="w.rate"
+                        :class="(w.rate_kind === 'charge' || w.rate < 0) ? 'text-orange-400' : 'text-gray-400'"
+                        x-text="(w.window_type==='demand' ? Math.abs(w.rate)+'¢/kW' : Math.abs(w.rate)+'¢/kWh')
+                                + ((w.rate_kind === 'charge' || w.rate < 0) ? ' charge' : (w.window_type==='demand' ? '' : ' credit'))"></span>
+                </div>
+                <button class="text-gray-600 hover:text-red-400" @click="deleteWindow(w.id)"><i class="fas fa-trash text-xs"></i></button>
+              </div>
+            </template>
+            <div class="rounded-lg border border-gray-700 bg-gray-900/40 p-4 mt-2 space-y-3" x-data="{showAdd:false}">
+              <button class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1" @click="showAdd=!showAdd"><i class="fas fa-plus"></i> Add Window</button>
+              <div x-show="showAdd" class="grid grid-cols-2 gap-3">
+                <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Type</label>
+                  <select class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 w-full" x-model="newWindow.window_type">
+                    <option value="demand">Demand Charge</option><option value="export">Solar/Battery Export</option><option value="discharge">Battery Discharge</option>
+                  </select></div>
+                <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Label</label>
+                  <input class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 w-full" x-model="newWindow.label" placeholder="e.g. Evening Peak"></div>
+                <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Start</label>
+                  <input type="time" class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 w-full font-mono" x-model="newWindow.start_time"></div>
+                <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">End</label>
+                  <input type="time" class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 w-full font-mono" x-model="newWindow.end_time"></div>
+                <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Day Type</label>
+                  <select class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 w-full" x-model="newWindow.day_type">
+                    <option value="weekdays">Weekdays</option><option value="weekends">Weekends</option><option value="all">All days</option>
+                  </select></div>
+                <div><label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1">Rate</label>
+                  <input type="number" step="0.0001" min="0" class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 w-full font-mono" x-model.number="newWindow.rate"></div>
+                <!-- Direction is a field, never a sign.
+                     A negative rate used to be the only way to express a
+                     two-way export charge, which collides with dynamic
+                     pricing: there a negative price is real market data, not a
+                     statement about direction. Enter the rate as it appears on
+                     the bill and say which way it goes. -->
+                <div x-show="newWindow.window_type !== 'demand'">
+                  <label class="block text-[10px] text-gray-500 mb-1">Direction</label>
+                  <select class="bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 w-full"
+                          x-model="newWindow.rate_kind">
+                    <option value="credit">Credit — the retailer pays you (feed-in)</option>
+                    <option value="charge">Charge — you pay (two-way export tariff)</option>
+                  </select>
+                </div>
+                <div class="col-span-2 flex gap-3">
+                  <button class="btn btn-primary text-xs" @click="addWindow()" :disabled="windowSaving"><i class="fas fa-save mr-1"></i><span x-text="windowSaving?'Saving…':'Save Window'"></span></button>
+                  <button class="btn btn-secondary text-xs" @click="showAdd=false">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+        <!-- FranklinWH TOU Profile -->
+        <div x-data="{open:true}">
+          <button class="flex w-full items-center justify-between text-sm font-bold text-gray-200 mb-3" @click="open=!open">
+            <span class="flex items-center gap-2"><i class="fas fa-plug text-emerald-500"></i> FranklinWH TOU Profile</span>
+            <i class="fas" :class="open?'fa-chevron-up':'fa-chevron-down'" style="font-size:10px"></i>
+          </button>
+          <div x-show="open" x-cloak class="space-y-3">
+            <template x-if="tariffProfileLoading">
+              <div class="text-xs text-gray-500 flex items-center gap-2"><i class="fas fa-circle-notch fa-spin text-blue-400"></i> Loading TOU profile…</div>
+            </template>
+            <template x-if="!tariffProfileLoading && !tariffProfile">
+              <div class="rounded-lg p-3 border border-gray-700 bg-gray-900/50 text-xs text-gray-500 italic">Gateway not yet polled — TOU profile unavailable.</div>
+            </template>
+            <template x-if="!tariffProfileLoading && tariffProfile">
+              <div class="rounded-lg border bg-gray-900/50 p-4 space-y-3" :class="tariffProfile.valid?'border-emerald-700/40':'border-amber-700/40'">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                    <div class="text-gray-500">Tariff Type</div><div class="text-gray-200 font-semibold" x-text="tariffProfile.tariff_type_label||'—'"></div>
+                    <div class="text-gray-500">Utility Company</div><div class="text-gray-200 font-semibold" x-text="tariffProfile.tariff_company||'—'"></div>
+                    <div class="text-gray-500">Seasons Defined</div><div class="text-gray-200 font-semibold" x-text="tariffProfile.season_count??'—'"></div>
+                    <div class="text-gray-500">NEM Scheme</div><div class="text-gray-200 font-semibold" x-text="tariffProfile.nem_type_label||'—'"></div>
+                    <div class="text-gray-500">Validated</div><div class="text-gray-200 font-semibold" x-text="editingService.tariff_validated_at?new Date(editingService.tariff_validated_at).toLocaleString():'Not yet'"></div>
+                  </div>
+                  <div class="flex-shrink-0">
+                    <template x-if="tariffProfile.valid"><span class="px-2 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">✓ Valid</span></template>
+                    <template x-if="!tariffProfile.valid"><span class="px-2 py-1 text-[10px] font-black uppercase tracking-widest rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25">⚠ Incomplete</span></template>
+                  </div>
+                </div>
+                <template x-if="tariffProfile.issues && tariffProfile.issues.length>0">
+                  <ul class="space-y-1 mt-2">
+                    <template x-for="issue in tariffProfile.issues" :key="issue">
+                      <li class="flex items-start gap-2 text-xs text-amber-400"><i class="fas fa-exclamation-circle mt-0.5 flex-shrink-0"></i><span x-text="issue"></span></li>
+                    </template>
+                  </ul>
+                </template>
+                <template x-if="editingService.pricing_provider !== 'franklinwh_tou'">
+                  <div class="text-[11px] text-gray-500 italic border-t border-gray-700 pt-2">
+                    <i class="fas fa-info-circle text-blue-400 mr-1"></i>Rates are read-only — managed by your active pricing provider. To change TOU, go to the <span class="text-blue-400">Schedule</span> tab.
+                  </div>
+                </template>
+                <div class="flex gap-2 pt-1">
+                  <button class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1" @click="refreshTariffProfile()" :disabled="tariffProfileLoading">
+                    <i class="fas fa-sync-alt" :class="tariffProfileLoading?'fa-spin':''"></i> Refresh from gateway
+                  </button>
+                  <template x-if="tariffProfile && tariffProfile.valid">
+                    <button class="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 ml-3" @click="syncTariffProfile()">
+                      <i class="fas fa-save"></i> Save to service record
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+
+        <!-- VPP Programme -->
+        <div x-data="{open:false}">
+          <button class="flex w-full items-center justify-between text-sm font-bold text-gray-200 mb-3" @click="open=!open">
+            <span class="flex items-center gap-2"><i class="fas fa-network-wired text-purple-400"></i> VPP Programme
+              <template x-if="editingService.vpp_enrolled">
+                <span class="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/25">Enrolled</span>
+              </template>
+            </span>
+            <i class="fas" :class="open?'fa-chevron-up':'fa-chevron-down'" style="font-size:10px"></i>
+          </button>
+          <div x-show="open" x-cloak class="space-y-3">
+            <template x-if="vppStatus">
+              <div class="rounded-lg border p-4 text-sm" :class="vppStatus.vpp_enrolled?'border-purple-700/40 bg-purple-900/10':'border-gray-700 bg-gray-900/50'">
+                <div class="flex items-center gap-3 mb-2">
+                  <i class="fas" :class="vppStatus.vpp_enrolled?'fa-check-circle text-purple-400':'fa-times-circle text-gray-500'"></i>
+                  <span class="font-semibold text-gray-200" x-text="vppStatus.vpp_enrolled?('Enrolled — '+(vppStatus.program_name||'Programme details pending'))  :'Not enrolled in a VPP programme'"></span>
+                </div>
+              </div>
+            </template>
+            <template x-if="vppError">
+              <div class="rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-xs text-red-400" x-text="vppError"></div>
+            </template>
+            <button class="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1" @click="checkVppStatus()" :disabled="vppChecking">
+              <i class="fas fa-satellite-dish" :class="vppChecking?'fa-spin':''"></i>
+              <span x-text="vppChecking?'Checking…':'Check VPP Status'"></span>
+            </button>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+
+        <!-- Solar Sources (service-direct only) -->
+        <div x-data="{open:false}">
+          <button class="flex w-full items-center justify-between text-sm font-bold text-gray-200 mb-3" @click="open=!open; if(open && solarSources.length===0) loadSolarSources(editingService.id)">
+            <span class="flex items-center gap-2">
+              <i class="fas fa-solar-panel text-amber-400"></i> Service-Direct Solar Sources
+              <span class="text-[9px] font-normal text-gray-500">(not connected to a gateway)</span>
+              <template x-if="solarAssigned.length>0">
+                <span class="px-2 py-0.5 text-[9px] font-black rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25" x-text="solarAssigned.length+' assigned'"></span>
+              </template>
+            </span>
+            <i class="fas" :class="open?'fa-chevron-up':'fa-chevron-down'" style="font-size:10px"></i>
+          </button>
+          <div x-show="open" x-cloak>
+            <p class="text-[10px] text-gray-600 mb-3">Solar PV sources here have no gateway connection and are measured via a Split Solar CT kit on another gateway. Gateway-connected solar is managed in the <span class="text-amber-400">Solar Setup</span> tab.</p>
+            <div class="bg-gray-900/50 rounded-xl border border-gray-700 divide-y divide-gray-800">
+              <template x-if="solarLoading">
+                <div class="py-4 text-center text-xs text-gray-600"><i class="fa-solid fa-spinner fa-spin mr-1"></i> Loading sources…</div>
+              </template>
+              <template x-if="!solarLoading && solarSources.length===0">
+                <div class="py-6 text-center text-xs text-gray-600 italic">No service-direct solar sources found.<br>Auto-detected at startup if Split Solar CT is installed.</div>
+              </template>
+              <template x-for="src in solarSources" :key="src.id">
+                <label class="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-gray-800/50 transition">
+                  <input type="checkbox" :value="src.id" x-model="solarAssigned" class="accent-amber-500 flex-shrink-0">
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs font-semibold text-gray-200" x-text="src.source_name||src.label||'(unlabelled)'"></span>
+                      <span class="text-[9px] px-1.5 py-0.5 rounded font-bold" style="background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2)" x-text="src.source_type_label||src.source_type"></span>
+                    </div>
+                    <div class="text-[9px] text-gray-500 mt-0.5" x-text="src.kwp+' kWp'"></div>
+                  </div>
+                </label>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-gray-700">
+
+        <!-- Audit Trail -->
+        <div x-data="{open:false}">
+          <button class="flex w-full items-center justify-between text-sm font-bold text-gray-200 mb-3" @click="open=!open; if(open) loadAudit()">
+            <span class="flex items-center gap-2"><i class="fas fa-history text-gray-400"></i> Audit Trail</span>
+            <i class="fas" :class="open?'fa-chevron-up':'fa-chevron-down'" style="font-size:10px"></i>
+          </button>
+          <div x-show="open" x-cloak>
+            <template x-if="auditLog.length===0"><div class="text-xs text-gray-500 italic">No audit entries yet.</div></template>
+            <div class="space-y-1">
+              <template x-for="entry in auditLog" :key="entry.id">
+                <div class="flex items-baseline gap-3 text-xs border-b border-gray-800 py-1.5">
+                  <span class="text-gray-600 font-mono flex-shrink-0" x-text="entry.ts?entry.ts.replace('T',' ').slice(0,16):''"></span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide flex-shrink-0"
+                        :class="entry.event==='created'?'bg-blue-500/15 text-blue-400':entry.event==='deleted'?'bg-red-500/15 text-red-400':'bg-gray-700 text-gray-400'"
+                        x-text="entry.event"></span>
+                  <span class="text-gray-400" x-text="entry.detail||''"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end modal-body -->
+      <div class="modal-footer flex justify-between items-center p-4 bg-gray-800 sticky bottom-0 border-t border-gray-700">
+        <div>
+          <template x-if="editingService?.id">
+            <button class="text-xs text-red-500 hover:text-red-400" @click="confirmDeleteService()">Delete Service</button>
+          </template>
+        </div>
+        <div class="flex gap-3">
+          <button class="btn btn-secondary" @click="showEditorModal=false">Cancel</button>
+          <button class="btn btn-primary" @click="saveService()" :disabled="editorSaving">
+            <svg class="icon fa-spin" x-show="editorSaving" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- ═══ END EDITOR MODAL ═══ -->
+
+  <!-- Delete Confirmation Modal -->
+  <div x-show="showDeleteModal" x-cloak class="modal-backdrop z-[9999]" x-transition.opacity @click.self="showDeleteModal = false">
+    <div class="modal-panel max-w-md bg-gray-800 border border-red-500/30">
+      <div class="modal-header bg-[rgba(239,68,68,.1)] border-b border-[rgba(239,68,68,.2)] px-4 py-3 flex justify-between items-center">
+        <h3 class="text-red-400 font-bold text-sm flex items-center gap-2">
+          <i class="fas fa-exclamation-triangle"></i> Confirm Deletion
+        </h3>
+        <button class="text-red-400/70 hover:text-red-300" @click="showDeleteModal = false">&times;</button>
+      </div>
+      <div class="modal-body p-5">
+        <p class="text-gray-300 text-sm mb-2">Are you sure you want to delete the utility service <strong class="text-gray-100" x-text="editingService.name"></strong>?</p>
+        <p class="text-xs text-gray-500">This action cannot be undone. Gateways assigned to this service will become unassigned.</p>
+      </div>
+      <div class="modal-footer flex justify-end gap-3 p-4 bg-gray-900 border-t border-gray-700">
+        <button class="btn btn-secondary" @click="showDeleteModal = false">Cancel</button>
+        <button class="btn btn-primary bg-red-600 hover:bg-red-500 border-red-500 text-white" @click="deleteService(editingService.id)">Delete Service</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SITE TOPOLOGY EDITOR MODAL ═══ -->
+  <div x-show="showSiteTopologyModal" x-cloak class="modal-backdrop z-[9999]" x-transition.opacity @click.self="showSiteTopologyModal = false">
+    <div class="modal-panel max-w-2xl bg-gray-800 border border-teal-500/30 shadow-[0_0_20px_rgba(20,184,166,0.15)] rounded-2xl overflow-hidden" style="max-height:90vh; overflow-y:auto;">
+      <!-- Header -->
+      <div class="modal-header bg-gray-900/60 border-b border-gray-700 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+        <div>
+          <h3 class="text-sm font-black text-gray-100 uppercase tracking-widest flex items-center gap-2">
+            <i class="fas fa-network-wired text-teal-400"></i> Configure Site &amp; Gateway Topology
+          </h3>
+          <p class="text-[10px] text-gray-400 mt-0.5" x-text="'FWH Site ID: ' + (siteEdit.site_id || '') + ' • ' + (siteEdit.site_name || '')"></p>
+        </div>
+        <button class="text-gray-400 hover:text-teal-400 text-lg transition" @click="showSiteTopologyModal = false">&times;</button>
+      </div>
+
+      <!-- Body -->
+      <div class="modal-body p-6 space-y-6 bg-gray-800">
+        <!-- Site Classification Toggle -->
+        <div>
+          <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Site Classification</label>
+          <div class="grid grid-cols-2 gap-4">
+            <label class="flex flex-col items-center justify-center p-4 rounded-xl border cursor-pointer transition text-center"
+                   :class="siteEdit.grid_classification === 'on_grid' ? 'border-teal-500/50 bg-teal-500/10 text-teal-300' : 'border-gray-700 bg-gray-900/40 text-gray-400 hover:bg-gray-900/60'">
+              <input type="radio" value="on_grid" x-model="siteEdit.grid_classification" class="sr-only">
+              <i class="fas fa-plug text-xl mb-2"></i>
+              <span class="text-xs font-bold">On-Grid Site</span>
+              <span class="text-[9px] text-gray-500 mt-1">Grid service enabled (flat/TOU tariffs)</span>
+            </label>
+
+            <label class="flex flex-col items-center justify-center p-4 rounded-xl border cursor-pointer transition text-center"
+                   :class="siteEdit.grid_classification === 'off_grid' ? 'border-rose-500/50 bg-rose-500/10 text-rose-300' : 'border-gray-700 bg-gray-900/40 text-gray-400 hover:bg-gray-900/60'">
+              <input type="radio" value="off_grid" x-model="siteEdit.grid_classification" class="sr-only">
+              <i class="fas fa-unlink text-xl mb-2"></i>
+              <span class="text-xs font-bold">Off-Grid Site</span>
+              <span class="text-[9px] text-gray-500 mt-1">Isolated microgrid (no grid connection)</span>
+            </label>
+          </div>
+        </div>
+
+        <hr class="border-gray-700/60" x-show="siteEdit.grid_classification === 'on_grid'">
+
+        <!-- Grid Wiring Setup (On-Grid only) -->
+        <div x-show="siteEdit.grid_classification === 'on_grid'" x-transition>
+          <h4 class="font-bold text-gray-200 mb-3 flex items-center gap-2 text-sm"><i class="fas fa-bolt text-yellow-400"></i> Grid Wiring Setup</h4>
+          <div class="grid grid-cols-3 gap-4">
+            <div>
+              <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">AC Wiring Type</label>
+              <select class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full" x-model="siteEdit.grid_type">
+                <option value="single_phase">Single Phase</option>
+                <option value="split_phase_240">Split Phase 240V</option>
+                <option value="split_phase_208">Split Phase 208V</option>
+                <option value="three_phase_230">3-Phase 230V</option>
+                <option value="three_phase_415">3-Phase 415V</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Service Voltage (V)</label>
+              <select class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full" x-model.number="siteEdit.service_voltage">
+                <option value="120">120 V</option>
+                <option value="230">230 V</option>
+                <option value="240">240 V</option>
+                <option value="400">400 V</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-1.5">Service Limit (Amps)</label>
+              <input type="number" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 w-full font-mono" x-model.number="siteEdit.service_amps" placeholder="e.g. 63">
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-gray-700/60" x-show="siteEdit.grid_classification === 'on_grid'">
+
+        <!-- Gateways & Phase Mapping (On-Grid only) -->
+        <div x-show="siteEdit.grid_classification === 'on_grid'" x-transition>
+          <h4 class="font-bold text-gray-200 mb-3 flex items-center gap-2 text-sm"><i class="fas fa-server text-teal-400"></i> Gateway Phase Mapping &amp; Clustering</h4>
+          <p class="text-[10px] text-gray-500 mb-3"><i class="fas fa-info-circle mr-1"></i>Map physical gateways to active phases. For three-phase sites with multiple aGates (AU/NZ), group them under a shared cluster group ID.</p>
+          
+          <div class="space-y-4">
+            <template x-for="(gw, idx) in siteEdit.gateways" :key="gw.short_id">
+              <div class="p-4 rounded-xl border border-gray-700 bg-gray-900/30 flex items-start gap-4">
+                <div class="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center flex-shrink-0 mt-1">
+                  <i class="fas fa-server text-gray-500 text-xs"></i>
+                </div>
+                <div class="flex-1 grid grid-cols-3 gap-3">
+                  <div class="col-span-3 border-b border-gray-800 pb-2">
+                    <span class="font-bold text-gray-200 text-xs" x-text="gw.name || gw.short_id"></span>
+                    <span class="font-mono text-[9px] text-gray-600 ml-2" x-text="gw.short_id"></span>
+                  </div>
+                  <div>
+                    <label class="block text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">AC Phase</label>
+                    <select class="bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-100 w-full" x-model="gw.gateway_phase">
+                      <option value="">None</option>
+                      <option value="L1">L1 / A</option>
+                      <option value="L2">L2 / B</option>
+                      <option value="L3">L3 / C</option>
+                      <option value="split">Split-Phase</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Cluster ID</label>
+                    <input type="text" class="bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-100 w-full font-mono" x-model="gw.three_phase_group_id" placeholder="Group ID">
+                  </div>
+                  <div>
+                    <label class="block text-[9px] font-black uppercase tracking-widest text-gray-500 mb-1">Gateway Amps</label>
+                    <input type="number" class="bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-100 w-full font-mono" x-model.number="gw.service_amps" placeholder="Derating">
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Off-Grid Notice -->
+        <div x-show="siteEdit.grid_classification === 'off_grid'" x-transition class="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 flex gap-3 text-rose-300">
+          <i class="fas fa-exclamation-triangle text-lg mt-0.5 flex-shrink-0"></i>
+          <div>
+            <span class="font-bold block text-sm">Off-Grid Classifications Shield Active</span>
+            <span class="text-xs text-gray-400 block mt-1">Saving this site as Off-Grid will remove it from all utility billing services, disable and hide pricing configs, and suppress physical Meter Adapter Collar (mac1) catalog cards across this installation's devices.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="modal-footer flex justify-between items-center p-4 bg-gray-900 border-t border-gray-700 sticky bottom-0 z-10">
+        <button class="btn btn-secondary" @click="showSiteTopologyModal = false">Cancel</button>
+        <button class="btn btn-primary bg-teal-600 hover:bg-teal-500 border-teal-500 text-white font-bold px-5" @click="saveSiteTopology()">Save Topology</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PAGE HEADER ═══ -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" viewBox="0 0 24 24"><use href="#tag"/></svg>
+        Services
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Gateway topology, electricity utility services, and billing configuration</p>
+    </div>
+    <button class="bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-100 font-bold py-2.5 px-4 rounded-lg text-xs transition-colors flex items-center gap-2" @click="forceRefresh()" :disabled="refreshing">
+      <i class="fas" :class="refreshing?'fa-circle-notch fa-spin':'fa-sync-alt'"></i> Refresh
+    </button>
+  </div>
+
+  <!-- ═══ SUB-TAB NAV ═══ -->
+  <div class="flex gap-1 mb-6 bg-gray-900/60 p-1 rounded-xl border border-gray-700/60">
+    <button id="svc-tab-overview" @click="switchTab('overview')"
+            class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-bold transition-all"
+            :class="activeSubTab==='overview' ? 'bg-gray-700 text-gray-100 shadow' : 'text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-project-diagram text-blue-400"></i> Overview
+    </button>
+    <button id="svc-tab-sites" @click="switchTab('sites')"
+            class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-bold transition-all"
+            :class="activeSubTab==='sites' ? 'bg-gray-700 text-gray-100 shadow' : 'text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-network-wired text-teal-400"></i> Sites / Gateways
+    </button>
+    <button id="svc-tab-utility" @click="switchTab('utility')"
+            class="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-bold transition-all"
+            :class="activeSubTab==='utility' ? 'bg-gray-700 text-gray-100 shadow' : 'text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-file-invoice-dollar text-amber-400"></i> Electricity Utility
+      <template x-if="utilityServices.length>0">
+        <span class="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-gray-600 text-gray-300" x-text="utilityServices.length"></span>
+      </template>
+    </button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       OVERVIEW TAB
+  ═══════════════════════════════════════════════════════ -->
+  <div x-show="activeSubTab==='overview'" x-cloak>
+
+    <!-- Connection Topology Diagram -->
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-5 mb-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-bold text-gray-200 flex items-center gap-2">
+          <i class="fas fa-project-diagram text-blue-400"></i> Connection Topology
+        </h2>
+        <button class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1" @click="switchTab('utility')">
+          <i class="fas fa-plus"></i> Add Service
+        </button>
+      </div>
+
+      <template x-if="utilityServices.length===0">
+        <div class="text-center py-10">
+          <i class="fas fa-bolt text-4xl text-gray-700 mb-4 block"></i>
+          <p class="text-sm text-gray-500 font-semibold">No utility services configured</p>
+          <p class="text-xs text-gray-600 mt-1 mb-4">Add your first electricity service to begin setup</p>
+          <button class="btn btn-primary text-xs" @click="switchTab('utility')"><i class="fas fa-plus mr-1"></i> Add Utility Service</button>
+        </div>
+      </template>
+
+      <template x-for="svc in overviewTopology" :key="svc.id">
+        <div class="mb-4 last:mb-0">
+          <!-- Service header bar -->
+          <div class="flex items-center gap-3 p-3 rounded-lg border"
+               :class="svc.isStandalone ? 'border-amber-700/40 bg-amber-900/10' : 'border-blue-700/40 bg-blue-900/10'">
+            <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                 :class="svc.isStandalone ? 'bg-amber-500/20' : 'bg-blue-500/20'">
+              <i class="fas fa-bolt" :class="svc.isStandalone ? 'text-amber-400' : 'text-blue-400'"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="font-bold text-gray-100 text-sm" x-text="svc.name"></div>
+              <div class="text-[10px] text-gray-500 flex items-center gap-3 flex-wrap mt-0.5">
+                <span x-text="svc.wiringLabel"></span>
+                <span x-show="svc.service_voltage_v" x-text="svc.service_voltage_v+'V'"></span>
+                <template x-if="svc._derivedSiteName"><span class="text-teal-400 flex items-center gap-1"><i class="fas fa-map-marker-alt text-[9px]"></i><span x-text="svc._derivedSiteName"></span></span></template>
+                <span x-show="svc.retailer_name" x-text="svc.retailer_name"></span>
+                <span x-show="svc.nmi_id" class="font-mono" x-text="'NMI: '+svc.nmi_id"></span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <span x-show="svc.isStandalone" class="px-2 py-1 text-[9px] font-black uppercase tracking-widest rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25">⚠ No Gateway</span>
+              <span class="px-2 py-1 text-[9px] font-black uppercase tracking-widest rounded-full bg-gray-700 text-gray-400 border border-gray-600" x-text="providerLabel(svc.pricing_provider)"></span>
+              <button class="text-[10px] text-gray-500 hover:text-blue-400 transition" @click="openEditorFromSites(svc.id)"><i class="fas fa-edit"></i></button>
+            </div>
+          </div>
+          <!-- Gateway connections -->
+          <template x-if="svc.linkedGateways && svc.linkedGateways.length > 0">
+            <div class="ml-6 mt-1 space-y-1">
+              <template x-for="gw in svc.linkedGateways" :key="gw.short_id">
+                <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-700/60 bg-gray-900/40 text-xs">
+                  <div class="w-1.5 h-1.5 rounded-full flex-shrink-0" :class="gw.grid_connection_state ? 'bg-green-400' : 'bg-gray-600'"></div>
+                  <i class="fas fa-server text-gray-500 text-[10px]"></i>
+                  <span class="font-semibold text-gray-300" x-text="gw.name||gw.short_id"></span>
+                  <span class="font-mono text-[9px] text-gray-600" x-text="gw.short_id"></span>
+                  <template x-if="gw.has_solar"><span class="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25">Solar PV</span></template>
+                  <template x-if="gw.has_ct_split_grid"><span class="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 border border-orange-500/25">Split Grid CT</span></template>
+                  <template x-if="gw.gateway_phase"><span class="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/25" x-text="gw.gateway_phase"></span></template>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Live Pricing + 24h Forecast moved to Pricing tab (BD-11 / #19, 2026-08-08).
+         Rationale: Services tab is topology + utility service subscriptions.
+         Live pricing data is provider-specific detail that belongs where the
+         provider itself is configured. Callout below directs users. -->
+    <template x-if="currentPrice || forecast.length > 0">
+      <div class="rounded-xl border border-blue-700/40 bg-blue-900/10 p-3 mb-5 flex items-start gap-3">
+        <i class="fas fa-info-circle text-blue-400 mt-0.5 flex-shrink-0"></i>
+        <div class="text-xs text-blue-200/90 leading-relaxed">
+          <span class="font-bold">Live pricing + 24h forecast moved.</span>
+          The at-a-glance import/export prices and forecast strip now live on the
+          <button @click="$store.app.setTab('dynamic_pricing')" class="underline hover:text-blue-100">Pricing</button>
+          tab, alongside per-provider detail. Services now focuses on topology
+          and utility service subscriptions.
+        </div>
+      </div>
+    </template>
+
+  </div><!-- end overview -->
+
+  <!-- ═══════════════════════════════════════════════════════
+       SITES / GATEWAYS TAB
+  ═══════════════════════════════════════════════════════ -->
+  <div x-show="activeSubTab==='sites'" x-cloak>
+
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-bold text-gray-200 flex items-center gap-2"><i class="fas fa-network-wired text-teal-400"></i> Sites &amp; Gateways</h2>
+      <button class="text-xs text-teal-400 hover:text-teal-300 flex items-center gap-1" @click="loadSites()" :disabled="sitesLoading">
+        <i class="fas fa-sync-alt" :class="sitesLoading?'fa-spin':''"></i> Refresh
+      </button>
+    </div>
+
+    <template x-if="sitesLoading">
+      <div class="text-center py-12"><i class="fas fa-circle-notch fa-spin text-2xl text-teal-400 mb-3 block"></i><p class="text-sm text-gray-500">Loading gateway topology…</p></div>
+    </template>
+
+    <template x-if="!sitesLoading && sites.length===0">
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-8 text-center">
+        <i class="fas fa-server text-4xl text-gray-700 mb-4 block"></i>
+        <p class="text-sm text-gray-500 font-semibold">No gateways registered</p>
+        <p class="text-xs text-gray-600 mt-1">Add a gateway in the <span class="text-teal-400">Gateways</span> tab first.</p>
+      </div>
+    </template>
+
+    <template x-for="site in sites" :key="site.site_id">
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 mb-4 overflow-hidden">
+        <!-- Site Header -->
+        <div class="flex items-center gap-3 px-5 py-4 bg-gray-900/40 border-b border-gray-700">
+          <div class="w-8 h-8 rounded-lg bg-teal-500/20 flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-map-marker-alt text-teal-400 text-xs"></i>
+          </div>
+          <div class="flex-1">
+            <div class="font-bold text-gray-100 flex items-center gap-2">
+              <span x-text="site.site_name||'Site '+ site.site_id"></span>
+              <template x-if="site.gateways.some(g => g.grid_type === 'off_grid')">
+                <span class="text-[9px] px-2 py-0.5 rounded-md font-black bg-rose-500/10 border border-rose-500/30 text-rose-400 tracking-wider uppercase">Off-Grid</span>
+              </template>
+            </div>
+            <div class="text-[10px] text-gray-600 font-mono" x-text="'FWH Site ID: '+site.site_id"></div>
+          </div>
+          <span class="text-[10px] text-gray-500" x-text="site.gateways.length+' gateway'+(site.gateways.length!==1?'s':'')"></span>
+          <button class="px-3 py-1.5 rounded-lg border border-teal-500/40 bg-teal-500/10 text-teal-400 text-xs font-bold hover:bg-teal-500/20 transition flex items-center gap-1.5 ml-3"
+                  @click="openSiteTopologyEditor(site)">
+            <i class="fas fa-edit text-[10px]"></i> Configure Topology
+          </button>
+        </div>
+
+        <!-- Gateway Cards -->
+        <div class="divide-y divide-gray-700/60">
+          <template x-for="gw in site.gateways" :key="gw.short_id">
+            <div class="p-5">
+              <div class="flex items-start gap-4">
+                <!-- Status dot + icon -->
+                <div class="flex flex-col items-center gap-1.5 pt-0.5">
+                  <div class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                       :class="gw.grid_connection_state ? 'bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.5)]' : 'bg-gray-600'"></div>
+                  <i class="fas fa-server text-gray-500 text-sm"></i>
+                </div>
+                <!-- Main info -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-bold text-gray-100 text-sm" x-text="gw.name||gw.short_id"></span>
+                    <span class="font-mono text-[10px] text-gray-600" x-text="gw.short_id"></span>
+                    <template x-if="gw.model">
+                      <span class="text-[9px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-400 border border-gray-600" x-text="gw.model"></span>
+                    </template>
+                  </div>
+                  <!-- Grid status -->
+                  <div class="text-[10px] mt-1 flex items-center gap-1" :class="gwGridStatus(gw).cls">
+                    <i class="fas fa-circle text-[6px]"></i>
+                    <span x-text="gwGridStatus(gw).label"></span>
+                  </div>
+                  <!-- Capability chips -->
+                  <div class="flex flex-wrap gap-1.5 mt-2">
+                    <template x-for="chip in gwCapabilityChips(gw)" :key="chip.label">
+                      <span :class="chipClass(chip.color)" x-text="chip.label"></span>
+                    </template>
+                  </div>
+                  <!-- Linked utility services -->
+                  <div class="mt-3" x-show="gw.utility_service_ids && gw.utility_service_ids.length>0">
+                    <div class="text-[10px] text-gray-600 uppercase tracking-widest font-black mb-1">Linked Utility Services</div>
+                    <div class="flex flex-wrap gap-2">
+                      <template x-for="(svcName, idx) in gw.utility_service_names" :key="idx">
+                        <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-blue-700/40 bg-blue-500/10 text-xs text-blue-300">
+                          <i class="fas fa-bolt text-[10px]"></i>
+                          <span x-text="svcName"></span>
+                        </span>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="mt-2" x-show="!gw.utility_service_ids || gw.utility_service_ids.length===0">
+                    <span class="text-[10px] text-amber-500/70 flex items-center gap-1">
+                      <i class="fas fa-exclamation-triangle text-[9px]"></i> No utility service linked —
+                      <button class="underline hover:text-amber-400 transition" @click="switchTab('utility')">add in Electricity Utility tab</button>
+                    </span>
+                  </div>
+                </div>
+                <!-- Quick edit button -->
+                <button class="text-xs text-gray-600 hover:text-blue-400 transition flex-shrink-0 flex items-center gap-1"
+                        @click="switchTab('utility')"
+                        title="Go to Electricity Utility to configure">
+                  <i class="fas fa-external-link-alt text-[10px]"></i>
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+  </div><!-- end sites/gateways -->
+
+  <!-- ═══════════════════════════════════════════════════════
+       ELECTRICITY UTILITY TAB
+  ═══════════════════════════════════════════════════════ -->
+  <div x-show="activeSubTab==='utility'" x-cloak>
+
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-bold text-gray-200 flex items-center gap-2"><i class="fas fa-file-invoice-dollar text-amber-400"></i> Electricity Utility Services</h2>
+      <button class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-lg text-xs transition-colors shadow-lg flex items-center gap-2" @click="openEditor()">
+        <i class="fas fa-plus"></i> Add Service
+      </button>
+    </div>
+
+    <template x-if="utilityServices.length===0">
+      <div class="rounded-xl border border-gray-700 bg-gray-800/80 shadow-xl mb-6 p-8 text-center">
+        <div class="text-gray-600 mb-4"><i class="fas fa-bolt text-4xl"></i></div>
+        <h3 class="text-base font-bold text-gray-300">No Utility Services Configured</h3>
+        <p class="text-sm text-gray-500 mt-2 max-w-md mx-auto">Create a utility service to configure electricity pricing, provider details, and bill reconciliation.</p>
+        <button class="btn btn-primary mt-4 text-sm" @click="openEditor()"><i class="fas fa-plus mr-1"></i> Add Utility Service</button>
+      </div>
+    </template>
+
+    <div class="space-y-3 mb-8">
+      <template x-for="svc in enrichedUtilityServices" :key="svc.id">
+        <div class="rounded-xl border bg-gray-800/80 shadow-xl p-5 transition-all hover:border-gray-600"
+             :class="(!svc.gateways||svc.gateways.length===0) ? 'border-amber-700/40' : 'border-gray-700'">
+          <div class="flex items-start justify-between gap-4">
+            <div class="flex items-start gap-4 flex-1">
+              <div class="w-11 h-11 rounded-xl flex-shrink-0 flex items-center justify-center"
+                   :class="(!svc.gateways||svc.gateways.length===0) ? 'bg-amber-500/20' : 'bg-blue-500/10 border border-blue-700/30'">
+                <i class="fas fa-file-invoice-dollar" :class="(!svc.gateways||svc.gateways.length===0) ? 'text-amber-400' : 'text-blue-400'"></i>
+              </div>
+              <div class="flex-1">
+                <div class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1 flex items-center gap-1.5 flex-wrap">
+                  <template x-if="svc._derivedSiteName"><span class="text-teal-400 flex items-center gap-1"><i class="fas fa-map-marker-alt text-[8px]"></i><span x-text="svc._derivedSiteName"></span></span></template>
+                  <template x-if="!svc._derivedSiteName"><span class="text-gray-700">No site</span></template>
+                  <span class="text-gray-700">›</span>
+                  <span x-text="providerLabel(svc.pricing_provider)" class="text-amber-500"></span>
+                  <span class="text-gray-700">›</span>
+                  <template x-if="svc.gateways&&svc.gateways.length">
+                    <span class="text-gray-500" x-text="svc.gateways.length+' gateway'+(svc.gateways.length!==1?'s':'')"></span>
+                  </template>
+                  <template x-if="!svc.gateways||!svc.gateways.length">
+                    <span class="text-amber-600">⚠ No gateways linked</span>
+                  </template>
+                </div>
+                <div class="font-bold text-base text-gray-100" x-text="svc.name"></div>
+                <div class="text-xs text-gray-400 mt-1">
+                  <span x-text="svc.retailer_name||'Retailer not specified'"></span>
+                  <span class="mx-2 text-gray-600">•</span>
+                  NMI: <span x-text="svc.nmi_id||'—'" class="text-gray-300"></span>
+                  <span x-show="svc.account_number" class="ml-2">Acct: <span class="text-gray-300 font-mono" x-text="svc.account_number"></span></span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 mt-2">
+                  <span class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-900/50 rounded-lg border border-gray-700 text-xs">
+                    <i class="fas fa-bolt text-amber-500"></i>
+                    <span x-text="providerLabel(svc.pricing_provider)" class="text-blue-400"></span>
+                  </span>
+                  <template x-if="svc.ac_wiring_type">
+                    <span class="px-2.5 py-1 rounded-lg text-xs border border-indigo-700/40 bg-indigo-500/10 text-indigo-300"
+                          x-text="{1:'1-Phase',2:'Split-Phase',3:'3-Phase'}[svc.ac_wiring_type]||''"></span>
+                  </template>
+                  <template x-if="svc.tariff_type">
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-bold border"
+                          :class="{TOU:'bg-blue-500/10 text-blue-400 border-blue-500/25',TIERED:'bg-indigo-500/10 text-indigo-400 border-indigo-500/25',FLAT:'bg-gray-700 text-gray-400 border-gray-600'}[svc.tariff_type?.toUpperCase()]||'bg-gray-700 text-gray-400 border-gray-600'"
+                          x-text="svc.tariff_type"></span>
+                  </template>
+                  <template x-if="svc.vpp_enrolled">
+                    <span class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-black uppercase tracking-widest bg-purple-500/15 text-purple-400 border border-purple-500/25">
+                      <i class="fas fa-network-wired"></i> VPP
+                    </span>
+                  </template>
+                </div>
+              </div>
+            </div>
+            <button class="bg-gray-700 hover:bg-gray-600 text-gray-200 font-bold py-1.5 px-3 rounded-lg text-xs transition-colors flex items-center gap-2 flex-shrink-0" @click="openEditor(svc)">
+              <i class="fas fa-edit"></i> Edit
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+  </div><!-- end electricity utility -->
+
+</div><!-- end pricingTab -->
