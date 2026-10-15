@@ -1,0 +1,114 @@
+<!-- ── Smart Circuits Tab v2 ── -->
+<div x-data="smartCircuitsTab()" x-init="init()" class="space-y-5 max-w-5xl">
+
+  <!-- Header -->
+  <div>
+    <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#plug"/></svg>
+      Smart Circuits
+    </h1>
+    <p class="text-xs text-gray-400 mt-0.5">Monitor and control aGate auxiliary loads</p>
+  </div>
+
+  <!-- No gateways -->
+  <template x-if="$store.app.gateways.length === 0">
+    <div class="flex flex-col items-center justify-center min-h-64 gap-4 text-center">
+      <div class="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+        <i class="fas fa-plug text-xl text-primary-light opacity-70"></i>
+      </div>
+      <div>
+        <p class="font-bold text-gray-200">No Gateways</p>
+        <p class="text-sm text-gray-500 mt-1">Register a gateway in <a href="#" @click.prevent="$store.app.setTab('gateways')" class="text-primary-light hover:underline">Gateways</a> first.</p>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="$store.app.gateways.length > 0">
+  <div class="space-y-5">
+
+    <!-- Summary bar -->
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-5 flex items-center justify-between gap-4 flex-wrap">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+          <i class="fas fa-plug text-primary-light text-sm"></i>
+        </div>
+        <div>
+          <p class="text-sm font-bold text-gray-100">Circuits Overview</p>
+          <p class="text-xs text-gray-500 mt-0.5">Monitor and override smart circuits logic</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 text-xs">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50 inline-block"></span>
+        <span class="text-gray-500">API Connected</span>
+        <span class="text-gray-700 ml-2" x-text="circuits.length + ' circuit' + (circuits.length !== 1 ? 's' : '') + ' detected'"></span>
+      </div>
+    </div>
+
+    <!-- No circuits -->
+    <template x-if="circuits.length === 0 && !busy">
+      <div class="rounded-xl border border-dashed border-gray-700 bg-gray-800/30 p-12 text-center">
+        <i class="fas fa-plug text-3xl text-gray-700 mb-4"></i>
+        <p class="text-sm font-bold text-gray-400">No Smart Circuits Detected</p>
+        <p class="text-xs text-gray-600 mt-1">Circuits are auto-discovered on the first successful Cloud API poll.</p>
+      </div>
+    </template>
+
+    <!-- Circuit cards grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+      <template x-for="c in circuits" :key="c.id">
+        <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+
+          <!-- Card header -->
+          <div class="px-5 py-3.5 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <div class="w-2 h-2 rounded-full flex-shrink-0 transition-all duration-300"
+                   :class="c.state === 'ON' ? 'bg-emerald-400 shadow-sm shadow-emerald-400/60' : 'bg-gray-600'"></div>
+              <h4 class="text-sm font-bold text-gray-100" x-text="c.name || 'Circuit ' + c.id"></h4>
+            </div>
+            <span class="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border"
+                  :class="c.state === 'ON'
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : 'bg-gray-700 text-gray-500 border-gray-700'"
+                  x-text="c.state === 'ON' ? 'On' : 'Off'"></span>
+          </div>
+
+          <!-- Telemetry row -->
+          <div class="px-5 py-4 grid grid-cols-2 gap-4 border-b border-gray-700">
+            <div>
+              <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-1">Current Draw</p>
+              <p class="text-xl font-black tabular-nums"
+                 :class="c.power > 0 ? 'text-amber-400' : 'text-gray-500'"
+                 x-text="c.power + ' W'"></p>
+            </div>
+            <div class="text-right">
+              <p class="text-[9px] font-bold uppercase tracking-widest text-gray-600 mb-1">Energy (Today)</p>
+              <p class="text-base font-bold text-gray-300" x-text="(c.energy / 1000).toFixed(2) + ' kWh'"></p>
+            </div>
+          </div>
+
+          <!-- Control row -->
+          <div class="px-5 py-4 flex items-center justify-between">
+            <div>
+              <p class="text-xs font-semibold text-gray-300">Circuit Power</p>
+              <p class="text-[10px] text-gray-600 mt-0.5" x-text="'Mode: ' + c.mode"></p>
+            </div>
+            <!-- Toggle switch -->
+            <button @click="toggleState(c.id, c.state !== 'ON')" :disabled="busy"
+                    class="relative w-12 h-6 rounded-full border-2 transition-all duration-300 focus:outline-none disabled:opacity-40"
+                    :class="c.state === 'ON'
+                      ? 'bg-emerald-500 border-emerald-500'
+                      : 'bg-gray-700 border-gray-600'">
+              <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-300"
+                    :class="c.state === 'ON' ? 'translate-x-6' : 'translate-x-0'"></span>
+            </button>
+          </div>
+
+        </div>
+      </template>
+    </div>
+
+  </div>
+  </template>
+
+</div>
+<!-- smartCircuitsTab() loaded from admin.html head -->

@@ -1,0 +1,1017 @@
+<!-- ── Security Tab v2 ── Overview, Users, API Tokens, Certificates ── -->
+<div x-data="securityTab()" x-init="init()" class="space-y-5">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0 text-primary-light" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+        Security Suite [BKL-SEC-01]
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Enforce native HTTPS, Mutual TLS (mTLS), JWT sessions, and manage API integrations.</p>
+    </div>
+    
+    <!-- Tamper detection indicator -->
+    <div class="flex items-center gap-2">
+      <template x-if="status.tamper_check_passed">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+          <i class="fas fa-shield-alt text-[10px]"></i> Snapshot Integrity: SECURE
+        </span>
+      </template>
+      <template x-if="!status.tamper_check_passed">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-500/10 border border-red-500/30 text-red-400 animate-pulse">
+          <i class="fas fa-exclamation-triangle text-[10px]"></i> SNAPSHOT MISMATCH / UNTRUSTED
+        </span>
+      </template>
+    </div>
+  </div>
+
+    <div>
+      <!-- Critical Expiry Alert (< 7 days) -->
+      <template x-if="status.cert_info.days_remaining <= 7">
+        <div class="flex items-start gap-4 p-4 rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 animate-pulse shadow-lg">
+          <i class="fas fa-biohazard text-xl flex-shrink-0 mt-0.5"></i>
+          <div class="flex-1">
+            <h4 class="font-bold text-sm">Critical: Server TLS Certificate Expiring!</h4>
+            <p class="text-xs text-gray-300 mt-1">Your certificate expires in <span class="font-black" x-text="status.cert_info.days_remaining"></span> day(s). HTTPS connections will fail when it does.</p>
+            <p class="text-xs text-gray-300 mt-1" x-show="status.cert_info.auto_renewing">This certificate renews automatically and should already have done so &mdash; <span class="font-bold">the renewal job has most likely stopped</span>. Check the host timer, then run <code>scripts/setup_tls_tailscale.sh --renew</code>.</p>
+            <p class="text-xs text-gray-300 mt-1" x-show="!status.cert_info.auto_renewing">Rotate it now &mdash; upload below, or run <code>scripts/setup_tls_mkcert.sh</code>.</p>
+          </div>
+        </div>
+      </template>
+      
+      <!-- Near Expiry Warning (8 - 30 days) -->
+      <template x-if="status.cert_info.days_remaining > 7 && status.cert_info.days_remaining <= 30">
+        <div class="flex items-start gap-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 shadow-md">
+          <i class="fas fa-exclamation-triangle text-xl flex-shrink-0 mt-0.5"></i>
+          <div class="flex-1">
+            <h4 class="font-bold text-sm">Warning: TLS Certificate Expiring Soon</h4>
+            <p class="text-xs text-gray-300 mt-1">Your server certificate expires in <span class="font-black" x-text="status.cert_info.days_remaining"></span> days.</p>
+            <p class="text-xs text-gray-300 mt-1" x-show="status.cert_info.auto_renewing">Automatic renewal is configured, so this should clear itself. If it is still showing in a week, the renewal job has stopped.</p>
+            <p class="text-xs text-gray-300 mt-1" x-show="!status.cert_info.auto_renewing">Rotate it soon to prevent a lockout &mdash; nothing renews this one for you.</p>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 rounded-xl border border-[var(--border)] text-[11px]" style="background:var(--surface-1)">
+      <span class="font-bold uppercase tracking-widest" style="color:var(--text-muted)">
+        <i class="fa-solid fa-certificate mr-1"></i> Certificate
+      </span>
+      <span style="color:var(--text-secondary)">
+        Renewal:
+        <span class="font-bold" x-show="status.cert_info.managed_by === 'tailscale'" style="color:var(--accent-green,#34d399)">automatic (Tailscale)</span>
+        <span class="font-bold" x-show="status.cert_info.managed_by === 'self_signed'">manual (self-signed)</span>
+        <span class="font-bold" x-show="status.cert_info.managed_by === 'external_ca'">manual (external CA)</span>
+      </span>
+      <span style="color:var(--text-secondary)">Issued: <span class="font-mono" x-text="(status.cert_info.issued_at || '').slice(0,10)"></span></span>
+      <span style="color:var(--text-secondary)">Expires: <span class="font-mono" x-text="(status.cert_info.expires_at || '').slice(0,10)"></span>
+        (<span x-text="status.cert_info.days_remaining"></span>d)</span>
+      <span class="opacity-70" style="color:var(--text-muted)" x-text="status.cert_info.subject"></span>
+    </div>
+
+  <!-- ── Sub-tab navigation ──────────────────────────────────────────────────
+       Was one column of stacked cards at max-w-6xl. The RBAC table has six
+       columns and sat in a 7-of-12 grid slot, so it overflowed horizontally and
+       the Actions column — which is where the change-password button lives —
+       was clipped off the right edge. The button existed; nobody could reach it.
+       Splitting by task gives each panel the full width it needs. -->
+  <div class="flex gap-1 border-b border-gray-700/60 pb-0 overflow-x-auto">
+    <button @click="activeSubTab='overview'"
+            class="flex items-center gap-2 px-5 py-2.5 text-sm font-black border-b-2 -mb-px transition whitespace-nowrap"
+            :class="activeSubTab==='overview'
+              ? 'border-primary text-primary-light'
+              : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-shield-halved text-xs"></i>Overview
+    </button>
+    <button @click="activeSubTab='users'"
+            class="flex items-center gap-2 px-5 py-2.5 text-sm font-black border-b-2 -mb-px transition whitespace-nowrap"
+            :class="activeSubTab==='users'
+              ? 'border-primary text-primary-light'
+              : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-users text-xs"></i>Users &amp; Access
+      <span class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-gray-700 text-gray-300"
+            x-text="usersList.length" x-show="usersList.length"></span>
+    </button>
+    <button @click="activeSubTab='tokens'"
+            class="flex items-center gap-2 px-5 py-2.5 text-sm font-black border-b-2 -mb-px transition whitespace-nowrap"
+            :class="activeSubTab==='tokens'
+              ? 'border-primary text-primary-light'
+              : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-key text-xs"></i>API Tokens
+      <span class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-gray-700 text-gray-300"
+            x-text="(status.active_api_tokens || []).length"
+            x-show="(status.active_api_tokens || []).length"></span>
+    </button>
+    <button @click="activeSubTab='certs'"
+            class="flex items-center gap-2 px-5 py-2.5 text-sm font-black border-b-2 -mb-px transition whitespace-nowrap"
+            :class="activeSubTab==='certs'
+              ? 'border-primary text-primary-light'
+              : 'border-transparent text-gray-500 hover:text-gray-300'">
+      <i class="fas fa-certificate text-xs"></i>Certificates
+    </button>
+  </div>
+
+
+  <!-- ── Overview ─────────────────────────────────────────────────────── -->
+  <div x-show="activeSubTab==='overview'" x-cloak class="space-y-5 max-w-5xl">
+          <div x-show="status.security_enabled && !showWizard" x-cloak class="rounded-2xl border border-gray-700 bg-gray-800/60 p-6 space-y-4 shadow-xl">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <i class="fas fa-lock text-base"></i>
+              </div>
+              <div>
+                <h3 class="text-md font-bold text-gray-100">Security Suite Active</h3>
+                <p class="text-xs text-gray-400">System operations, control pathways, and API resources are locked behind credentials.</p>
+              </div>
+            </div>
+          
+            <div class="grid grid-cols-2 gap-4 pt-2">
+              <div class="bg-gray-900/60 p-3.5 rounded-xl border border-gray-700 text-xs">
+                <span class="text-gray-500 block uppercase font-bold text-[9px] mb-1">Admin Username</span>
+                <span class="font-mono text-gray-200 font-bold" x-text="status.admin_username"></span>
+              </div>
+              <div class="bg-gray-900/60 p-3.5 rounded-xl border border-gray-700 text-xs">
+                <span class="text-gray-500 block uppercase font-bold text-[9px] mb-1">Active Credentials</span>
+                <span class="font-semibold text-emerald-400">AES-256-GCM Hashed</span>
+              </div>
+            </div>
+
+            <!-- Transport, switchable on its own.
+                 Turning HTTPS off used to mean walking a four-step "Security
+                 Setup Wizard" whose second step asks for an administrator
+                 password. Leaving those boxes blank is safe — the server keeps
+                 the existing hash — but nothing said so, and the sane response
+                 to an unexpected password prompt is to back out. One switch
+                 that saves itself, for the one setting people actually come
+                 here to change. -->
+            <div class="border-t border-gray-700/50 pt-4">
+              {% if install_context == 'ha_addon' %}
+              <!-- Not hidden, explained. Home Assistant's ingress proxy speaks
+                   plain HTTP to ingress_port, so binding a TLS socket there
+                   makes the panel unreachable — and the switch that broke it is
+                   behind the panel it broke. Hiding the control would leave
+                   someone hunting for a setting they were told exists; saying
+                   why costs two lines. -->
+              <div class="flex items-start justify-between gap-4 opacity-60">
+                <div>
+                  <div class="text-xs font-bold text-gray-200">HTTPS (native TLS)</div>
+                  <p class="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                    Not applicable as a Home Assistant add-on. Home Assistant
+                    already serves this panel over its own connection, and its
+                    ingress proxy talks plain HTTP to the add-on — binding a TLS
+                    socket here would make the panel unreachable.
+                  </p>
+                </div>
+                <span class="flex-shrink-0 px-3 py-2 rounded-xl text-[10px] font-bold border border-[var(--border)] text-[var(--text-muted)]">
+                  Handled by Home Assistant
+                </span>
+              </div>
+              {% else %}
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-xs font-bold text-gray-200">HTTPS (native TLS)</div>
+                  <p class="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                    <span x-show="status.tls_enabled">Serving HTTPS with the certificate below.</span>
+                    <span x-show="!status.tls_enabled">Serving plain HTTP. Authentication is unaffected — it is a separate switch.</span>
+                  </p>
+                  <p class="text-[10px] text-amber-500 mt-1">
+                    Takes effect on restart: the TLS socket is bound at start-up
+                    and cannot be added or removed on a running server.
+                  </p>
+                </div>
+                <button @click="toggleTls()" :disabled="tlsSaving"
+                        class="flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5"
+                        :class="tlsSaving
+                          ? 'opacity-40 cursor-not-allowed bg-[var(--surface-1)] border-[var(--border)] text-[var(--text-muted)]'
+                          : (status.tls_enabled
+                              ? 'bg-[var(--surface-1)] border-[var(--border)] hover:border-[var(--border-accent)] text-[var(--text-primary)]'
+                              : 'bg-emerald-600/15 border-emerald-600/40 hover:bg-emerald-600/25 text-emerald-300')">
+                  <i class="fas text-[10px]" :class="tlsSaving ? 'fa-circle-notch fa-spin' : (status.tls_enabled ? 'fa-lock-open' : 'fa-lock')"></i>
+                  <span x-text="tlsSaving ? 'Saving…' : (status.tls_enabled ? 'Turn HTTPS off' : 'Turn HTTPS on')"></span>
+                </button>
+              </div>
+              {% endif %}
+            </div>
+
+            <div class="border-t border-gray-700/50 pt-4 flex flex-wrap gap-2.5">
+              <button @click="openWizard()"
+                      class="px-4 py-2 rounded-xl bg-[var(--surface-1)] border border-[var(--border)] hover:border-[var(--border-accent)] text-[var(--text-primary)] text-xs font-bold transition flex items-center gap-1.5">
+                <i class="fas fa-cog text-[10px]"></i> Reconfigure Security
+              </button>
+              <button @click="showDisableSecurityModal = true"
+                      class="px-4 py-2 rounded-xl bg-red-500/15 border border-red-500/35 hover:bg-red-500/25 text-xs font-bold text-red-400 hover:text-red-300 transition flex items-center gap-1.5">
+                <i class="fas fa-shield-slash text-[10px]"></i> Disable Security
+              </button>
+            </div>
+          </div>
+
+          <div x-show="!status.security_enabled || showWizard" x-cloak class="rounded-2xl border border-gray-700 bg-gray-800/60 shadow-xl overflow-hidden">
+          
+            <!-- Wizard Top Bar / Steps Header -->
+            <div class="bg-gray-900 border-b border-gray-750 px-6 py-4 flex items-center justify-between">
+              <h3 class="font-black text-gray-100 text-sm flex items-center gap-2">
+                <i class="fas fa-magic text-primary-light"></i>
+                Security Setup Wizard
+              </h3>
+              <span class="text-xs text-gray-500 font-mono" x-text="'Step ' + wizardStep + ' of 4'"></span>
+            </div>
+
+            <!-- Progress bar -->
+            <div class="h-1 bg-gray-900 flex">
+              <div class="bg-primary transition-all duration-300" :style="'width: ' + (wizardStep * 25) + '%'"></div>
+            </div>
+
+            <div class="p-6 min-h-[300px] flex flex-col justify-between">
+            
+              <!-- STEP 1: Introduction & Mode Selection -->
+              <div x-show="wizardStep === 1" class="space-y-4" x-transition>
+                <div class="text-xs text-gray-400 leading-relaxed space-y-2">
+                  <p>Configure a custom security perimeter for your FranklinWH Integration dashboard. By default, the application runs in unsecured local mode with no credentials forced.</p>
+                  <p>Enabling security locks down all system telemetry, Modbus controls, API metrics, and Home Assistant integrations behind a global password or secure API token.</p>
+                </div>
+
+                <div class="space-y-3 pt-2">
+                  <label class="flex items-start gap-3 p-3 rounded-xl border border-gray-700 bg-gray-900/50 hover:bg-gray-900 transition cursor-pointer select-none">
+                    <input type="checkbox" x-model="enableSecurityCheckbox" class="w-4 h-4 rounded text-primary border-gray-600 accent-primary mt-0.5">
+                    <div>
+                      <span class="text-xs font-bold text-gray-200 block">Lock Dashboard & Rest APIs (Mandatory)</span>
+                      <span class="text-[10px] text-gray-500 leading-normal block mt-0.5">Locks all routes with secure JWT browser session cookies or bearer token authentication.</span>
+                    </div>
+                  </label>
+
+                  <label class="flex items-start gap-3 p-3 rounded-xl border border-gray-700 bg-gray-900/50 hover:bg-gray-900 transition cursor-pointer select-none">
+                    <input type="checkbox" x-model="enableTlsCheckbox" class="w-4 h-4 rounded text-primary border-gray-600 accent-primary mt-0.5">
+                    <div>
+                      <span class="text-xs font-bold text-gray-200 block">Enable Standalone TLS (HTTPS)</span>
+                      <span class="text-[10px] text-gray-500 leading-normal block mt-0.5">Terminates SSL directly inside the dashboard container. Enforces HTTPS transport.</span>
+                      <!-- The switch cannot apply live: uvicorn binds TLS to the
+                           socket at start-up, so there is no way to add or remove
+                           it without a restart. Saying so beats a control that
+                           appears to do nothing when toggled. -->
+                      <span class="text-[10px] text-amber-500/90 leading-normal block mt-1">
+                        <i class="fa-solid fa-rotate-right mr-1"></i>Takes effect on restart.
+                      </span>
+                      <span class="text-[10px] text-gray-500 leading-normal block mt-0.5"
+                            x-show="!(status.cert_info && status.cert_info.valid)">
+                        No certificate installed yet — enabling this alone will keep serving HTTP.
+                        Generate one first (see the certificate section below).
+                      </span>
+                      <span class="text-[10px] text-gray-500 leading-normal block mt-0.5"
+                            x-show="status.env === 'ha_addon'">
+                        Ignored in the Home Assistant add-on: ingress terminates TLS,
+                        and enabling it here would break the panel.
+                      </span>
+                    </div>
+                  </label>
+
+                  <label class="flex items-start gap-3 p-3 rounded-xl border border-gray-700 bg-gray-900/50 hover:bg-gray-900 transition cursor-pointer select-none"
+                         :class="!enableTlsCheckbox ? 'opacity-40 cursor-not-allowed' : ''">
+                    <input type="checkbox" x-model="enableMtlsCheckbox" :disabled="!enableTlsCheckbox" class="w-4 h-4 rounded text-primary border-gray-600 accent-primary mt-0.5">
+                    <div>
+                      <span class="text-xs font-bold text-gray-200 block">Enable Mutual TLS Validation (mTLS)</span>
+                      <span class="text-[10px] text-gray-500 leading-normal block mt-0.5">Demands valid client certificates cryptographically validated against a custom CA bundle.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <!-- STEP 2: Administrator Credentials -->
+              <div x-show="wizardStep === 2" class="space-y-4" x-transition>
+                <div class="bg-gray-900/50 border border-gray-750 p-4 rounded-xl text-xs text-gray-400 leading-relaxed">
+                  <i class="fas fa-key text-primary-light mr-1"></i>
+                  Define username and master password. Passwords are encrypted on your local system using PBKDF2 Derived Keys & AES-256-GCM.
+                </div>
+
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Administrator Username</label>
+                    <input type="text" x-model="newUsername" placeholder="e.g. admin"
+                           class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+                  </div>
+                
+                  <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Administrator Password</label>
+                    <input type="password" x-model="newPassword" placeholder="Leave blank to keep the current password"
+                           class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+                    <!-- The server only rehashes when a password is actually
+                         supplied, so blank is safe. Saying so matters: this step
+                         sits between the operator and every other setting in the
+                         wizard, and an unexplained password prompt reads as a
+                         demand to change it. -->
+                    <p class="text-[10px] text-gray-500 mt-1">
+                      Only needed if you are changing it. Leave both boxes empty
+                      and your current password is kept.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Confirm Password</label>
+                    <input type="password" x-model="newPasswordConfirm" placeholder="Re-type password"
+                           class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+                  </div>
+                </div>
+              </div>
+
+              <!-- STEP 3: SSL Paths & Files configuration -->
+              <div x-show="wizardStep === 3" class="space-y-4" x-transition>
+                <div class="bg-gray-900/50 border border-gray-750 p-4 rounded-xl text-xs text-gray-400 leading-relaxed">
+                  <i class="fas fa-shield-halved text-primary-light mr-1"></i>
+                  Specify the persistent path locations of your certificate key files inside the system volume. (Default: <code class="font-mono text-gray-300">/data/ssl/</code>).
+                </div>
+
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Server TLS Certificate Path</label>
+                    <input type="text" x-model="tlsCertPath" :disabled="!enableTlsCheckbox"
+                           class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary disabled:opacity-40">
+                  </div>
+                  <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Server TLS Private Key Path</label>
+                    <input type="text" x-model="tlsKeyPath" :disabled="!enableTlsCheckbox"
+                           class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary disabled:opacity-40">
+                  </div>
+                  <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Client CA Bundle Path (mTLS)</label>
+                    <input type="text" x-model="clientCaPath" :disabled="!enableMtlsCheckbox"
+                           class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary disabled:opacity-40">
+                  </div>
+                </div>
+              </div>
+
+              <!-- STEP 4: Summary & Activation -->
+              <div x-show="wizardStep === 4" class="space-y-4" x-transition>
+                <div class="bg-gray-900/50 border border-gray-750 p-5 rounded-xl space-y-3">
+                  <h4 class="font-bold text-xs text-gray-200">Perimeter Config Summary</h4>
+                  <ul class="space-y-2 text-xs text-gray-400">
+                    <li class="flex items-center gap-2">
+                      <i class="fas text-[10px]" :class="enableSecurityCheckbox ? 'fa-check text-emerald-400' : 'fa-times text-red-500'"></i>
+                      Dashboard Access Security: <span class="font-black text-gray-300" x-text="enableSecurityCheckbox ? 'LOCKED (JWT)' : 'OPEN'"></span>
+                    </li>
+                    <li class="flex items-center gap-2">
+                      <i class="fas text-[10px]" :class="enableTlsCheckbox ? 'fa-check text-emerald-400' : 'fa-times text-red-500'"></i>
+                      Native HTTPS Transport: <span class="font-black text-gray-300" x-text="enableTlsCheckbox ? 'HTTPS termination enabled' : 'HTTP plain text'"></span>
+                    </li>
+                    <li class="flex items-center gap-2">
+                      <i class="fas text-[10px]" :class="enableMtlsCheckbox ? 'fa-check text-emerald-400' : 'fa-times text-red-500'"></i>
+                      Mutual TLS (mTLS): <span class="font-black text-gray-300" x-text="enableMtlsCheckbox ? 'Enforced' : 'Disabled'"></span>
+                    </li>
+                    <li class="flex items-center gap-2">
+                      <i class="fas fa-user text-[10px] text-primary-light"></i>
+                      Username: <span class="font-mono text-gray-300 font-bold" x-text="newUsername"></span>
+                    </li>
+                  </ul>
+                </div>
+
+                <!-- Safety Alert -->
+                <div class="flex gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs">
+                  <i class="fas fa-skull-crossbones text-base flex-shrink-0 mt-0.5"></i>
+                  <div>
+                    <h5 class="font-bold">Important Safeguard</h5>
+                    <p class="text-[10px] text-gray-300 mt-0.5 leading-normal">If you are locked out, you can restore open access immediately by running <code class="bg-gray-950 px-1 py-0.5 rounded text-amber-400">python scripts/recovery.sh disable-security</code> from host terminal.</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Wizard Bottom Actions Row -->
+              <div class="border-t border-gray-700/50 pt-5 mt-6 flex justify-between gap-4">
+                <div class="flex gap-2">
+                  <button @click="prevStep()" :disabled="wizardStep === 1 || loading"
+                          class="px-4 py-2 rounded-xl border border-[var(--border)] hover:border-[var(--border-accent)] text-xs font-semibold text-[var(--text-secondary)] transition disabled:opacity-30">
+                    Back
+                  </button>
+                  <!-- Only when security is already on. With it off the wizard is
+                       the whole tab and there is nowhere to cancel to. -->
+                  <button x-show="status.security_enabled" @click="closeWizard()"
+                          class="px-4 py-2 rounded-xl text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition">
+                    Cancel
+                  </button>
+                </div>
+              
+                <div class="flex gap-2">
+                  <button x-show="wizardStep < 4" @click="nextStep()"
+                          class="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition">
+                    Next Step
+                  </button>
+                
+                  <button x-show="wizardStep === 4" @click="saveWizardSetup()" :disabled="loading"
+                          class="px-5 py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition disabled:opacity-50 flex items-center gap-1.5">
+                    <i class="fas fa-shield-halved text-[10px] animate-pulse"></i>
+                    Activate Security Perimeter
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+  </div>
+
+  <!-- ── Users & Access ───────────────────────────────────────────────── -->
+  <div x-show="activeSubTab==='users'" x-cloak class="space-y-5">
+        <div class="rounded-2xl border border-gray-700 bg-gray-800/60 p-6 space-y-4 shadow-xl">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-gray-100 flex items-center gap-2">
+                <i class="fas fa-users text-primary-light"></i>
+                User Profiles & Access Control (RBAC)
+              </h3>
+              <p class="text-[11px] text-gray-400 mt-1">Configure role-based access permissions and customized dashboards for local users.</p>
+            </div>
+          
+            <button @click="showAddUserForm = !showAddUserForm"
+                    class="px-3 py-1.5 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition flex items-center gap-1">
+              <i class="fas" :class="showAddUserForm ? 'fa-minus' : 'fa-plus'"></i>
+              <span x-text="showAddUserForm ? 'Hide Form' : 'Add User'"></span>
+            </button>
+          </div>
+
+          <!-- Inline Add User Form -->
+          <div x-show="showAddUserForm" x-collapse x-cloak class="bg-gray-900/40 p-4 rounded-xl border border-gray-750 space-y-3">
+            <h4 class="text-xs font-bold text-gray-200">Create New User Profile</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Username</label>
+                <input type="text" x-model="newProfileUsername" placeholder="e.g. jdoe"
+                       class="w-full bg-gray-850 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+              </div>
+              <div>
+                <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Password</label>
+                <input type="password" x-model="newProfilePassword" placeholder="Minimum 8 characters"
+                       class="w-full bg-gray-850 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+              </div>
+              <div>
+                <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Role (RBAC)</label>
+                <select x-model="newProfileRole"
+                        class="w-full bg-gray-850 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+                  <option value="admin">Administrator — full access</option>
+                  <option value="operator">Operator — control the battery, no config</option>
+                  <option value="viewer">Viewer — read only</option>
+                </select>
+                <p class="text-[10px] text-amber-500 mt-1">
+                  <strong>Viewer</strong> reads everything but changes nothing.
+                  <strong>Operator</strong> adds battery and dispatch control.
+                  <strong>Administrator</strong> adds configuration, security and users.
+                  Enforced server-side on every API route.
+                </p>
+              </div>
+              <div>
+                <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Target Dashboard</label>
+                <select x-model="newProfileDashboard"
+                        class="w-full bg-gray-850 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+                  <option value="standard">Standard Dashboard</option>
+                  <option value="inkypi">InkyPi Dashboard</option>
+                  <option value="inkypi2">InkyPi v2 Dashboard</option>
+                </select>
+                <p class="text-[10px] text-gray-500 mt-1">
+                  Applied only on redirect from the sign-in form; visiting <code>/</code>
+                  directly always serves the standard UI.
+                </p>
+              </div>
+              <div>
+                <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Email (Optional)</label>
+                <input type="text" x-model="newProfileEmail" placeholder="e.g. user@domain.com"
+                       class="w-full bg-gray-850 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+              </div>
+            </div>
+            <div class="flex justify-end pt-2">
+              <button @click="createUserProfile()" :disabled="loading"
+                      class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition disabled:opacity-50">
+                Create User Profile
+              </button>
+            </div>
+          </div>
+
+          <!-- Users list table -->
+          <div class="overflow-x-auto border border-gray-750 rounded-xl bg-gray-900/20">
+            <table class="w-full text-xs">
+              <thead class="bg-gray-900/60 border-b border-gray-750">
+                <tr class="text-[9px] font-black uppercase tracking-widest text-gray-500">
+                  <th class="px-4 py-2.5 text-left">Username</th>
+                  <th class="px-4 py-2.5 text-left">Email</th>
+                  <th class="px-4 py-2.5 text-left">Role</th>
+                  <th class="px-4 py-2.5 text-left">Dashboard</th>
+                  <th class="px-4 py-2.5 text-center">MFA Status</th>
+                  <th class="px-4 py-2.5 text-right sticky right-0 bg-gray-900 z-10
+                           shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.6)]">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr x-show="usersList.length === 0">
+                  <td colspan="6" class="text-center py-8 text-gray-500 text-xs">No user profiles created.</td>
+                </tr>
+                <template x-for="u in usersList" :key="u.username">
+                  <tr class="border-b border-gray-750/30 hover:bg-gray-800/30">
+                    <td class="px-4 py-2.5 font-mono text-gray-300 font-bold" x-text="u.username"></td>
+                    <td class="px-4 py-2.5 text-gray-400 font-mono" x-text="u.email || '-'"></td>
+                    <td class="px-4 py-2.5 text-gray-400">
+                      <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-700 text-gray-200" x-text="u.role"></span>
+                    </td>
+                    <td class="px-4 py-2.5 text-gray-500 font-mono" x-text="u.dashboard"></td>
+                    <!-- MFA. You can only enrol yourself — enrolment means
+                         scanning a QR with your own phone, so there is nothing an
+                         admin could usefully do on another user's behalf except
+                         clear a lost enrolment. Hence enable/disable on your own
+                         row, reset on everyone else's. -->
+                    <td class="px-4 py-2.5 text-center whitespace-nowrap">
+                      <span x-show="u.totp_enabled" class="text-emerald-400 font-semibold"><i class="fas fa-circle-check"></i> Enabled</span>
+                      <span x-show="!u.totp_enabled" class="text-gray-600"><i class="fas fa-circle-xmark"></i> Disabled</span>
+
+                      <template x-if="u.username === currentUser">
+                        <span>
+                          <button x-show="!u.totp_enabled" @click="startMfaEnrolment()"
+                                  class="ml-2 px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-600/20 text-emerald-300 border border-emerald-600/40 hover:bg-emerald-600/30 transition">
+                            Set up
+                          </button>
+                          <button x-show="u.totp_enabled" @click="disableOwnMfa()"
+                                  class="ml-2 px-2 py-1 rounded-lg text-[10px] font-bold bg-gray-700/60 text-gray-300 border border-gray-600 hover:bg-gray-700 transition">
+                            Turn off
+                          </button>
+                        </span>
+                      </template>
+
+                      <template x-if="u.username !== currentUser && u.totp_enabled">
+                        <button @click="resetUserMfa(u.username)"
+                                class="ml-2 px-2 py-1 rounded-lg text-[10px] font-bold bg-amber-600/20 text-amber-300 border border-amber-600/40 hover:bg-amber-600/30 transition"
+                                title="Clear this user's MFA so they can re-enrol">
+                          Reset
+                        </button>
+                      </template>
+                    </td>
+                    <td class="px-4 py-2.5 text-right space-x-1.5 sticky right-0 bg-gray-900 z-10
+                             shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.6)]">
+                      <!-- Edit User Profile button -->
+                      <button @click="openEditUserModal(u)" class="text-primary-light hover:text-primary p-2 text-sm transition" title="Edit User" aria-label="Edit user">
+                        <i class="fas fa-user-edit"></i>
+                      </button>
+                      <button @click="openChangePasswordModal(u.username)" class="text-amber-500 hover:text-amber-400 p-2 text-sm transition" title="Change Password" aria-label="Change password">
+                        <i class="fas fa-key"></i>
+                      </button>
+                      <!-- Disable deletion of own active account -->
+                      <button @click="deleteUserProfile(u.username)"
+                              :disabled="u.username === status.admin_username"
+                              :class="u.username === status.admin_username ? 'opacity-20 cursor-not-allowed text-gray-500' : 'text-red-500 hover:text-red-400'"
+                              class="p-2 text-sm transition" title="Delete User" aria-label="Delete user">
+                        <i class="fas fa-trash-alt"></i>
+                      </button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+  </div>
+
+  <!-- ── API Tokens ───────────────────────────────────────────────────── -->
+  <div x-show="activeSubTab==='tokens'" x-cloak class="space-y-5">
+        <div class="rounded-2xl border border-gray-700 bg-gray-800/60 p-6 space-y-4 shadow-xl">
+          <div>
+            <h3 class="text-sm font-bold text-gray-100 flex items-center gap-2">
+              <svg class="w-4 h-4 text-primary-light" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              Long-Lived API Tokens
+            </h3>
+            <p class="text-[11px] text-gray-400 mt-1">Issue secure tokens for external services (like Home Assistant REST commands or Prometheus telemetry collectors).</p>
+          </div>
+
+          <!-- Token generation fields -->
+          <div class="flex flex-wrap items-end gap-3 bg-gray-900/40 p-4 rounded-xl border border-gray-750">
+            <div class="flex-1 min-w-[200px]">
+              <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Descriptive Token Name</label>
+              <input type="text" x-model="tokenName" placeholder="e.g. Home Assistant Bridge"
+                     class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+            </div>
+          
+            <div class="w-32">
+              <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Lifespan</label>
+              <select x-model="tokenExpiresInDays"
+                      class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+                <option value="30">30 Days</option>
+                <option value="90">90 Days</option>
+                <option value="365">1 Year</option>
+                <option value="">Never Expires</option>
+              </select>
+            </div>
+          
+            <button @click="generateToken()" :disabled="loading"
+                    class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition disabled:opacity-50 flex items-center gap-1.5">
+              <i class="fas fa-plus text-[9px]"></i> Generate
+            </button>
+          </div>
+
+          <!-- Tokens table list -->
+          <div class="overflow-x-auto border border-gray-750 rounded-xl bg-gray-900/20">
+            <table class="w-full text-xs">
+              <thead class="bg-gray-900/60 border-b border-gray-750">
+                <tr class="text-[9px] font-black uppercase tracking-widest text-gray-500">
+                  <th class="px-4 py-2.5 text-left">Token Name</th>
+                  <th class="px-4 py-2.5 text-left">Created</th>
+                  <th class="px-4 py-2.5 text-left">Expires</th>
+                  <th class="px-4 py-2.5 text-left">Last Used</th>
+                  <th class="px-4 py-2.5 text-right">Revoke</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr x-show="status.active_api_tokens.length === 0">
+                  <td colspan="5" class="text-center py-8 text-gray-500 text-xs">No active API tokens issued yet.</td>
+                </tr>
+                <template x-for="t in status.active_api_tokens" :key="t.id">
+                  <tr class="border-b border-gray-750/30 hover:bg-gray-800/30">
+                    <td class="px-4 py-2.5 font-semibold text-gray-300" x-text="t.name"></td>
+                    <td class="px-4 py-2.5 text-gray-500" x-text="new Date(t.created_at).toLocaleDateString()"></td>
+                    <td class="px-4 py-2.5 text-gray-500">
+                      <span x-text="t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never'"></span>
+                    </td>
+                    <td class="px-4 py-2.5 font-mono text-[10px] text-gray-500">
+                      <span x-text="t.last_used_at ? new Date(t.last_used_at).toLocaleTimeString() : 'Never'"></span>
+                    </td>
+                    <td class="px-4 py-2.5 text-right">
+                      <button @click="revokeToken(t.id)" class="text-red-500 hover:text-red-400 p-1 text-[10px] transition">
+                        <i class="fas fa-trash-alt"></i>
+                      </button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+  </div>
+
+  <!-- ── Certificates ─────────────────────────────────────────────────── -->
+  <div x-show="activeSubTab==='certs'" x-cloak class="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+        <div class="rounded-2xl border border-gray-700 bg-gray-800/60 p-6 space-y-4 shadow-xl">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-gray-100 flex items-center gap-2">
+                <i class="fas fa-certificate text-primary-light"></i>
+                TLS Server Certificate
+              </h3>
+              <p class="text-[10px] text-gray-400 mt-0.5">Cert metadata termination parsed from <code class="font-mono text-gray-300" x-text="status.tls_cert_path"></code></p>
+            </div>
+          
+            <label class="cursor-pointer px-2.5 py-1.5 rounded-lg border border-gray-750 bg-gray-900 hover:bg-gray-800 text-[10px] font-bold text-gray-300 transition flex items-center gap-1">
+              <i class="fas fa-upload text-[8px]"></i> Upload Certificate
+              <input type="file" @change="uploadCertFile($event, 'tls_cert')" class="hidden" accept=".crt,.pem">
+            </label>
+          </div>
+
+          <!-- Meta list -->
+          <div class="bg-gray-900/60 border border-gray-750 rounded-xl p-4 space-y-2.5 text-xs">
+            <template x-if="status.cert_info && status.cert_info.valid">
+              <div class="space-y-2">
+                <div class="flex justify-between items-center pb-2 border-b border-gray-850">
+                  <span class="text-gray-500 block uppercase font-bold text-[9px]">Certificate Validity</span>
+                  <span class="px-2 py-0.5 rounded-full text-[9px] font-black"
+                        :class="status.cert_info.days_remaining <= 7 ? 'bg-red-500/10 border border-red-500/30 text-red-400 animate-pulse' :
+                                status.cert_info.days_remaining <= 30 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400' :
+                                'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'"
+                        x-text="status.cert_info.days_remaining <= 0 ? 'Expired' : status.cert_info.days_remaining + ' Days left'"></span>
+                </div>
+                <div>
+                  <span class="text-gray-500 block uppercase font-bold text-[9px] mb-0.5">Subject CN</span>
+                  <span class="font-mono text-[10px] text-gray-300 break-all" x-text="status.cert_info.subject"></span>
+                </div>
+                <div>
+                  <span class="text-gray-500 block uppercase font-bold text-[9px] mb-0.5">Issuer CA</span>
+                  <span class="font-mono text-[10px] text-gray-400 break-all" x-text="status.cert_info.issuer"></span>
+                </div>
+                <div class="flex justify-between items-center pt-1">
+                  <span class="text-gray-500 block uppercase font-bold text-[9px]">Self-Signed Status</span>
+                  <span class="font-semibold text-gray-300" x-text="status.cert_info.self_signed ? 'Self-Signed Cert' : 'Verified CA Signed'"></span>
+                </div>
+              </div>
+            </template>
+          
+            <template x-if="!status.cert_info || !status.cert_info.valid">
+              <div class="text-center py-6 text-gray-500 space-y-2">
+                <i class="fas fa-file-excel text-2xl text-gray-850"></i>
+                <p x-text="status.cert_info ? status.cert_info.error : 'No server SSL certificate file detected.'"></p>
+              </div>
+            </template>
+          </div>
+
+          <!-- Upload Private key helper -->
+          <div class="flex items-center justify-between p-3 rounded-xl border border-gray-750 bg-gray-900/30 text-xs">
+            <span class="text-gray-400 flex items-center gap-1.5">
+              <i class="fas fa-key text-[10px] text-primary-light"></i>
+              Server Private Key (.key)
+            </span>
+            <label class="cursor-pointer px-2.5 py-1 text-[10px] font-bold border border-gray-700 bg-gray-850 rounded-lg hover:bg-gray-800 transition">
+              Upload Key
+              <input type="file" @change="uploadCertFile($event, 'tls_key')" class="hidden" accept=".key,.pem">
+            </label>
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-gray-700 bg-gray-800/60 p-6 space-y-4 shadow-xl">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-gray-100 flex items-center gap-2">
+                <i class="fas fa-id-card-clip text-primary-light"></i>
+                mTLS Client Certificate CA
+              </h3>
+              <p class="text-[10px] text-gray-400 mt-0.5">Authority CA bundle parsed from <code class="font-mono text-gray-300" x-text="status.client_ca_path"></code></p>
+            </div>
+          
+            <label class="cursor-pointer px-2.5 py-1.5 rounded-lg border border-gray-750 bg-gray-900 hover:bg-gray-800 text-[10px] font-bold text-gray-300 transition flex items-center gap-1">
+              <i class="fas fa-upload text-[8px]"></i> Upload CA
+              <input type="file" @change="uploadCertFile($event, 'client_ca')" class="hidden" accept=".crt,.pem">
+            </label>
+          </div>
+
+          <!-- Meta list -->
+          <div class="bg-gray-900/60 border border-gray-750 rounded-xl p-4 space-y-2.5 text-xs">
+            <template x-if="status.client_ca_info && status.client_ca_info.valid">
+              <div class="space-y-2">
+                <div class="flex justify-between items-center pb-2 border-b border-gray-850">
+                  <span class="text-gray-500 block uppercase font-bold text-[9px]">CA bundle Expiration</span>
+                  <span class="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
+                        x-text="status.client_ca_info.days_remaining + ' Days left'"></span>
+                </div>
+                <div>
+                  <span class="text-gray-500 block uppercase font-bold text-[9px] mb-0.5">Subject CN</span>
+                  <span class="font-mono text-[10px] text-gray-300 break-all" x-text="status.client_ca_info.subject"></span>
+                </div>
+                <div>
+                  <span class="text-gray-500 block uppercase font-bold text-[9px] mb-0.5">Issuer CA</span>
+                  <span class="font-mono text-[10px] text-gray-400 break-all" x-text="status.client_ca_info.issuer"></span>
+                </div>
+              </div>
+            </template>
+          
+            <template x-if="!status.client_ca_info || !status.client_ca_info.valid">
+              <div class="text-center py-6 text-gray-500 space-y-2">
+                <i class="fas fa-file-shield text-2xl text-gray-850"></i>
+                <p x-text="status.client_ca_info ? status.client_ca_info.error : 'No Client CA certificate bundle detected.'"></p>
+              </div>
+            </template>
+          </div>
+        </div>
+  </div>
+
+  <!-- ── Modals ───────────────────────────────────────────────────────── -->
+  <div x-show="showEditUserModal" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden"
+         @click.outside="showEditUserModal = false">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-user-edit text-primary-light"></i> Edit Profile for <span class="font-mono text-primary-light" x-text="editProfileUsername"></span>
+        </h4>
+        <button @click="showEditUserModal = false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Role (RBAC)</label>
+          <select x-model="editProfileRole" :disabled="editProfileUsername === status.admin_username || editProfileUsername === 'admin'"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed">
+            <option value="admin">Administrator — full access</option>
+            <option value="operator">Operator — control the battery, no config</option>
+            <option value="viewer">Viewer — read only</option>
+          </select>
+          <p class="text-[10px] text-amber-500 mt-1">
+            <strong>Viewer</strong> reads everything but changes nothing.
+            <strong>Operator</strong> adds battery and dispatch control.
+            <strong>Administrator</strong> adds configuration, security and users.
+            Enforced server-side on every API route.
+          </p>
+          <template x-if="editProfileUsername === status.admin_username || editProfileUsername === 'admin'">
+            <p class="text-[10px] text-amber-500 mt-1">Administrator role cannot be changed for the active account to prevent lockouts.</p>
+          </template>
+        </div>
+        
+        <div>
+          <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Target Dashboard</label>
+          <select x-model="editProfileDashboard" :disabled="editProfileUsername === status.admin_username || editProfileUsername === 'admin'"
+                  class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed">
+            <option value="standard">Standard Dashboard</option>
+            <option value="inkypi">InkyPi Dashboard</option>
+            <option value="inkypi2">InkyPi v2 Dashboard</option>
+          </select>
+          <p class="text-[10px] text-gray-500 mt-1">
+            Applied only on redirect from the sign-in form; visiting <code>/</code>
+            directly always serves the standard UI.
+          </p>
+          <template x-if="editProfileUsername === status.admin_username || editProfileUsername === 'admin'">
+            <p class="text-[10px] text-amber-500 mt-1">Default dashboard cannot be changed for the active account to prevent lockouts.</p>
+          </template>
+        </div>
+        
+        <div>
+          <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Email (Optional)</label>
+          <input type="text" x-model="editProfileEmail" placeholder="e.g. user@domain.com"
+                 class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+        </div>
+      </div>
+
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="showEditUserModal = false"
+                class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">
+          Cancel
+        </button>
+        <button @click="submitEditUser()" :disabled="loading"
+                class="flex-1 py-2.5 rounded-xl bg-primary text-white text-xs font-bold transition disabled:opacity-50">
+          Save Changes
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Change User Password Modal -->
+  <div x-show="showChangePasswordModal" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden"
+         @click.outside="showChangePasswordModal = false">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-key text-primary-light"></i> Reset Password for <span class="font-mono text-primary-light" x-text="changePasswordTargetUser"></span>
+        </h4>
+        <button @click="showChangePasswordModal = false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">New Password</label>
+          <input type="password" x-model="changePasswordNewValue" placeholder="Minimum 8 characters"
+                 class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+        </div>
+        <div>
+          <label class="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Confirm New Password</label>
+          <input type="password" x-model="changePasswordConfirmValue" placeholder="Confirm new password"
+                 class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-primary">
+        </div>
+      </div>
+
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="showChangePasswordModal = false"
+                class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">
+          Cancel
+        </button>
+        <button @click="submitChangePassword()" :disabled="loading"
+                class="flex-1 py-2.5 rounded-xl bg-primary text-white text-xs font-bold transition disabled:opacity-50">
+          Reset Password
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generated Token Modal -->
+  <div x-show="showTokenModal" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden"
+         @click.outside="showTokenModal = false">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-shield text-primary-light"></i> API Token Successfully Generated
+        </h4>
+        <button @click="showTokenModal = false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      
+      <div class="p-6 space-y-4">
+        <div class="flex gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs">
+          <i class="fas fa-exclamation-circle text-base flex-shrink-0 mt-0.5"></i>
+          <div>
+            <h5 class="font-bold">Copy Token Value Now</h5>
+            <p class="text-[10px] text-gray-300 mt-0.5 leading-normal">For security purposes, this token value is hashed in the database. It will NEVER be shown to you again.</p>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <label class="block text-[9px] font-bold uppercase tracking-widest text-gray-500">API Token String</label>
+          <div class="flex gap-2">
+            <input type="text" readonly :value="generatedTokenResult" id="raw-token-input"
+                   class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-xs font-mono text-gray-200 select-all">
+            <button @click="navigator.clipboard.writeText(generatedTokenResult); $store.app.addToast('Token copied to clipboard!', 'info')"
+                    class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition">
+              Copy
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="px-6 py-4 border-t border-gray-800">
+        <button @click="showTokenModal = false"
+                class="w-full py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">
+          I Have Copied the Token
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disable Security Confirmation Modal -->
+  <div x-show="showDisableSecurityModal" x-cloak x-transition.opacity
+       class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+    <div class="w-full max-w-md rounded-2xl border border-red-500/20 bg-gray-900 shadow-2xl overflow-hidden"
+         @click.outside="showDisableSecurityModal = false">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h4 class="font-bold text-red-500 flex items-center gap-2">
+          <i class="fas fa-shield-slash"></i> Disable Security Perimeter?
+        </h4>
+        <button @click="showDisableSecurityModal = false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+      </div>
+      
+      <div class="p-6 space-y-4">
+        <p class="text-xs text-gray-400 leading-relaxed">
+          Are you sure you want to deactivate the security perimeter? This will immediately:
+        </p>
+        <ul class="list-disc list-inside text-xs text-gray-500 space-y-1.5">
+          <li>Deactivate password prompts and JWT session checks.</li>
+          <li>Revert standalone Uvicorn transport to plain unsecured HTTP.</li>
+          <li>Disable client cert verification (mTLS).</li>
+          <li>Re-expose endpoints openly to co-located networks.</li>
+        </ul>
+      </div>
+
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="showDisableSecurityModal = false"
+                class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">
+          Cancel
+        </button>
+        <button @click="disableSecurity()" :disabled="loading"
+                class="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition disabled:opacity-50">
+          Deactivate Security
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MFA enrolment ──────────────────────────────────────────────────────
+       Two steps: show the secret, then prove a code round-trips before the flag
+       is set. Verifying first is the whole point — enabling on trust would let a
+       mistyped secret lock the account at the next sign-in, with no way back in
+       from the browser. -->
+  <div x-show="showMfaModal" x-cloak x-transition.opacity
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+    <div class="bg-gray-850 border border-gray-700 rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div>
+        <h3 class="text-base font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-mobile-screen text-primary-light"></i>
+          Set up two-factor authentication
+        </h3>
+        <p class="text-xs text-gray-400 mt-1">
+          Google Authenticator, Microsoft Authenticator, 1Password or any other
+          TOTP app. You will need a code from it every time you sign in.
+        </p>
+      </div>
+
+      <div x-show="mfaLoading" class="py-8 text-center text-xs text-gray-500">
+        <i class="fas fa-circle-notch fa-spin mr-1.5"></i> Preparing enrolment&hellip;
+      </div>
+
+      <template x-if="!mfaLoading && mfaSetup">
+        <div class="space-y-4">
+          <div x-show="mfaSetup.qr_svg" class="flex justify-center">
+            <div class="bg-white p-3 rounded-xl" x-html="mfaSetup.qr_svg"></div>
+          </div>
+
+          <!-- Manual entry is always shown: some authenticators cannot scan, and
+               it is the only route when the QR library is absent. -->
+          <div class="rounded-xl border border-gray-700 bg-gray-900/40 p-3 space-y-1.5">
+            <div class="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+              <span x-show="mfaSetup.qr_svg">Or enter this key by hand</span>
+              <span x-show="!mfaSetup.qr_svg">Enter this key in your authenticator</span>
+            </div>
+            <div class="font-mono text-sm text-gray-200 break-all select-all" x-text="mfaSetup.secret"></div>
+            <div class="text-[10px] text-gray-500">
+              Account <span class="font-mono" x-text="mfaSetup.account"></span> &middot;
+              Issuer <span class="font-mono" x-text="mfaSetup.issuer"></span>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[9px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">
+              Enter the 6-digit code to confirm
+            </label>
+            <input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+                   x-model="mfaCode" @keydown.enter="confirmMfaEnrolment()" placeholder="000000"
+                   class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-center text-lg font-mono tracking-[0.4em] text-gray-100 focus:outline-none focus:border-primary">
+            <p class="text-[10px] text-amber-500 mt-2">
+              MFA is not active until this code is accepted. If you lose the
+              authenticator an administrator can clear it from this table, or
+              <span class="font-mono">recovery.py clear-mfa</span> from the host.
+            </p>
+          </div>
+        </div>
+      </template>
+
+      <div class="flex justify-end gap-2 pt-1">
+        <button @click="closeMfaModal()"
+                class="px-4 py-2 rounded-xl text-xs font-bold text-gray-400 hover:text-gray-200 transition">
+          Cancel
+        </button>
+        <button @click="confirmMfaEnrolment()"
+                :disabled="mfaLoading || (mfaCode || '').length !== 6"
+                :class="(mfaLoading || (mfaCode || '').length !== 6) ? 'opacity-40 cursor-not-allowed' : 'hover:bg-primary/90'"
+                class="px-4 py-2 rounded-xl text-xs font-bold bg-primary text-white transition">
+          Verify &amp; enable
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>

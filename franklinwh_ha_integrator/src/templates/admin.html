@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FranklinWH HA Integrator</title>
+  <meta name="description" content="FranklinWH aGate management for Home Assistant">
+  <base href="{{ base_path }}/">
+  <link rel="icon" type="image/x-icon" href="static/favicon.ico">
+  <link rel="manifest" href="static/manifest.json">
+  <link rel="stylesheet" href="static/css/design-system.css?v=6">
+
+  <script>
+    // Who is signed in, from the server's session claims — the same source the
+    // topbar chip uses. The Security tab needs it to tell "your own row" from
+    // "someone else's": you can only enrol your own authenticator, and only an
+    // admin can clear someone else's. tojson escapes it safely.
+    window.FHAI_CURRENT_USER = {{ (username or '') | tojson }};
+
+    // Map tile key, from this instance's settings. Empty until someone enters
+    // one, in which case the maps fall back to a keyless provider rather than
+    // rendering CARTO's "API KEY REQUIRED" watermark. Never committed: the
+    // add-on repository is public.
+    window.FHAI_CARTO_KEY = {{ (carto_api_key or '') | tojson }};
+  </script>
+
+  <!-- Tailwind, prebuilt. Replaces the 403 KB Play CDN browser JIT that
+       scanned every element's classes, generated CSS at runtime, and kept a
+       document-wide MutationObserver recompiling on every DOM change — a
+       compounding load under Alpine, and the leading suspect for the iOS
+       Safari crashes in GH #4. Rebuild with scripts/build_css.sh after
+       adding class names. -->
+  <link rel="stylesheet" href="static/css/tailwind.build.css">
+
+  <!-- Font Awesome 6.4 — local -->
+  <link rel="stylesheet" href="static/css/fontawesome-6.4.0.min.css">
+
+  <!-- Chart.js — local. Deferred (GH #4): 245 KB that was blocking the parser
+       for every page load, including tabs with no charts. Deferred scripts keep
+       document order, so these still execute before the deferred tab modules
+       below that construct Chart instances. No inline script references Chart. -->
+  <script defer src="static/js/chartjs-4.4.7.umd.min.js"></script>
+  <script defer src="static/js/chartjs-plugin-annotation.min.js"></script>
+  <!-- chartjs-chart-sankey plugin — vendored local build -->
+  <script defer src="static/js/chartjs-chart-sankey.min.js"></script>
+
+  <!-- Leaflet Map library — vendored locally (no CDN required, works on air-gapped HA networks) -->
+  <link rel="stylesheet" href="static/css/leaflet-1.9.4.min.css"/>
+  <script defer src="static/js/leaflet-1.9.4.min.js"></script>
+
+  <!-- Alpine Collapse plugin must load before Alpine -->
+  <script defer src="static/js/alpinejs-collapse-3.14.1.min.js"></script>
+  <!-- FHAI app.js defines Alpine stores — must run before the deferred tab
+       scripts and before Alpine core. `defer` satisfies that: deferred scripts
+       execute in document order, and this tag precedes both. It was sync only
+       out of caution; no inline script references anything it defines, so the
+       31 KB no longer needs to block the parser (GH #4). -->
+  <script defer src="static/js/app.js?v=13"></script>
+  <!-- Must precede Alpine. Deferred scripts run in document order, so a module
+       defining an x-data function has to be defined before Alpine initialises
+       and evaluates it — loaded after, the wizard rendered visible but unbound:
+       blank step number, empty body, only Skip working. Tab modules avoid this
+       by being fetched on demand; the wizard lives in the shell and cannot. -->
+  <script defer src="static/js/basemap.js?v=1"></script>
+  <script defer src="static/js/setup_wizard.js?v=2"></script>
+  <!-- Tab modules are loaded on demand by app.js (_tabModules). Previously 21
+       static tags, ~607 KB, parsed on every page load regardless of which tab
+       you opened — a large part of GH #4's memory pressure on iOS. -->
+  <!-- DOM repair: the HTML5 parser may place tab panel wrappers outside <main>.
+       This runs before Alpine initialises and moves them back in. -->
+  <script>
+    document.addEventListener('alpine:init', function () {
+      var main = document.querySelector('main');
+      if (!main) return;
+      var rootFlex = document.querySelector('.flex.h-screen');
+      if (!rootFlex) return;
+      // Collect first so we don't mutate while iterating
+      var escaped = Array.from(rootFlex.children).filter(function (el) {
+        return (el.getAttribute('x-show') || '').includes('activeTab');
+      });
+      escaped.forEach(function (el) { main.appendChild(el); });
+    });
+  </script>
+  <!-- Alpine.js — local -->
+  <script defer src="static/js/alpinejs-3.14.1.min.js"></script>
+
+  <!-- The inline tailwind.config block lived here. With a prebuilt
+       stylesheet the config belongs in tailwind.config.js. -->
+
+  <style>
+    [x-cloak] { display: none !important; }
+    /* Sidebar transition */
+    .sidebar-expanded  { width: 15rem; }  /* w-60 */
+    .sidebar-collapsed { width: 4rem;  }  /* w-16 */
+  </style>
+</head>
+
+<body class="bg-[var(--bg)] text-[var(--text-primary)] font-sans min-h-screen transition-colors duration-300">
+  {% include "partials/connection_banner.html" %}
+
+  <!-- First-run setup wizard (GH #1). Shows itself only when there is no
+       gateway and it has not been dismissed. -->
+  {% include "partials/setup_wizard.html" %}
+
+  <div x-data x-init="
+    await $store.app.init();
+
+    // ── HA enable nudge — fires once per 24h if credentials saved but service not started ──
+    (async function checkHaNudge() {
+      try {
+        const GATE_KEY = 'fwh_ha_nudge_ts';
+        const now = Date.now();
+        const last = parseInt(localStorage.getItem(GATE_KEY) || '0', 10);
+        if (now - last < 86400000) return; // 24h gate
+
+        const r = await fetch('api/ha/status');
+        if (!r.ok) return;
+        const s = await r.json();
+
+        // Nudge only when: token is set AND service is NOT started
+        const tokenSet = s.ha_token_set ?? false;
+        const notStarted = s.service_state && s.service_state !== 'started';
+        if (!tokenSet || !notStarted) return;
+
+        localStorage.setItem(GATE_KEY, String(now));
+        $store.app.addToast(
+          'Home Assistant → Not Enabled',
+          'critical',
+          {
+            detail: 'Credentials are saved but the HA service is disabled. Enable it to publish entities to Home Assistant.',
+            action: {
+              label: 'Go to Home Automation →',
+              fn: () => $store.app.setTab('home_automation'),
+            },
+          }
+        );
+      } catch (e) { /* non-critical — silently skip */ }
+    })();
+  ">
+
+    <!-- h-dvh = dynamic viewport height — accounts for iOS Safari address bar (h-screen / 100vh does not) -->
+    <div class="flex h-dvh overflow-hidden">
+
+      <!-- ── Sidebar ──────────────────────────────────────── -->
+      {% include 'partials/sidebar.html' %}
+
+      <!-- ── Right panel ──────────────────────────────────── -->
+      <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
+
+        <!-- Topbar -->
+        {% include 'partials/topbar.html' %}
+
+        <!-- Tab content -->
+        <main class="flex-1 overflow-y-auto p-4 lg:p-6">
+
+          <template x-if="$store.app.activeTab === 'dashboard'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/dashboard.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'control'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/control.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'smart_circuits'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/smart_circuits.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'battery'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/battery.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'schedule'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/schedule.html' %}
+            </div>
+          </template>
+
+          {% if module_enabled('automations') %}
+          <template x-if="$store.app.activeTab === 'automations'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/automations.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          <template x-if="$store.app.activeTab === 'gateways'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/gateways.html' %}
+            </div>
+          </template>
+
+          {% if is_admin %}
+          <template x-if="$store.app.activeTab === 'mqtt_admin'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/mqtt_admin.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          <template x-if="$store.app.activeTab === 'ha_entities'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/ha_entities.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'home_automation'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/home_automation.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'power'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/power.html' %}
+            </div>
+          </template>
+
+          {% if module_enabled('dynamic_pricing') %}
+          <template x-if="$store.app.activeTab === 'pricing'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/pricing.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'dynamic_pricing'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/dynamic_pricing.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          {% if module_enabled('smart_dispatch') %}
+          <template x-if="$store.app.activeTab === 'smart_dispatch'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/smart_dispatch.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          <template x-if="$store.app.activeTab === 'health'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/health.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'logs'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/logs.html' %}
+            </div>
+          </template>
+
+          {% if is_admin %}
+          <template x-if="$store.app.activeTab === 'terminal'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/terminal.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          <template x-if="$store.app.activeTab === 'engine_diag'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/engine_diagnostics.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'support'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/support.html' %}
+            </div>
+          </template>
+
+          {% if module_enabled('metrics') %}
+          <template x-if="$store.app.activeTab === 'apimetrics'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/apimetrics.html' %}
+            </div>
+          </template>
+
+          <template x-if="$store.app.activeTab === 'metrics'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/metrics.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          {% if module_enabled('solar') %}
+          <template x-if="$store.app.activeTab === 'solar_setup'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/solar.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          {% if module_enabled('weather') %}
+          <template x-if="$store.app.activeTab === 'weather'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/weather.html' %}
+            </div>
+          </template>
+          {% endif %}
+
+          {% if module_enabled('security') %}
+          {% if is_admin %}
+          <template x-if="$store.app.activeTab === 'security'">
+            <div x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0">
+              {% include 'tabs/security.html' %}
+            </div>
+          </template>
+          {% endif %}
+          {% endif %}
+
+        </main>
+      </div>
+    </div>
+
+    <!-- ── Toast notifications ──────────────────────────────── -->
+    <div class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none w-84 max-w-sm">
+      <template x-for="toast in $store.app.toasts" :key="toast.id">
+        <!-- surface-1, not surface-0: a toast floats over cards that are
+             themselves surface-0, so matching them left it edgeless. -->
+        <div class="flex flex-col gap-1.5 p-4 rounded-lg shadow-2xl text-sm font-medium
+                    bg-[var(--surface-1)] border border-[var(--border-accent)] pointer-events-auto transition-all"
+          role="alert" aria-live="polite"
+          :class="{
+            'border-l-4 border-l-red-500':   toast.level === 'critical',
+            'border-l-4 border-l-red-400':   toast.level === 'error',
+            'border-l-4 border-l-amber-500': toast.level === 'warn',
+            'border-l-4 border-l-green-500': toast.level === 'info',
+          }">
+          <!-- Header row: icon + message + dismiss -->
+          <div class="flex items-start gap-3">
+            <i class="fas mt-0.5 flex-shrink-0 text-base"
+              :class="{
+                'fa-shield-exclamation text-red-600 animate-pulse': toast.level === 'critical',
+                'fa-times-circle text-red-500':                      toast.level === 'error',
+                'fa-exclamation-triangle text-amber-600':            toast.level === 'warn',
+                'fa-check-circle text-green-600':                    toast.level === 'info',
+              }"></i>
+            <span x-text="toast.msg" class="flex-1 text-[var(--text)] leading-snug font-semibold"></span>
+            <!-- Dismiss -->
+            <button @click="$store.app.dismissToast(toast.id)"
+                    aria-label="Dismiss"
+                    class="text-[var(--text-muted)] hover:text-[var(--text)] transition flex-shrink-0
+                           p-1 rounded hover:bg-[var(--surface-1)]">
+              <svg class="w-4 h-4" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg>
+            </button>
+          </div>
+          <!-- Detail line (optional) -->
+          <div x-show="toast.detail" class="pl-7 text-xs text-[var(--text-muted)] leading-snug" x-text="toast.detail"></div>
+          <!-- Timestamp -->
+          <div style="font-family:'JetBrains Mono','Fira Code',monospace;font-size:0.65rem;color:var(--text-muted);font-weight:600"
+               x-text="new Date(toast.ts).toLocaleTimeString()">
+          </div>
+          <!-- Action button (optional, for critical/warn) -->
+          <div x-show="toast.action" class="pl-7 pt-0.5">
+            <button @click="toast.action?.fn(); $store.app.dismissToast(toast.id)"
+                    class="px-3 py-1 text-xs font-semibold rounded-md transition"
+                    :class="{
+                      'bg-red-600 hover:bg-red-500 text-white': toast.level === 'critical',
+                      'bg-amber-600 hover:bg-amber-500 text-white': toast.level === 'warn',
+                    }"
+                    x-text="toast.action?.label || 'Go →'"></button>
+          </div>
+
+        </div>
+      </template>
+    </div>
+
+    <!-- ── Initial loading overlay ──────────────────────────── -->
+    <div x-show="$store.app.loading" x-cloak
+         class="fixed inset-0 bg-[var(--surface-950)]/80 backdrop-blur-sm z-50 flex items-center justify-center">
+      <div class="text-center space-y-3">
+        <svg class="icon fa-spin text-4xl text-[var(--primary-light)]" aria-hidden="true" viewBox="0 0 24 24"><use href="#loader"/></svg>
+        <p class="text-sm text-[var(--text-muted)] font-medium">Connecting to aGate...</p>
+      </div>
+    </div>
+
+    <!-- Inject Modal Components inside x-data -->
+    {% include "components/mqtt_panel.html" %}
+
+  </div> <!-- End of x-data block -->
+  
+  {% include "components/svg_dictionary.html" %}
+
+  <!-- Shared confirmation dialog. One instance for the whole app; see
+       $store.app.confirm(). Replaces window.confirm(), which is browser chrome
+       and reads as a warning from the browser rather than a question from the
+       page. -->
+  <div x-show="$store.app.confirmState.open" x-cloak x-transition.opacity
+       @keydown.escape.window="$store.app.resolveConfirm(false)"
+       class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
+    <div class="bg-[var(--surface-0)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+      <h3 class="text-base font-bold text-[var(--text-primary)]"
+          x-text="$store.app.confirmState.title"></h3>
+      <p x-show="$store.app.confirmState.body"
+         class="text-sm text-[var(--text-secondary)] leading-relaxed whitespace-pre-line"
+         x-text="$store.app.confirmState.body"></p>
+      <p x-show="$store.app.confirmState.detail"
+         class="text-xs text-[var(--text-muted)] leading-relaxed whitespace-pre-line"
+         x-text="$store.app.confirmState.detail"></p>
+      <div class="flex justify-end gap-2 pt-1">
+        <button @click="$store.app.resolveConfirm(false)"
+                class="px-4 py-2 rounded-xl text-xs font-bold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
+                x-text="$store.app.confirmState.cancelLabel"></button>
+        <button @click="$store.app.resolveConfirm(true)"
+                class="px-4 py-2 rounded-xl text-xs font-bold text-white transition"
+                :class="$store.app.confirmState.danger ? 'bg-red-600 hover:bg-red-500' : 'bg-primary hover:opacity-90'"
+                x-text="$store.app.confirmState.confirmLabel"></button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

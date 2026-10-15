@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login | FranklinWH HA Integrator</title>
+  <link rel="icon" type="image/x-icon" href="static/favicon.ico">
+  <link rel="stylesheet" href="static/css/design-system.css?v=4">
+  <!-- Tailwind, prebuilt. Replaces the 403 KB Play CDN browser JIT that
+       scanned every element's classes, generated CSS at runtime, and kept a
+       document-wide MutationObserver recompiling on every DOM change — a
+       compounding load under Alpine, and the leading suspect for the iOS
+       Safari crashes in GH #4. Rebuild with scripts/build_css.sh after
+       adding class names. -->
+  <link rel="stylesheet" href="static/css/tailwind.build.css">
+  <link rel="stylesheet" href="static/css/fontawesome-6.4.0.min.css">
+  <script defer src="static/js/alpinejs-3.14.1.min.js"></script>
+  <script>
+    // Theme setup
+    (function() {
+      const theme = localStorage.getItem('fwh_theme') || 'auto';
+      let active = theme;
+      if (theme === 'auto') {
+        active = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.classList.toggle('dark', active === 'dark');
+      document.documentElement.setAttribute('data-theme', active);
+      
+      const accent = localStorage.getItem('fwh_accent') || 'orange';
+      document.documentElement.setAttribute('data-accent', accent);
+    })();
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    body {
+      background: radial-gradient(circle at top right, rgba(249, 115, 22, 0.08), transparent 45%),
+                  radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.05), transparent 45%),
+                  #0f172a;
+    }
+  </style>
+</head>
+<body class="text-slate-100 font-sans min-h-screen flex items-center justify-center p-4">
+
+  <div x-data="{
+    username: '',
+    password: '',
+    totpCode: '',
+    mfaRequired: false,
+    loading: false,
+    error: '',
+    
+    async submitLogin() {
+      if (!this.username.trim() || !this.password.trim()) {
+        this.error = 'Username and password are required.';
+        return;
+      }
+      
+      this.loading = true;
+      this.error = '';
+      
+      try {
+        const payload = {
+          username: this.username,
+          password: this.password
+        };
+        if (this.mfaRequired && this.totpCode) {
+          payload.totp_code = this.totpCode;
+        }
+        
+        // Respect HA Ingress paths when posting to login
+        const ingressPath = '{{ base_path }}';
+        const r = await fetch(ingressPath + '/api/security/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        const data = await r.json();
+        
+        if (r.ok) {
+          if (data.mfa_required) {
+            this.mfaRequired = true;
+            this.error = '';
+            this.loading = false;
+            // focus the TOTP input
+            this.$nextTick(() => {
+              this.$refs.totpInput.focus();
+            });
+            return;
+          }
+          
+          // Save session attributes.
+          // `fwh_role` was written here and read by nothing for its whole life;
+          // the session cookie is the actual credential. Kept only because the
+          // Security tab surfaces the signed-in username.
+          localStorage.setItem('fwh_user', this.username);
+
+          // Redirect on the DEVICE VIEW the account is bound to, if any.
+          //
+          // Previously this also branched on `data.role` (inkypi / inkpi /
+          // inkypi2 were roles as well as dashboards). Those roles no longer
+          // exist — schema v56 collapsed everything to admin/operator/viewer —
+          // so the view is now purely a property of the account, not its
+          // permissions. A viewer can be bound to a screen or not; the two
+          // questions are unrelated, which is the whole point of separating
+          // device views from roles.
+          //
+          // This only fires when arriving via the sign-in form. Visiting `/`
+          // directly always serves the standard UI, which is why the device
+          // views are reachable at their own stable URLs.
+          const view = data.dashboard;
+          if (view === 'inkypi' || view === 'inkypi2') {
+            window.location.href = ingressPath + '/view/' + view;
+          } else {
+            window.location.href = ingressPath + '/';
+          }
+        } else {
+          this.error = data.detail || 'Invalid username or password.';
+        }
+      } catch (e) {
+        this.error = 'Connection failure: ' + e.message;
+      } finally {
+        this.loading = false;
+      }
+    }
+  }" class="w-full max-w-md bg-slate-900/40 backdrop-blur-md border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6">
+
+    <!-- Header Section -->
+    <div class="text-center space-y-2">
+      <div class="w-16 h-16 mx-auto rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-500 shadow-lg shadow-orange-500/5">
+        <svg class="w-8 h-8 animate-pulse" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+      </div>
+      <h1 class="text-xl font-black text-slate-100 tracking-tight">FranklinWH HA Integrator</h1>
+      <p class="text-xs text-slate-400">Secure access authorization required.</p>
+    </div>
+
+    <!-- Error Banner -->
+    <div x-show="error" x-cloak x-transition
+         class="p-3 rounded-xl border border-red-500/70 bg-red-900/70 text-red-50 text-sm text-center font-semibold shadow-lg shadow-red-950/40"
+         role="alert" aria-live="assertive">
+      <i class="fas fa-circle-exclamation mr-1.5"></i>
+      <span x-text="error"></span>
+    </div>
+
+    <!-- Login Form -->
+    <form @submit.prevent="submitLogin()" class="space-y-4">
+      
+      <!-- Username (always required) -->
+      <div class="space-y-1.5">
+        <label class="block text-[10px] font-black uppercase tracking-wider text-slate-500">Username</label>
+        <div class="relative">
+          <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-500 text-xs">
+            <i class="fas fa-user"></i>
+          </span>
+          <input type="text" x-model="username" :disabled="loading" required
+                 class="w-full bg-slate-950/50 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-orange-500 disabled:opacity-40 transition">
+        </div>
+      </div>
+
+      <!-- Password (always required) -->
+      <div class="space-y-1.5">
+        <label class="block text-[10px] font-black uppercase tracking-wider text-slate-500">Password</label>
+        <div class="relative">
+          <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-500 text-xs">
+            <i class="fas fa-lock"></i>
+          </span>
+          <input type="password" x-model="password" :disabled="loading" required
+                 class="w-full bg-slate-950/50 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-orange-500 disabled:opacity-40 transition">
+        </div>
+      </div>
+
+      <!-- MFA/TOTP Code (slidedown when required) -->
+      <div x-show="mfaRequired" x-cloak x-transition:enter="transition ease-out duration-300"
+           x-transition:enter-start="opacity-0 -translate-y-2"
+           x-transition:enter-end="opacity-100 translate-y-0"
+           class="space-y-1.5 pt-1">
+        <label class="block text-[10px] font-black uppercase tracking-wider text-orange-500">MFA Verification Code</label>
+        <div class="relative">
+          <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-orange-500 text-xs">
+            <i class="fas fa-shield-halved"></i>
+          </span>
+          <input type="text" x-model="totpCode" x-ref="totpInput" :required="mfaRequired" placeholder="6-digit code"
+                 class="w-full bg-slate-950/50 border border-orange-500/30 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-orange-500 disabled:opacity-40 transition font-mono tracking-widest text-center">
+        </div>
+      </div>
+
+      <button type="submit" :disabled="loading"
+              class="w-full py-3 mt-4 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold transition duration-200 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-orange-600/10">
+        <span x-show="!loading" x-text="mfaRequired ? 'Verify & Continue' : 'Authorize Session'"></span>
+        <span x-show="loading" class="flex items-center gap-1.5">
+          <i class="fas fa-spinner fa-spin"></i> Authorizing...
+        </span>
+      </button>
+
+    </form>
+
+    <!-- Footer Help -->
+    <div class="border-t border-slate-800 pt-4 flex flex-col items-center gap-2 text-[10px] text-slate-500 text-center leading-normal">
+      <p class="flex items-center gap-1">
+        <i class="fas fa-lock"></i> AES-256 Hashed Local Authentication
+      </p>
+      <p>
+        Locked out? Disable security by running:<br>
+        <code class="bg-slate-950 px-1.5 py-0.5 rounded text-orange-400 font-mono mt-1 inline-block">python scripts/recovery.sh disable-security</code>
+      </p>
+    </div>
+
+  </div>
+
+</body>
+</html>

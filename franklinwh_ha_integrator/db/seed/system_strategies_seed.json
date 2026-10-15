@@ -1,0 +1,98 @@
+[
+  {
+    "eval_order": 1,
+    "strategy_name": "Demand Charge Protection",
+    "trigger_category": "demand_charge",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"demand_window\",\"op\":\"EQ\",\"value\":true}]}",
+    "signals_json": "[{\"action\":\"HOLD\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 10,
+    "strategy_name": "Max Price — Cease Charging",
+    "trigger_category": "price_spike",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"cfg_max_charge_price\",\"op\":\"GT\",\"value\":0.0},{\"field\":\"import_c_kwh\",\"op\":\"GT\",\"value_ref\":\"cfg_max_charge_price\"}]}",
+    "signals_json": "[{\"action\":\"HOLD\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 20,
+    "strategy_name": "Negative Export — Battery Absorbing",
+    "trigger_category": "negative_export_advisory",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"export_c_kwh\",\"op\":\"LT\",\"value\":0.0},{\"field\":\"soc_pct\",\"op\":\"LT\",\"value_ref\":\"cfg_max_soc\"}]}",
+    "signals_json": "[{\"action\":\"NONE\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 21,
+    "strategy_name": "Negative Export — Enphase DPEL",
+    "trigger_category": "negative_export",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"export_c_kwh\",\"op\":\"LT\",\"value\":0.0},{\"field\":\"soc_pct\",\"op\":\"GTE\",\"value_ref\":\"cfg_max_soc\"},{\"field\":\"enphase_enabled\",\"op\":\"IN\",\"value\":[1,2]}]}",
+    "signals_json": "[{\"action\":\"ENPHASE_CURTAIL\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 22,
+    "strategy_name": "Negative Export — Disable Solar",
+    "trigger_category": "negative_export",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"export_c_kwh\",\"op\":\"LT\",\"value\":0.0},{\"field\":\"soc_pct\",\"op\":\"GTE\",\"value_ref\":\"cfg_max_soc\"},{\"field\":\"enphase_enabled\",\"op\":\"NOT_IN\",\"value\":[1,2]},{\"field\":\"cfg_solar_curtail_entity\",\"op\":\"NEQ\",\"value\":\"\"}]}",
+    "signals_json": "[{\"action\":\"HA_ENTITY_CONTROL\",\"ha_entity_action\":\"solar_entity\",\"ha_entity_state\":\"off\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 23,
+    "strategy_name": "Negative Export — Auto Off-Grid",
+    "trigger_category": "negative_export",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"export_c_kwh\",\"op\":\"LT\",\"value\":0.0},{\"field\":\"soc_pct\",\"op\":\"GTE\",\"value_ref\":\"cfg_max_soc\"},{\"field\":\"enphase_enabled\",\"op\":\"NOT_IN\",\"value\":[1,2]},{\"field\":\"cfg_solar_curtail_entity\",\"op\":\"EQ\",\"value\":\"\"},{\"field\":\"cfg_allow_auto_offgrid\",\"op\":\"EQ\",\"value\":true}]}",
+    "signals_json": "[{\"action\":\"SET_OFFGRID\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 24,
+    "strategy_name": "Negative Export — Advisory (SC Active)",
+    "trigger_category": "negative_export_advisory",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"export_c_kwh\",\"op\":\"LT\",\"value\":0.0},{\"field\":\"soc_pct\",\"op\":\"GTE\",\"value_ref\":\"cfg_max_soc\"},{\"field\":\"enphase_enabled\",\"op\":\"NOT_IN\",\"value\":[1,2]},{\"field\":\"cfg_solar_curtail_entity\",\"op\":\"EQ\",\"value\":\"\"},{\"field\":\"cfg_allow_auto_offgrid\",\"op\":\"EQ\",\"value\":false}]}",
+    "signals_json": "[{\"action\":\"ADVISE_CURTAIL_PV\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 30,
+    "strategy_name": "Price Spike — Peak Discharge",
+    "trigger_category": "price_spike",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"spike_status\",\"op\":\"IN\",\"value\":[\"spike\",\"potential\"]},{\"field\":\"soc_pct\",\"op\":\"GT\",\"value_ref\":\"cfg_max_soc\"},{\"field\":\"export_c_kwh\",\"op\":\"GTE\",\"value_ref\":\"cfg_min_export_price\"}]}",
+    "signals_json": "[{\"action\":\"GRID_EXPORT\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 31,
+    "strategy_name": "Price Spike — Spike Hold",
+    "trigger_category": "price_spike",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"spike_status\",\"op\":\"IN\",\"value\":[\"spike\",\"potential\"]},{\"operator\":\"OR\",\"conditions\":[{\"field\":\"soc_pct\",\"op\":\"LTE\",\"value_ref\":\"cfg_max_soc\"},{\"field\":\"export_c_kwh\",\"op\":\"LT\",\"value_ref\":\"cfg_min_export_price\"}]}]}",
+    "signals_json": "[{\"action\":\"HOLD\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 40,
+    "strategy_name": "Export Bonus — Discharge to Grid",
+    "trigger_category": "export_bonus",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"soc_pct\",\"op\":\"GT\",\"value_ref\":\"cfg_min_soc\"},{\"operator\":\"OR\",\"conditions\":[{\"field\":\"tariff_period\",\"op\":\"EQ\",\"value\":\"solarSponge\"},{\"operator\":\"AND\",\"conditions\":[{\"field\":\"cfg_export_bonus\",\"op\":\"GT\",\"value\":0.0},{\"field\":\"export_c_kwh\",\"op\":\"GTE\",\"value_ref\":\"cfg_export_bonus\"}]}]}]}",
+    "signals_json": "[{\"action\":\"GRID_EXPORT\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 45,
+    "strategy_name": "Force Grid Export — Price Floor",
+    "trigger_category": "force_export",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"cfg_min_export_price\",\"op\":\"GT\",\"value\":0.0},{\"field\":\"export_c_kwh\",\"op\":\"GTE\",\"value_ref\":\"cfg_min_export_price\"},{\"field\":\"soc_pct\",\"op\":\"GT\",\"value_ref\":\"cfg_min_soc\"}]}",
+    "signals_json": "[{\"action\":\"GRID_EXPORT\"}]",
+    "system_immutable": 1
+  },
+  {
+    "eval_order": 65,
+    "strategy_name": "Force Charge — Cheap Window",
+    "trigger_category": "force_charge",
+    "conditions_json": "{\"operator\":\"AND\",\"conditions\":[{\"field\":\"descriptor\",\"op\":\"IN\",\"value\":[\"negative\",\"extremelylow\"]},{\"field\":\"soc_pct\",\"op\":\"LT\",\"value_ref\":\"cfg_max_soc\"}]}",
+    "signals_json": "[{\"action\":\"GRID_CHARGE\"}]",
+    "system_immutable": 1
+  }
+]

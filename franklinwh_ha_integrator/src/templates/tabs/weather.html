@@ -1,0 +1,456 @@
+<!-- ── Weather & Radar Tab v2 ──────────────────────────────────
+     Provides real-time consolidated weather stats, Leaflet radar maps,
+     and provider configuration forms.
+──────────────────────────────────────────────────────────── -->
+
+<div x-data="weatherTab()" class="space-y-6">
+
+  <!-- Header Section with Tab Toggle -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 rounded-xl border border-[var(--border)] bg-[var(--surface-0)] shadow-lg">
+    <div>
+      <h1 class="text-xl font-bold text-gray-100 flex items-center gap-2">
+        <svg class="w-6 h-6 text-primary-light" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><use href="#cloud-sun"/></svg>
+        Weather & Radar
+      </h1>
+      <p class="text-xs text-gray-400 mt-1">
+        Monitor real-time weather conditions, track active storm warnings, and view live precipitation radar maps at your gateway site.
+      </p>
+    </div>
+    
+    <div class="flex items-center gap-2">
+      <!-- Sync Status Button -->
+      <button @click="refreshAll()" 
+              class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-all flex items-center gap-1.5"
+              :class="{ 'opacity-50 cursor-not-allowed': loadingCurrent || loadingForecast }">
+        <i class="fa-solid fa-arrows-rotate" :class="{ 'animate-spin': loadingCurrent || loadingForecast }"></i>
+        Sync
+      </button>
+
+      <!-- View / Configure Toggle -->
+      <div class="bg-gray-800 p-0.5 rounded-lg border border-gray-700 flex">
+        <button @click="activeTab = 'view'" 
+                class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
+                :class="activeTab === 'view' ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-gray-200'">
+          Dashboard & Map
+        </button>
+        <button @click="activeTab = 'config'" 
+                class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
+                :class="activeTab === 'config' ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-gray-200'">
+          Setup Provider
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── VIEW TAB PANEL ────────────────────────────────────────────── -->
+  <div x-show="activeTab === 'view'" class="grid grid-cols-1 lg:grid-cols-3 gap-6" x-cloak>
+    
+    <!-- Left 2 Columns: Main Weather Info & Map -->
+    <div class="lg:col-span-2 space-y-6">
+      
+      <!-- Current Live Weather Grid -->
+      <div class="p-5 rounded-xl border border-[var(--border)] bg-[var(--surface-0)] relative overflow-hidden shadow-lg">
+        <!-- Glow accent -->
+        <div class="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div class="flex justify-between items-start mb-6">
+          <div>
+            <span class="text-[10px] font-black uppercase tracking-widest text-primary-light">Current Weather</span>
+            <div class="flex items-baseline gap-2 mt-1">
+              <h2 class="text-3xl font-black text-gray-100" x-text="currentWeather ? (isFahrenheit ? (currentWeather.temp_f != null ? Number(currentWeather.temp_f).toFixed(1) : '—') : (currentWeather.temp_c != null ? Number(currentWeather.temp_c).toFixed(1) : '—')) + tempUnit : '—'"></h2>
+              <span class="text-sm font-semibold text-gray-400" x-text="currentWeather ? currentWeather.condition : 'Loading...'"></span>
+            </div>
+          </div>
+          <!-- Large Dynamic Condition Icon -->
+          <div class="w-14 h-14 bg-gray-800/80 rounded-xl flex items-center justify-center border border-gray-700">
+            <i class="fa-solid text-2xl" :class="currentWeather ? getConditionIcon(currentWeather.condition) : 'fa-cloud text-gray-400 animate-pulse'"></i>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <!-- Humidity -->
+          <div class="p-3 bg-gray-800/40 rounded-lg border border-gray-800">
+            <div class="text-[10px] uppercase font-bold text-gray-500">Humidity</div>
+            <div class="text-base font-bold text-gray-200 mt-1 flex items-baseline gap-1">
+              <span x-text="currentWeather ? currentWeather.humidity : '—'"></span><span class="text-xs text-gray-500">%</span>
+            </div>
+          </div>
+          <!-- Wind Vector -->
+          <div class="p-3 bg-gray-800/40 rounded-lg border border-gray-800">
+            <div class="text-[10px] uppercase font-bold text-gray-500">Wind</div>
+            <div class="text-base font-bold text-gray-200 mt-1 flex items-baseline gap-0.5">
+              <span x-text="currentWeather ? (isFahrenheit ? (currentWeather.wind_mph != null ? Number(currentWeather.wind_mph).toFixed(1) : '—') : (currentWeather.wind_kph != null ? Number(currentWeather.wind_kph).toFixed(1) : '—')) : '—'"></span>
+              <span class="text-[10px] text-gray-500 font-semibold" x-text="windUnit"></span>
+            </div>
+          </div>
+          <!-- Barometric Pressure -->
+          <div class="p-3 bg-gray-800/40 rounded-lg border border-gray-800">
+            <div class="text-[10px] uppercase font-bold text-gray-500">Pressure</div>
+            <div class="text-base font-bold text-gray-200 mt-1 flex items-baseline gap-1">
+              <span x-text="currentWeather ? currentWeather.pressure : '—'"></span><span class="text-xs text-gray-500">hPa</span>
+            </div>
+          </div>
+          <!-- Source Provider Badge -->
+          <div class="p-3 bg-gray-800/40 rounded-lg border border-gray-800">
+            <div class="text-[10px] uppercase font-bold text-gray-500">Source</div>
+            <div class="mt-1">
+              <span class="px-2 py-0.5 text-[10px] font-black rounded border inline-block uppercase"
+                    :class="config.provider === 'franklin' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 
+                            config.provider === 'openweather' ? 'bg-sky-500/10 text-sky-400 border-sky-500/30' : 
+                            config.provider === 'openmeteo' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                                                                'bg-purple-500/10 text-purple-400 border-purple-500/30'"
+                    x-text="config.provider"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-850 mt-4 pt-4 flex flex-wrap items-center justify-between gap-2">
+          <!-- Active Storm Warning / Extreme Weather Flags -->
+          <template x-if="currentWeather && currentWeather.active_storm_warning">
+            <div class="flex items-center gap-2 px-3 py-1 rounded bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-bold animate-pulse">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span>Storm Hedge Triggered: <span x-text="currentWeather.active_storm_count"></span> active storm alerts in region.</span>
+            </div>
+          </template>
+          <template x-if="currentWeather && !currentWeather.active_storm_warning">
+            <div class="flex items-center gap-2 text-xs text-gray-400">
+              <i class="fa-solid fa-circle-check text-emerald-500"></i>
+              <span>No active storm warnings in region.</span>
+            </div>
+          </template>
+          <span class="text-[10px] text-gray-500 font-semibold" x-text="'Last updated: ' + formattedLastUpdate"></span>
+        </div>
+      </div>
+
+      <!-- ── Basemap provider ────────────────────────────────────────────
+           CARTO's public basemaps now require a key; without one the tiles
+           arrive stamped "API KEY REQUIRED" across the map. The key belongs to
+           this installation and is never in the source, because the add-on
+           repository is public. With no key the maps use a keyless provider,
+           so this card is an upgrade rather than a prerequisite. -->
+      <div x-data="basemapSettings()" x-init="load()"
+           class="rounded-xl border border-[var(--border)] bg-[var(--surface-0)] p-4 mb-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-bold text-gray-100 flex items-center gap-1.5">
+              <i class="fa-solid fa-map text-primary-light"></i>
+              Map Basemap
+            </h3>
+            <p class="text-[10px] text-gray-400 mt-0.5">
+              Tiles for this map and the API Metrics map.
+              Currently served by <span class="font-bold" x-text="providerLabel"></span>.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <template x-if="hasKey && !editing">
+              <span class="text-[10px] font-mono text-gray-400 bg-gray-900 px-2 py-1 rounded"
+                    x-text="masked"></span>
+            </template>
+            <button type="button" x-show="!editing" @click="editing = true"
+                    class="px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/30 text-primary-light text-[10px] font-bold hover:bg-primary/20 transition"
+                    x-text="hasKey ? 'Replace key' : 'Add CARTO key'"></button>
+            <button type="button" x-show="hasKey && !editing" @click="clearKey()"
+                    class="px-2.5 py-1 rounded-lg border border-gray-700 text-gray-400 text-[10px] font-bold hover:text-gray-200 transition">
+              Remove
+            </button>
+          </div>
+        </div>
+
+        <div x-show="editing" x-cloak class="mt-3 flex flex-wrap items-end gap-2">
+          <div class="flex-1 min-w-[220px]">
+            <label class="text-[10px] font-black uppercase tracking-widest text-gray-500">CARTO API key</label>
+            <input type="password" x-model="draft" autocomplete="off" spellcheck="false"
+                   placeholder="paste the key from carto.com"
+                   class="w-full mt-1 px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-xs text-gray-200 font-mono focus:border-primary focus:outline-none">
+            <p class="text-[10px] text-gray-500 mt-1">
+              Stored in this instance only. Leaving this blank keeps the existing key.
+            </p>
+          </div>
+          <button type="button" @click="save()" :disabled="busy"
+                  class="px-3 py-2 rounded-lg bg-primary text-white text-[11px] font-bold hover:bg-primary/90 disabled:opacity-50 transition">
+            Save
+          </button>
+          <button type="button" @click="editing = false; draft = ''"
+                  class="px-3 py-2 rounded-lg border border-gray-700 text-gray-400 text-[11px] font-bold hover:text-gray-200 transition">
+            Cancel
+          </button>
+        </div>
+
+        <p x-show="message" x-cloak class="text-[10px] mt-2"
+           :class="error ? 'text-red-400' : 'text-emerald-400'" x-text="message"></p>
+      </div>
+
+      <!-- Leaflet Interactive Precipitation Radar Map Card -->
+      <div class="rounded-xl border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden shadow-lg relative flex flex-col">
+        <!-- Map Overlay Header with Radar Controls -->
+        <div class="p-4 border-b border-[var(--border)] bg-gray-850 flex flex-wrap items-center justify-between gap-4 z-10">
+          <div>
+            <h3 class="text-sm font-bold text-gray-100 flex items-center gap-1.5">
+              <i class="fa-solid fa-satellite-dish text-primary-light"></i>
+              Precipitation Radar & Maps
+            </h3>
+            <p class="text-[10px] text-gray-400 mt-0.5">Looped RainViewer precipitation clouds overlay at gateway site.</p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <!-- Radar vs Clouds Toggle -->
+            <div class="bg-gray-900 p-0.5 rounded-lg border border-gray-850 flex mr-2">
+              <button @click="setRadarType('radar')" 
+                      class="px-2 py-1 rounded-md text-[10px] font-semibold transition-all"
+                      :class="radarType === 'radar' ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-gray-200'">
+                Radar
+              </button>
+              <button @click="setRadarType('satellite')" 
+                      class="px-2 py-1 rounded-md text-[10px] font-semibold transition-all"
+                      :class="radarType === 'satellite' ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-gray-200'">
+                Clouds
+              </button>
+            </div>
+
+            <!-- Radar timeline label -->
+            <div class="px-2.5 py-1 rounded bg-gray-900 border border-gray-850 text-xs text-primary-light font-bold" x-show="radarType === 'radar'" x-text="getFormattedRadarTime()"></div>
+            
+            <!-- Play/Pause Button -->
+            <button @click="toggleRadarPlay()" 
+                    x-show="radarType === 'radar'"
+                    class="w-8 h-8 rounded-lg bg-primary text-white hover:bg-primary-light active:scale-95 transition-all flex items-center justify-center">
+              <i class="fa-solid text-sm" :class="isRadarPlaying ? 'fa-pause' : 'fa-play'"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Leaflet Map Container -->
+        <div id="weather-radar-map" class="w-full h-[400px] z-0"></div>
+
+        <!-- Premium Legend overlay -->
+        <div x-show="radarType === 'radar'" 
+             class="absolute bottom-4 left-4 p-3 rounded-lg text-[10px] pointer-events-none z-10 flex flex-col gap-1.5 shadow-2xl backdrop-blur-md"
+             style="background: var(--glass-bg); border: 1px solid var(--border); color: var(--text-secondary);">
+          <div class="font-bold uppercase tracking-widest text-[9px] mb-0.5" style="color: var(--text-muted);">Precipitation Intensity</div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded bg-blue-500/80"></div>
+            <span>Light Rain / Drizzle</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded bg-green-500/80"></div>
+            <span>Moderate Rain</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded bg-yellow-500/80"></div>
+            <span>Heavy Precipitation</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="w-2.5 h-2.5 rounded bg-red-600/80"></div>
+            <span>Severe Storms / Hail</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right 1 Column: 7-Day Timeline Forecast -->
+    <div class="space-y-6">
+      
+      <div class="p-5 rounded-xl border border-[var(--border)] bg-[var(--surface-0)] shadow-lg flex flex-col h-full">
+        <h3 class="text-sm font-bold text-gray-100 flex items-center gap-2 mb-4">
+          <i class="fa-solid fa-calendar-days text-primary-light"></i>
+          7-Day Forecast
+        </h3>
+
+        <!-- Scrollable Timeline Stack -->
+        <div class="space-y-3 overflow-y-auto flex-1 max-h-[580px] pr-1">
+          <template x-if="forecast.length === 0">
+            <div class="py-12 flex flex-col items-center justify-center text-gray-500">
+              <i class="fa-solid fa-cloud text-3xl animate-bounce mb-2"></i>
+              <span class="text-xs">No forecast data loaded.</span>
+            </div>
+          </template>
+
+          <template x-for="(day, index) in forecast" :key="index">
+            <div class="p-3 rounded-lg bg-gray-800/40 border border-gray-800 hover:border-gray-700/60 transition-all flex items-center justify-between gap-3">
+              
+              <!-- Date Label -->
+              <div class="min-w-0">
+                <div class="text-xs font-bold text-gray-200" x-text="day.day_name"></div>
+                <div class="text-[10px] text-gray-500 font-semibold" x-text="day.date"></div>
+              </div>
+
+              <!-- Weather Icon + Condition -->
+              <div class="flex items-center gap-2">
+                <i class="fa-solid text-base" :class="getConditionIcon(day.condition)"></i>
+                <span class="text-[11px] text-gray-400 max-w-[80px] truncate" x-text="day.condition"></span>
+              </div>
+
+              <!-- Temps & Rain Prob -->
+              <div class="text-right flex-shrink-0">
+                <div class="text-xs font-bold text-gray-200">
+                  <span x-text="day.temp_max != null ? Number(day.temp_max).toFixed(0) : '—'"></span>° / <span class="text-gray-400" x-text="day.temp_min != null ? Number(day.temp_min).toFixed(0) : '—'"></span>°
+                </div>
+                <div class="text-[9px] font-bold text-blue-400 mt-0.5 flex items-center justify-end gap-0.5" x-show="day.rain_prob > 0">
+                  <i class="fa-solid fa-droplet text-[8px]"></i>
+                  <span x-text="day.rain_prob + '%'"></span>
+                </div>
+              </div>
+
+            </div>
+          </template>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ── CONFIG TAB PANEL ──────────────────────────────────────────── -->
+  <div x-show="activeTab === 'config'" class="max-w-2xl mx-auto" x-cloak>
+    
+    <div class="p-6 rounded-xl border border-[var(--border)] bg-[var(--surface-0)] shadow-lg space-y-6">
+      
+      <div>
+        <h2 class="text-base font-bold text-gray-100 flex items-center gap-2">
+          <i class="fa-solid fa-gears text-primary-light"></i>
+          Select Weather Provider
+        </h2>
+        <p class="text-xs text-gray-400 mt-1">
+          Configure where real-time meteorological metrics, temperature deratings, and storm indices are sourced.
+        </p>
+      </div>
+
+      <!-- Form Inputs -->
+      <div class="space-y-4">
+        <!-- Provider Select -->
+        <div class="space-y-1">
+          <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">Active Weather Provider</label>
+          <select x-model="config.provider" 
+                  class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary transition-all">
+            <option value="franklin">FranklinWH Cloud Session (Built-in)</option>
+            <option value="openweather">OpenWeatherMap API</option>
+            <option value="openmeteo">Open-Meteo API (Free, No Key)</option>
+            <option value="ha_entity">Home Assistant Weather Entity</option>
+          </select>
+          <p class="text-[10px] text-gray-500 mt-1" x-show="config.provider === 'franklin'">
+            Uses your existing gateway cloud connection to read current temperature, humidity, and storm flag states automatically.
+          </p>
+          <p class="text-[10px] text-gray-500 mt-1" x-show="config.provider === 'openweather'">
+            Direct high-frequency REST polling to OpenWeatherMap servers. Requires a free OWM API key and coordinate pins.
+          </p>
+          <p class="text-[10px] text-gray-500 mt-1" x-show="config.provider === 'openmeteo'">
+            Direct HTTP queries to Open-Meteo servers. Free, no API key required, unlimited requests.
+          </p>
+          <p class="text-[10px] text-gray-500 mt-1" x-show="config.provider === 'ha_entity'">
+            Queries your local Home Assistant instance for weather metrics. Requires HA connection setup.
+          </p>
+        </div>
+
+        <!-- Temperature Units Selection -->
+        <div class="space-y-1">
+          <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">Temperature Units</label>
+          <div class="flex items-center gap-4 mt-1">
+            <label class="flex items-center gap-1.5 text-xs text-gray-200 cursor-pointer">
+              <input type="radio" value="metric" x-model="config.units" class="text-primary focus:ring-0">
+              Metric (°C, km/h)
+            </label>
+            <label class="flex items-center gap-1.5 text-xs text-gray-200 cursor-pointer">
+              <input type="radio" value="imperial" x-model="config.units" class="text-primary focus:ring-0">
+              Imperial (°F, mph)
+            </label>
+          </div>
+        </div>
+
+        <!-- OpenWeatherMap & Open-Meteo Configuration Fields -->
+        <div x-show="config.provider === 'openweather' || config.provider === 'openmeteo'" class="space-y-4 pt-2 border-t border-gray-800" x-transition.collapse>
+          <div class="space-y-1" x-show="config.provider === 'openweather'">
+            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">OWM API Key</label>
+            <input type="password" x-model="config.owm_api_key" placeholder="Enter OpenWeatherMap API Key..."
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary transition-all">
+          </div>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div class="space-y-1">
+              <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">Latitude</label>
+              <input type="text" x-model="config.owm_lat" placeholder="e.g. -33.8688"
+                     class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary transition-all">
+            </div>
+            <div class="space-y-1">
+              <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">Longitude</label>
+              <input type="text" x-model="config.owm_lon" placeholder="e.g. 151.2093"
+                     class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary transition-all">
+            </div>
+          </div>
+          <p class="text-[10px] text-gray-500">
+            Note: If latitude and longitude are left empty, the system will automatically fall back to using the coordinates configured in your Solar Setup panel.
+          </p>
+        </div>
+
+        <!-- Home Assistant Weather Entity Fields -->
+        <div x-show="config.provider === 'ha_entity'" class="space-y-4 pt-2 border-t border-gray-800" x-transition.collapse>
+          <div class="space-y-1">
+            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">HA Weather Entity ID</label>
+            <input type="text" x-model="config.ha_entity_id" placeholder="e.g. weather.home"
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary transition-all">
+          </div>
+
+          <div class="space-y-1">
+            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">HA Long-Lived Access Token (Optional)</label>
+            <input type="password" x-model="config.ha_token" placeholder="Leave blank to use default HA Service Token..."
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary transition-all">
+          </div>
+
+          <div class="space-y-1">
+            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest">HA Local URL (Optional)</label>
+            <input type="text" x-model="config.ha_url" placeholder="e.g. http://supervisor/core/api (defaults to local supervisor endpoint)"
+                   class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-primary transition-all">
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Test Connection Feedback Alerts -->
+      <div class="space-y-3">
+        <template x-if="testSuccess">
+          <div class="p-3.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2">
+            <i class="fa-solid fa-circle-check text-sm"></i>
+            <span x-text="testSuccess"></span>
+          </div>
+        </template>
+        
+        <template x-if="testError">
+          <div class="p-3.5 rounded bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-semibold flex items-center gap-2">
+            <i class="fa-solid fa-triangle-exclamation text-sm"></i>
+            <span x-text="testError"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Actions Buttons Bar -->
+      <div class="flex items-center justify-between pt-4 border-t border-[var(--border)]">
+        <!-- Test Button -->
+        <button @click="testWeatherConnection()" 
+                class="px-4 py-2 rounded-lg text-xs font-bold border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 transition-all flex items-center gap-2"
+                :class="{ 'opacity-50 cursor-not-allowed': testingConnection || savingConfig }"
+                :disabled="testingConnection || savingConfig">
+          <span x-show="!testingConnection">Verify Connection</span>
+          <span x-show="testingConnection" class="flex items-center gap-1">
+            <i class="fa-solid fa-circle-notch animate-spin"></i>
+            Testing...
+          </span>
+        </button>
+
+        <!-- Save Button -->
+        <button @click="saveConfig()" 
+                class="px-5 py-2 rounded-lg text-xs font-black bg-primary hover:bg-primary-light text-white transition-all shadow-md flex items-center gap-2"
+                :class="{ 'opacity-50 cursor-not-allowed': savingConfig }"
+                :disabled="savingConfig">
+          <span x-show="!savingConfig">Save & Apply</span>
+          <span x-show="savingConfig" class="flex items-center gap-1">
+            <i class="fa-solid fa-circle-notch animate-spin"></i>
+            Applying...
+          </span>
+        </button>
+      </div>
+
+    </div>
+
+  </div>
+
+</div>

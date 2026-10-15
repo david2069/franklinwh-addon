@@ -1,0 +1,25 @@
+---
+# Base image per architecture, for the build-from-source path.
+#
+# These are the Home Assistant base images, not python:slim — run.sh is
+# `#!/usr/bin/env bashio`, which exists only on the HA bases. FEM's build.yaml
+# pointed at python:3.12-slim, which is why its entrypoint had to differ.
+#
+# Only the two architectures that can build are listed; see config.yaml.
+build_from:
+  aarch64: "ghcr.io/home-assistant/aarch64-base:latest"
+  amd64: "ghcr.io/home-assistant/amd64-base:latest"
+args:
+  BUILD_ARCH: "{arch}"
+labels:
+  org.opencontainers.image.title: "FranklinWH HA Integrator"
+  org.opencontainers.image.description: "FranklinWH aGate to Home Assistant via MQTT Discovery"
+  # Points at the PUBLIC add-on repository, not the private source one.
+  #
+  # GitHub links a package to a repository through this label, and that link is
+  # what the package page shows visitors. Pointing it at the private repo gave
+  # anonymous visitors a 404 from the one page they are sent to. The add-on
+  # repository is where a user of the image actually needs to go.
+  org.opencontainers.image.source: "https://github.com/david2069/franklinwh-addon"
+  org.opencontainers.image.documentation: "https://github.com/david2069/franklinwh-addon"
+  org.opencontainers.image.licenses: "MIT"

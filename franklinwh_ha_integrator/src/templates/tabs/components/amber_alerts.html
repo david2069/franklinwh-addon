@@ -1,0 +1,198 @@
+    <!-- HA connection status & Configuration -->
+    <div class="mb-4 p-4 rounded-xl border"
+         :class="haConnected
+           ? 'border-emerald-800/50 bg-emerald-900/15'
+           : 'border-amber-800/50 bg-amber-950/15'">
+      
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <div class="flex items-center gap-2.5">
+          <span class="w-2 h-2 rounded-full flex-shrink-0"
+                :class="haConnected ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+          <div>
+            <p class="text-xs font-semibold"
+               :class="haConnected ? 'text-emerald-300' : 'text-amber-300'"
+               x-text="haConnected ? 'Home Assistant Connected' : 'Home Assistant Not Connected'"></p>
+            <p class="text-[10px] mt-0.5"
+               :class="haConnected ? 'text-emerald-500/70' : 'text-amber-500/70'"
+               x-text="haConnected ? haHost : 'Credentials required for push notifications'"></p>
+          </div>
+        </div>
+        <button @click="$store.app.showSettings = true"
+                class="text-[10px] font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 transition-colors"
+                :class="haConnected
+                  ? 'border-emerald-700/50 text-emerald-400 hover:bg-emerald-900/30'
+                  : 'border-amber-700/50 text-amber-400 hover:bg-amber-900/30'">
+          <i class="fa-solid fa-gear mr-1"></i>
+          Global Settings
+        </button>
+      </div>
+
+      <!-- Credentials inline (parity with Notifications tab) -->
+      <div class="space-y-4 pt-3 border-t border-gray-800/50">
+        <div>
+          <label class="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">HA Host URL</label>
+          <input type="text" x-model="haHost" placeholder="http://homeassistant.local:8123"
+                 class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-950 border border-gray-700 text-gray-200 focus:outline-none focus:border-primary/60">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="block text-[10px] font-black uppercase tracking-widest text-gray-500">Access Token</label>
+            <button @click="showToken = !showToken" class="text-[9px] text-gray-500 hover:text-gray-300">
+              <i class="fas" :class="showToken ? 'fa-eye-slash' : 'fa-eye'"></i>
+              <span x-text="showToken ? 'Hide' : 'Show'"></span>
+            </button>
+          </div>
+          <input :type="showToken ? 'text' : 'password'" x-model="haToken" placeholder="••••••••••••••••"
+                 class="w-full text-xs font-mono rounded-lg px-3 py-2 bg-gray-950 border border-gray-700 text-gray-200 focus:outline-none focus:border-primary/60">
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button @click="testConnection()" :disabled="testingConn || !haHost"
+                  class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition disabled:opacity-50">
+            <i class="fas" :class="testingConn ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+            <span x-text="testingConn ? 'Test Connection' : 'Test Connection'"></span>
+          </button>
+          <span x-show="testResultMsg" class="text-[9px] font-bold"
+                :class="testResultMsg?.ok ? 'text-emerald-400' : 'text-red-400'"
+                x-text="testResultMsg?.msg"></span>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- Settings form -->
+    <div class="card mb-4">
+      <h2 class="font-bold text-sm flex items-center gap-2 mb-4">
+        <i class="fa-solid fa-bell text-[var(--primary-light)]"></i>
+        Notification Settings
+      </h2>
+
+      <!-- Master toggle -->
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-sm font-semibold text-gray-200">Enable Notifications</div>
+          <div class="text-xs text-gray-500">Push price signal events to your HA mobile app</div>
+        </div>
+        <button @click="settings.enabled = !settings.enabled"
+                class="transition-colors">
+          <i class="fa-solid text-2xl" :class="settings.enabled ? 'fa-toggle-on text-teal-400' : 'fa-toggle-off text-gray-600'"></i>
+        </button>
+      </div>
+
+      <!-- Target device -->
+      <div class="mb-4">
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-semibold text-gray-300">Notify Target</label>
+          <button @click="discoverTargets()" :disabled="isDetecting || !haConnected"
+                  class="text-[10px] font-semibold px-2 py-1 rounded border transition-colors"
+                  :class="haConnected ? 'border-[var(--primary-light)]/40 text-[var(--primary-light)] hover:bg-[var(--primary-light)]/10' : 'border-gray-700 text-gray-600 cursor-not-allowed'">
+            <i class="fa-solid mr-1" :class="isDetecting ? 'fa-spinner fa-spin' : 'fa-magnifying-glass'"></i>
+            <span x-text="isDetecting ? 'Detecting…' : 'Detect from HA'"></span>
+          </button>
+        </div>
+
+        <!-- Dropdown when targets have been discovered -->
+        <template x-if="detectedTargets.length > 0">
+          <div>
+            <select x-model="settings.ha_target"
+                    x-html="`<option value='' disabled>— select a notify service —</option>` + (detectedTargets || []).map(t => `<option value='${t.service}'>${t.label}  (${t.service})</option>`).join('')"
+                    class="w-full bg-[var(--surface-1)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-[var(--primary-light)] mb-1">
+            </select>
+            <p class="text-[10px] text-teal-500">✓ <span x-text="detectedTargets.length"></span> notify service(s) discovered from HA</p>
+          </div>
+        </template>
+
+        <!-- Plain text fallback when nothing discovered yet -->
+        <template x-if="detectedTargets.length === 0">
+          <div>
+            <input x-model="settings.ha_target" type="text"
+                   placeholder="mobile_app_your_phone  ← click Detect to auto-fill"
+                   class="w-full bg-[var(--surface-1)] border border-[var(--border)] rounded-lg px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-[var(--primary-light)]">
+            <p class="text-[10px] text-gray-600 mt-1">Found in HA → Settings → Companion App → Notifications</p>
+          </div>
+        </template>
+      </div>
+
+      <!-- Trigger selection -->
+      <div class="mb-4">
+        <label class="text-xs font-semibold text-gray-300 mb-2 block">Notify On</label>
+        <div class="space-y-2">
+          <template x-for="trigger in availableTriggers" :key="trigger.id">
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" :value="trigger.id"
+                     :checked="settings.triggers.includes(trigger.id)"
+                     @change="toggleTrigger(trigger.id)"
+                     class="rounded text-[var(--primary-light)]">
+              <span class="text-xs text-gray-300" x-text="trigger.label"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+
+      <!-- Actionable toggle -->
+      <div class="flex items-center justify-between mb-4 p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)]">
+        <div>
+          <div class="text-xs font-semibold text-gray-200">Actionable Notifications (Tier 3)</div>
+          <div class="text-[10px] text-gray-500 mt-0.5">Add action buttons (Force Charge / Skip / Remind) — requires HA automation setup below</div>
+        </div>
+        <button @click="settings.actionable = !settings.actionable" class="flex-shrink-0 ml-3 transition-colors">
+          <i class="fa-solid text-xl" :class="settings.actionable ? 'fa-toggle-on text-purple-400' : 'fa-toggle-off text-gray-600'"></i>
+        </button>
+      </div>
+
+      <!-- Save + Test -->
+      <div class="flex items-center gap-3">
+        <button @click="saveSettings()" :disabled="saving"
+                class="btn btn-primary text-xs px-4 py-2"
+                :class="saving ? 'opacity-50 cursor-not-allowed' : ''">
+          <i class="fa-solid fa-save mr-1"></i>
+          <span x-text="saving ? 'Saving…' : 'Save Settings'"></span>
+        </button>
+        <button @click="sendTest()" :disabled="!haConnected || !settings.enabled || testing"
+                class="btn btn-secondary text-xs px-4 py-2"
+                :class="(!haConnected || !settings.enabled || testing) ? 'opacity-40 cursor-not-allowed' : ''">
+          <i class="fa-solid fa-paper-plane mr-1"></i>
+          <span x-text="testing ? 'Sending…' : 'Test Notification'"></span>
+        </button>
+        <span x-show="testResult" class="text-xs font-semibold"
+              :class="testResult === 'ok' ? 'text-teal-400' : 'text-red-400'"
+              x-text="testResult === 'ok' ? '✓ Sent!' : '✗ Failed — check console'">
+        </span>
+      </div>
+    </div>
+
+    <!-- Actionable HA YAML recipe -->
+    <div x-show="settings.actionable && haConnected" class="card">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-bold text-sm flex items-center gap-2">
+          <i class="fa-solid fa-code text-[var(--primary-light)]"></i>
+          HA Automation YAML Recipe
+          <span class="text-[10px] text-gray-500 font-normal">— paste into your HA configuration.yaml</span>
+        </h2>
+        <button @click="copyYaml()" class="btn btn-secondary text-xs py-1 px-3 flex items-center gap-1">
+          <i class="fa-solid" :class="yamlCopied ? 'fa-check text-teal-400' : 'fa-copy'"></i>
+          <span x-text="yamlCopied ? 'Copied!' : 'Copy'"></span>
+        </button>
+      </div>
+
+      <!-- Security Perimeter Warning -->
+      <div class="p-3 mb-3 rounded-lg border border-purple-500/20 bg-purple-950/20 text-purple-300 text-[11px] leading-relaxed">
+        <div class="font-bold flex items-center gap-1.5 mb-1 text-purple-200 text-xs">
+          <i class="fa-solid fa-shield-halved"></i>
+          Security &amp; TLS Requirements
+        </div>
+        <p class="mb-1.5 text-purple-300/90">If you have enabled **Lock Dashboard &amp; REST APIs** (Security Enabled):</p>
+        <ul class="list-disc pl-4 space-y-1 text-purple-400/90">
+          <li><strong>HTTPS / SSL</strong>: Update host URLs to use <code>https://</code>. If using self-signed certs, add <code>verify_ssl: false</code> to HA's <code>rest_command</code> and REST sensor configurations to avoid connection handshake blocks.</li>
+          <li><strong>Token Authentication</strong>: Any REST Sensors pulling telemetry (e.g. <code>/api/automation/signal</code>) must supply a **Long-Lived API Token** (generated in the Security tab) using the <code>Authorization: Bearer fhai_...</code> header or the query parameter <code>?token=fhai_...</code>.</li>
+        </ul>
+      </div>
+
+      <pre class="text-[10px] font-mono bg-gray-950/60 rounded-lg p-4 overflow-x-auto text-gray-400 leading-relaxed max-h-64 overflow-y-auto"
+           x-text="haYaml"></pre>
+    </div>
+
+
+
+

@@ -1,0 +1,348 @@
+<!-- ── Health Tab v2 ── System status & diagnostics ── -->
+<div x-data="healthTab()" x-init="init()" class="space-y-5 max-w-5xl">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#activity"/></svg>
+        Health
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">System status &amp; diagnostics</p>
+    </div>
+    <button @click="refresh()"
+            class="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-600 bg-gray-800 text-xs font-bold text-gray-300 hover:border-primary/50 hover:bg-primary/5 transition">
+      <svg class="icon w-3 h-3" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg>Refresh
+    </button>
+  </div>
+
+  <!-- ── App Info Banner ──────────────────────────────────────────────── -->
+  <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+      <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1.5">Version</p>
+      <p class="text-xl font-black text-gray-100 font-mono" x-text="'v' + (health.app?.version || '—')"></p>
+    </div>
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+      <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1.5">Environment</p>
+      <p class="text-xl font-black text-primary-light uppercase font-mono" x-text="health.app?.env || '—'"></p>
+    </div>
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+      <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1.5">Log Level</p>
+      <p class="text-xl font-black text-gray-100 uppercase font-mono" x-text="health.config?.log_level || '—'"></p>
+    </div>
+  </div>
+
+  <!-- ── A. App & Process Vitals ─────────────────────────────────────── -->
+  <div>
+    <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">App &amp; Process</p>
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+      <div class="flex gap-8 px-5 py-4 border-b border-gray-700/50 flex-wrap">
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Uptime</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="formatUptime(process.metrics?.uptime_seconds)"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Memory</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="process.metrics?.memory_mb ? process.metrics.memory_mb + ' MB' : '—'"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">CPU</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="process.metrics?.cpu_percent != null ? process.metrics.cpu_percent + '%' : '—'"></p>
+        </div>
+        <div>
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Poll Interval</p>
+          <p class="text-base font-black font-mono text-gray-100" x-text="health.config?.poll_interval ? health.config.poll_interval + 's' : '—'"></p>
+        </div>
+      </div>
+      <!-- Task worker list -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead class="bg-gray-800 border-b border-gray-700">
+            <tr class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+              <th class="px-4 py-2.5 text-left">Task Worker</th>
+              <th class="px-4 py-2.5 text-left">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- x-if and x-for as siblings inside tbody trigger Alpine 3.14 .after() crash.
+                 Use x-show on a static empty-state row, and x-for on tasks array separately. -->
+            <tr x-show="!(process && process.tasks && process.tasks.length > 0)">
+              <td colspan="2" class="px-4 py-4 text-center text-gray-600 text-xs">No task data available</td>
+            </tr>
+            <template x-for="(t, i) in (process && process.tasks ? process.tasks : [])" :key="(t.name || '') + '_' + i">
+              <tr class="border-b border-gray-700/40" :class="i % 2 === 1 ? 'bg-gray-800/30' : ''">
+                <td class="px-4 py-2.5 font-mono text-gray-300" x-text="t.name"></td>
+                <td class="px-4 py-2.5">
+                  <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                        :class="t.status === 'Running'
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                          : 'bg-red-500/15 border-red-500/30 text-red-400'">
+                    <span class="w-1.5 h-1.5 rounded-full"
+                          :class="t.status === 'Running' ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'"></span>
+                    <span x-text="t.status"></span>
+                  </span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Gateways ────────────────────────────────────────────────────── -->
+  <div>
+    <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">Gateways</p>
+    <template x-if="!health.gateways || health.gateways.total === 0">
+      <div class="rounded-xl border border-dashed border-gray-700 bg-gray-800/30 p-10 text-center">
+        <i class="fas fa-network-wired text-2xl text-gray-700 mb-2"></i>
+        <p class="text-sm text-gray-500">No gateways registered —
+          <a href="#" @click.prevent="$store.app.setTab('gateways')" class="text-primary-light hover:underline">add one here</a>.
+        </p>
+      </div>
+    </template>
+    <template x-if="health.gateways?.statuses?.length > 0">
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+        <div class="grid grid-cols-5 px-4 py-2 bg-gray-800 border-b border-gray-700 text-[9px] font-black uppercase tracking-widest text-gray-600">
+          <div>Gateway</div><div>Poll Status</div><div>Last Poll</div><div>Errors</div><div>MQTT</div>
+        </div>
+        <div class="max-h-[35vh] overflow-y-auto">
+        <template x-for="(gw, i) in health.gateways.statuses" :key="gw.short_id">
+          <div class="grid grid-cols-5 px-4 py-3 border-b border-gray-700/40 items-center" :class="i % 2 === 1 ? 'bg-gray-800/30' : ''">
+            <div class="font-bold text-gray-100 font-mono text-xs" x-text="gw.short_id"></div>
+            <div>
+              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                    :class="{'bg-emerald-500/15 border-emerald-500/30 text-emerald-400':gw.poll_status==='ok','bg-red-500/15 border-red-500/30 text-red-400':gw.poll_status==='error','bg-amber-500/15 border-amber-500/30 text-amber-400':gw.poll_status==='retrying','bg-gray-700 border-gray-600 text-gray-400':gw.poll_status==='stopped'||gw.poll_status==='starting'}">
+                <span class="w-1.5 h-1.5 rounded-full"
+                      :class="{'bg-emerald-400':gw.poll_status==='ok','bg-red-400':gw.poll_status==='error','bg-amber-400 animate-pulse':gw.poll_status==='retrying','bg-gray-500':gw.poll_status==='stopped'||gw.poll_status==='starting'}"></span>
+                <span x-text="gw.poll_status"></span>
+              </span>
+            </div>
+            <div class="text-xs text-gray-500 font-mono" x-text="gw.last_poll_age_s != null ? gw.last_poll_age_s + 's ago' : '—'"></div>
+            <div class="font-bold text-sm" :class="gw.consecutive_errors > 0 ? 'text-red-400' : 'text-gray-500'" x-text="gw.consecutive_errors || 0"></div>
+            <div>
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                    :class="gw.mqtt_published ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' : 'bg-gray-700 border-gray-600 text-gray-500'"
+                    x-text="gw.mqtt_published ? 'Published' : 'Pending'"></span>
+            </div>
+          </div>
+        </template>
+        </div><!-- end scroll wrapper -->
+      </div>
+    </template>
+  </div>
+
+  <!-- ── MQTT ───────────────────────────────────────────────────────── -->
+  <div>
+    <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">MQTT Broker</p>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-2">Status</p>
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                :class="health.mqtt?.connected ? 'bg-emerald-400 shadow shadow-emerald-400/50' : 'bg-red-400'"></span>
+          <span class="text-sm font-black" :class="health.mqtt?.connected ? 'text-emerald-400' : 'text-red-400'"
+                x-text="health.mqtt?.connected ? 'Connected' : 'Disconnected'"></span>
+        </div>
+        <p class="text-[9px] text-gray-600 font-mono mt-1.5 truncate" x-text="health.mqtt?.broker || '—'"></p>
+      </div>
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-2">Published</p>
+        <p class="text-xl font-black text-gray-100" x-text="(health.mqtt?.messages_published || 0).toLocaleString()"></p>
+      </div>
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-2">Reconnects</p>
+        <p class="text-xl font-black" :class="(health.mqtt?.reconnect_count||0)>0?'text-amber-400':'text-gray-100'"
+           x-text="health.mqtt?.reconnect_count || 0"></p>
+      </div>
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-2">Queue Depth</p>
+        <p class="text-xl font-black text-gray-100" x-text="health.mqtt?.queue_depth || 0"></p>
+      </div>
+    </div>
+    <template x-if="health.mqtt?.last_error">
+      <div class="mt-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 flex items-start gap-3">
+        <svg class="icon w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+        <div>
+          <p class="text-[9px] font-black uppercase text-red-500 mb-1">MQTT Error</p>
+          <code class="text-xs text-red-400 font-mono" x-text="health.mqtt?.last_error"></code>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ── B. Cloud API Health ─────────────────────────────────────────── -->
+  <div>
+    <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">Cloud API Health</p>
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+      <template x-if="!health.gateways?.statuses?.length">
+        <p class="px-5 py-4 text-xs text-gray-600">No gateway data — add a gateway to see API health.</p>
+      </template>
+      <template x-if="health.gateways?.statuses?.length > 0">
+        <div>
+          <template x-for="gw in health.gateways.statuses" :key="gw.short_id">
+            <div class="border-b border-gray-700/40 last:border-0">
+              <!-- gateway sub-header -->
+              <div class="px-5 py-2.5 bg-gray-800/50 flex items-center gap-2">
+                <svg class="icon w-3.5 h-3.5 text-primary-light" viewBox="0 0 24 24"><use href="#zap"/></svg>
+                <span class="text-[10px] font-black uppercase tracking-widest text-gray-400" x-text="gw.short_id"></span>
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-gray-700/30">
+                <div class="px-5 py-3 bg-gray-800/60">
+                  <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Last Poll</p>
+                  <p class="text-sm font-bold font-mono" x-text="gw.last_poll_age_s != null ? gw.last_poll_age_s + 's ago' : '—'"
+                     :class="(gw.last_poll_age_s || 0) > 120 ? 'text-amber-400' : 'text-gray-100'"></p>
+                </div>
+                <div class="px-5 py-3 bg-gray-800/60">
+                  <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Consecutive Errors</p>
+                  <p class="text-sm font-bold font-mono"
+                     :class="(gw.consecutive_errors || 0) > 0 ? 'text-red-400' : 'text-gray-100'"
+                     x-text="gw.consecutive_errors || 0"></p>
+                </div>
+                <div class="px-5 py-3 bg-gray-800/60">
+                  <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">API Status</p>
+                  <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                        :class="gw.poll_status === 'ok'
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                          : 'bg-red-500/15 border-red-500/30 text-red-400'">
+                    <span class="w-1.5 h-1.5 rounded-full"
+                          :class="gw.poll_status === 'ok' ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'"></span>
+                    <span x-text="gw.poll_status === 'ok' ? 'OK' : gw.poll_status"></span>
+                  </span>
+                </div>
+              </div>
+              <!-- last error row, shown only when non-empty -->
+              <template x-if="gw.last_error">
+                <div class="px-5 py-3 bg-red-900/10 border-t border-red-500/20 flex items-start gap-3">
+                  <svg class="icon w-3.5 h-3.5 text-red-400 mt-0.5 flex-shrink-0" viewBox="0 0 24 24"><use href="#alert-triangle"/></svg>
+                  <div>
+                    <p class="text-[9px] font-black uppercase text-red-500 mb-0.5">Last API Error</p>
+                    <code class="text-xs text-red-400 font-mono" x-text="gw.last_error"></code>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ── C. Pricing Service ──────────────────────────────────────────── -->
+  <div>
+    <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">Pricing Service</p>
+    <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+      <template x-if="!pricing">
+        <div class="px-5 py-4 flex items-center gap-2 text-xs text-gray-500">
+          <svg class="icon w-3.5 h-3.5 text-gray-600" viewBox="0 0 24 24"><use href="#circle-off"/></svg>
+          Pricing disabled or no snapshot yet —
+          <a href="#" @click.prevent="$store.app.setTab('pricing')" class="text-primary-light hover:underline ml-1">configure here</a>.
+        </div>
+      </template>
+      <template x-if="pricing">
+        <div>
+          <!-- status banner -->
+          <div class="px-5 py-3 bg-gray-800/50 border-b border-gray-700/40 flex items-center justify-between gap-4 flex-wrap">
+            <div class="flex items-center gap-3">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 shadow shadow-emerald-400/50"></span>
+              <span class="text-xs font-bold text-gray-200 uppercase" x-text="pricing.provider || '—'"></span>
+              <span class="text-[10px] uppercase font-black px-2 py-0.5 rounded-full border"
+                    :class="tariffColour(pricing.tariff_type)"
+                    x-text="pricing.tariff_type || '—'"></span>
+            </div>
+            <span class="text-[10px] text-gray-500 font-mono" x-text="'fetched ' + relativeTime(pricing.fetched_at)"></span>
+          </div>
+          <!-- KV grid -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-gray-700/30">
+            <div class="px-5 py-3 bg-gray-800/60">
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Import ¢/kWh</p>
+              <p class="text-base font-black font-mono text-gray-100" x-text="pricing.import_c_kwh != null ? pricing.import_c_kwh.toFixed(3) + '¢' : '—'"></p>
+            </div>
+            <div class="px-5 py-3 bg-gray-800/60">
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Export ¢/kWh</p>
+              <p class="text-base font-black font-mono"
+                 :class="(pricing.export_c_kwh || 0) >= 0 ? 'text-emerald-400' : 'text-gray-100'"
+                 x-text="pricing.export_c_kwh != null ? pricing.export_c_kwh.toFixed(3) + '¢' : '—'"></p>
+            </div>
+            <div class="px-5 py-3 bg-gray-800/60">
+              <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-1">Renewables</p>
+              <p class="text-base font-black font-mono text-gray-100" x-text="pricing.renewables_pct != null ? pricing.renewables_pct + '%' : '—'"></p>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ── D. Storage Health ───────────────────────────────────────────── -->
+  <div>
+    <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">Storage Health</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+      <!-- DB Size card -->
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600">Database</p>
+          <a href="#" @click.prevent="$store.app.setTab('support')" class="text-[9px] text-primary-light hover:underline">Admin →</a>
+        </div>
+        <p class="text-xl font-black font-mono text-gray-100 mb-3"
+           x-text="health.database?.size_kb ? (health.database.size_kb / 1024).toFixed(0) + ' MB' : '—'"></p>
+        <!-- size progress bar -->
+        <div class="w-full bg-gray-700/60 rounded-full h-1.5 overflow-hidden">
+          <div class="h-1.5 rounded-full transition-all"
+               :class="dbSizeColour((health.database?.size_kb || 0) / 1024)"
+               :style="'width:' + dbBarWidth((health.database?.size_kb || 0) / 1024)"></div>
+        </div>
+        <p class="text-[9px] text-gray-600 font-mono mt-1.5 truncate" x-text="health.database?.path || '—'"></p>
+      </div>
+
+      <!-- WAL card -->
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600">WAL File</p>
+          <template x-if="wal && !wal.healthy">
+            <span class="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border bg-amber-500/10 border-amber-500/30 text-amber-400">⚠ Growing</span>
+          </template>
+          <template x-if="wal && wal.healthy">
+            <span class="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border bg-emerald-500/10 border-emerald-500/30 text-emerald-400">Healthy</span>
+          </template>
+        </div>
+        <p class="text-xl font-black font-mono text-gray-100 mb-1"
+           x-text="wal?.wal_size_mb != null ? wal.wal_size_mb + ' MB' : '—'"></p>
+        <p class="text-[9px] text-gray-600 mt-1" x-text="wal ? 'Total on disk: ' + wal.total_size_mb + ' MB' : 'Loading…'"></p>
+      </div>
+
+      <!-- Backups card -->
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 shadow-sm sm:col-span-2">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-[9px] font-black uppercase tracking-widest text-gray-600">Backups</p>
+          <a href="#" @click.prevent="$store.app.setTab('support')" class="text-[9px] text-primary-light hover:underline">Manage →</a>
+        </div>
+        <template x-if="!backups">
+          <p class="text-xs text-gray-600">Loading…</p>
+        </template>
+        <template x-if="backups">
+          <div class="flex items-end gap-6 flex-wrap">
+            <div>
+              <p class="text-xl font-black font-mono text-gray-100" x-text="backups.archives?.length || 0"></p>
+              <p class="text-[9px] text-gray-600 uppercase tracking-widest">Archives</p>
+            </div>
+            <div>
+              <p class="text-base font-black font-mono text-gray-100"
+                 x-text="backups.archives?.length ? relativeTime(backups.archives[0].created_at) : '—'"></p>
+              <p class="text-[9px] text-gray-600 uppercase tracking-widest">Last Backup</p>
+            </div>
+            <div>
+              <p class="text-base font-black font-mono text-gray-100"
+                 x-text="backups.total_size_mb != null ? backups.total_size_mb + ' MB' : '—'"></p>
+              <p class="text-[9px] text-gray-600 uppercase tracking-widest">Total Size</p>
+            </div>
+          </div>
+        </template>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+<!-- healthTab() loaded from admin.html head -->

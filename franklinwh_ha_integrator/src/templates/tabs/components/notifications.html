@@ -1,0 +1,1581 @@
+<!-- ╔═════════════════════════════════════════════════════════════════════════╗
+     ║ NOTIFICATIONS TAB — Global HA Push & Actionable Rules Config            ║
+     ╚═════════════════════════════════════════════════════════════════════════╝ -->
+<div class="space-y-6" x-data="notificationsTab()" x-init="init()" @notifications-set-subtab.window="activeSubTab = $event.detail.subTab">
+  
+  <!-- ══════════════════════════════════════════════════════════
+       CONSOLIDATED MASTER NOTIFICATION CARD
+       ════════════════════════════════════════════════════════ -->
+  <div class="rounded-3xl border shadow-2xl transition-all overflow-hidden"
+       style="background:var(--surface-0)"
+       :class="auditResult().ok ? 'border-emerald-500/30' : 'border-orange-500/40 shadow-[0_0_40px_rgba(249,115,22,0.15)]'">
+    
+    <!-- MASTER HEADER -->
+    <div class="px-8 py-6 border-b border-[var(--border)] flex flex-col md:flex-row md:items-center justify-between gap-6" style="background:var(--surface-1)">
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-2xl flex items-center justify-center border border-gray-700 shadow-inner" style="background:var(--surface-2)">
+          <i class="fa-solid fa-tower-broadcast text-xl" :class="auditResult().ok ? 'text-emerald-400' : 'text-orange-400'"></i>
+        </div>
+        <div>
+          <h2 class="text-base font-black uppercase tracking-tight leading-none" style="color:var(--text-primary)">Notification Control Center</h2>
+          <p class="text-[10px] font-bold uppercase tracking-widest mt-1.5 flex items-center gap-2" style="color:var(--text-muted)">
+            <span :class="auditResult().ok ? 'text-emerald-500' : 'text-orange-500'">● <span x-text="auditResult().ok ? 'Pipeline Healthy' : 'Pipeline Warning'"></span></span>
+            <span class="text-gray-700">|</span>
+            <span>v2.4.0 Engine</span>
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <!-- Blueprint Trigger -->
+        <button @click="showBlueprintModal = true"
+                class="px-5 py-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/20 transition-all flex items-center gap-2 shadow-lg shadow-blue-950/20">
+          <i class="fa-solid fa-code"></i> View HA Blueprint
+        </button>
+
+        <!-- Global Enable/Disable -->
+        <label class="flex items-center gap-3 cursor-pointer px-4 py-2 rounded-xl border border-[var(--border)] hover:border-[var(--border)] transition" style="background:var(--surface-2)">
+          <span class="text-[10px] font-black uppercase tracking-widest"
+                :class="notif.enabled ? 'text-emerald-400' : 'text-[var(--text-muted)]'"
+                x-text="notif.enabled ? 'System Live' : 'System Muted'"></span>
+          <button type="button" @click="toggleGlobalEnabled()"
+                  class="relative w-10 h-5 rounded-full transition-colors shadow-inner"
+                  :class="notif.enabled ? 'bg-emerald-500' : 'bg-gray-700'">
+            <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-lg transition-transform"
+                  :class="notif.enabled ? 'translate-x-5 left-0.5' : 'left-0.5'"></span>
+          </button>
+        </label>
+      </div>
+    </div>
+
+    <!-- SUB-NAVIGATION TABS -->
+    <div class="flex items-center px-4 pt-4 gap-2" style="background:var(--bg)">
+      <template x-for="tab in [
+        { id: 'connectivity', label: 'Connectivity', icon: 'fa-network-wired' },
+        { id: 'preferences', label: 'Preferences', icon: 'fa-sliders' },
+        { id: 'templates', label: 'Templates', icon: 'fa-pen-to-square' },
+        { id: 'logs', label: 'Audit Log', icon: 'fa-history' },
+        { id: 'diagnostics', label: 'Diagnostics', icon: 'fa-magnifying-glass-chart' }
+      ]" :key="tab.id">
+        <button @click="activeSubTab = tab.id; if (tab.id === 'logs' && debugLog.length === 0 && !fetchingLog) fetchDebugLog(); if (tab.id === 'diagnostics' && !auditLoaded) fetchAudit()"
+                class="flex items-center gap-2 px-6 py-3 rounded-t-2xl text-[10px] font-black uppercase tracking-widest transition-all border-t border-x"
+                :class="activeSubTab === tab.id ? 'border-[var(--border)] shadow-[0_-10px_20px_rgba(0,0,0,0.2)]' : 'bg-transparent border-transparent hover:bg-white/5'"
+                :style="activeSubTab === tab.id ? 'background:var(--surface-0); color:var(--text-primary)' : 'color:var(--text-muted)'">
+          <i class="fa-solid" :class="tab.icon"></i>
+          <span x-text="tab.label"></span>
+        </button>
+      </template>
+    </div>
+
+    <!-- MASTER CONTENT AREA -->
+    <div class="p-8" style="background:var(--surface-0)">
+      
+      <!-- TAB: CONNECTIVITY (Consolidated Single Source of Truth & Diagnostics) -->
+      <style>
+        /* E2E Pipeline styling */
+        .pipeline-container {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          position: relative;
+        }
+        .pipeline-step {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 16px;
+          border-radius: 16px;
+          border: 1px solid var(--border);
+          background: var(--surface-1);
+          transition: all 0.3s ease;
+          position: relative;
+          z-index: 2;
+        }
+        .pipeline-step:hover {
+          border-color: var(--accent);
+          box-shadow: 0 4px 12px var(--accent-glow);
+        }
+        .pipeline-step-active {
+          border-color: var(--ok);
+          background: rgba(16, 185, 129, 0.05);
+        }
+        .pipeline-arrow {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 18px;
+          color: var(--text-muted);
+          font-size: 11px;
+          position: relative;
+        }
+        .pipeline-arrow::after {
+          content: '';
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          width: 2px;
+          background: repeating-linear-gradient(to bottom, transparent, transparent 4px, var(--text-muted) 4px, var(--text-muted) 8px);
+          animation: flowDown 1s linear infinite;
+          z-index: 1;
+        }
+        @keyframes flowDown {
+          from { background-position: 0 0; }
+          to { background-position: 0 8px; }
+        }
+        .warning-block {
+          border-left: 4px solid var(--warn);
+          background: var(--warn-bg);
+          color: var(--text-primary);
+        }
+
+
+      </style>
+
+      <div x-show="activeSubTab === 'connectivity'" x-cloak class="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+           
+           <!-- Column 1: Connection & Routing Settings -->
+           <div class="space-y-6">
+              
+              <!-- HA Connection Preview Card (Stub) -->
+              <div class="rounded-2xl border p-6 space-y-4" style="background:var(--surface-1); border-color:var(--border)">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl flex items-center justify-center border border-gray-700 shadow-inner" style="background:var(--surface-2)">
+                      <i class="fa-solid fa-server" :class="haStatus?.connected ? 'text-emerald-400' : 'text-red-400'"></i>
+                    </div>
+                    <div>
+                      <p class="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Active Connection</p>
+                      <h4 class="text-xs font-black uppercase tracking-tight text-[var(--text-primary)]">Home Assistant</h4>
+                    </div>
+                  </div>
+                  
+                  <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-black uppercase border"
+                        :class="haStatus?.connected ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'">
+                    <span class="w-1.5 h-1.5 rounded-full" :class="haStatus?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-500'"></span>
+                    <span x-text="haStatus?.connected ? 'Connected' : 'Disconnected'"></span>
+                  </span>
+                </div>
+                
+                <!-- Under the Supervisor the add-on holds a token and knows
+                     where Home Assistant is, so ha_host and ha_token are never
+                     written. Reporting those stored fields showed "Not Set /
+                     None Set / DISCONNECTED" for a connection that was working
+                     and had just been used to read the site timezone. Report
+                     what is actually in use. -->
+                <div class="p-4 rounded-xl space-y-2 border border-[var(--border)]" style="background:var(--bg)">
+                  <template x-if="haStatus?.self_configured">
+                    <div>
+                      <div class="flex justify-between items-center text-[10px] font-bold">
+                        <span style="color:var(--text-faint)">Connection:</span>
+                        <span class="font-mono text-emerald-400">Supervisor (automatic)</span>
+                      </div>
+                      <div class="text-[10px] mt-1.5" style="color:var(--text-faint)">
+                        Nothing to configure — this add-on authenticates to Home
+                        Assistant with its own Supervisor token.
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="!haStatus?.self_configured">
+                    <div>
+                      <div class="flex justify-between items-center text-[10px] font-bold">
+                        <span style="color:var(--text-faint)">Host Address:</span>
+                        <span class="font-mono text-gray-200" x-text="notif.ha_host || 'Not Set'"></span>
+                      </div>
+                      <div class="flex justify-between items-center text-[10px] font-bold mt-2">
+                        <span style="color:var(--text-faint)">Access Token:</span>
+                        <span class="font-mono text-gray-200" x-text="notif.ha_host ? '••••••••••••••••' : 'None Set'"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+                
+                <button x-show="!haStatus?.self_configured" @click="navigateToHAConfig()"
+                        class="w-full py-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/20 transition flex items-center justify-center gap-2">
+                  <i class="fa-solid fa-pen-to-square"></i> Configure HA Connection
+                </button>
+              </div>
+
+              <!-- Webhook & Routing Config Card -->
+              <div class="rounded-2xl border p-6 space-y-4" style="background:var(--surface-1); border-color:var(--border)">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl flex items-center justify-center border border-gray-700 shadow-inner" style="background:var(--surface-2)">
+                    <i class="fa-solid fa-route text-orange-400"></i>
+                  </div>
+                  <div>
+                    <p class="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Routing Configuration</p>
+                    <h4 class="text-xs font-black uppercase tracking-tight text-[var(--text-primary)]">Webhook &amp; Target</h4>
+                  </div>
+                </div>
+
+                <div class="space-y-4">
+                  <!-- Webhook URL (Read-only) -->
+                  <div class="relative group">
+                    <span class="absolute left-3 top-2.5 text-[8px] font-black uppercase" style="color:var(--text-muted)">Callback Webhook URL</span>
+                    <input type="text" :value="notif.callback_url || 'Not Set'" readonly
+                           class="w-full text-xs font-mono rounded-lg pl-3 pr-3 pt-5 pb-2 border outline-none transition shadow-inner cursor-not-allowed" 
+                           style="background:var(--surface-2); color:var(--text-muted); border-color:var(--border)">
+                    <p x-show="ipMismatch()" class="text-[8px] text-orange-400 font-bold mt-1 px-1 animate-pulse">
+                       <i class="fa-solid fa-triangle-exclamation"></i> Mismatch with browser host IP
+                    </p>
+                  </div>
+
+                  <!-- Notification Targets -->
+                  <div class="relative group p-3 rounded-lg border" style="background:var(--surface-2); border-color:var(--border)">
+                    <span class="block text-[8px] font-black uppercase mb-1.5" style="color:var(--text-muted)">Active Notification Targets</span>
+                    
+                    <template x-if="activeDevicesList && activeDevicesList.length > 0">
+                      <div class="space-y-1.5 pt-0.5">
+                        <template x-for="d in activeDevicesList" :key="d.id">
+                          <div class="flex items-center gap-2 text-[10px] font-mono leading-tight">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span class="font-bold" style="color:var(--text-primary)" x-text="d.alias"></span>
+                            <span style="color:var(--text-muted)" x-text="'(' + d.ha_instance_alias + ' ➔ notify.' + d.service_target + ')'"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                    
+                    <template x-if="!activeDevicesList || activeDevicesList.length === 0">
+                      <div class="flex items-center gap-2 text-[10px] font-mono leading-tight">
+                        <span class="w-1.5 h-1.5 rounded-full" style="background:var(--text-muted)"></span>
+                        <span class="font-bold" style="color:var(--text-muted)">Legacy Fallback:</span>
+                        <span style="color:var(--text-faint)" x-text="notif.target ? 'notify.' + notif.target : 'None Configured'"></span>
+                      </div>
+                    </template>
+                  </div>
+
+                  <!-- Guidance / Redirect Link -->
+                  <div class="p-3 rounded-lg border text-[10px] leading-normal flex items-start gap-2"
+                       style="background:var(--surface-2); border-color:var(--border); color:var(--text-secondary)">
+                    <i class="fa-solid fa-circle-info text-primary mt-0.5 flex-shrink-0" style="color:var(--accent)"></i>
+                    <div>
+                      <span>To edit webhook URLs, parent servers, or add new devices, go to the </span>
+                      <button @click="navigateToHAConfig()" class="text-primary hover:underline font-bold transition" style="color:var(--accent)">Home Automation tab ➔ Configuration sub-tab</button>.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Silent Setup Audit Card -->
+              <div class="rounded-2xl border p-6 space-y-4" style="background:var(--surface-1); border-color:var(--border)">
+                 <button @click="verifyAutomation()" :disabled="verifying"
+                         class="w-full py-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/20 transition flex items-center justify-center gap-3">
+                   <i class="fas" :class="verifying ? 'fa-spinner fa-spin' : 'fa-shield-check'"></i>
+                   <span x-text="verifying ? 'Auditing HA Registry...' : 'Perform Silent Setup Audit'"></span>
+                 </button>
+
+                 <!-- Expandable Audit Log -->
+                 <div x-show="auditLog" x-transition class="mt-4 p-4 rounded-xl border border-[var(--border)] space-y-3" style="background:var(--bg)">
+                    <div class="flex items-center justify-between">
+                       <h5 class="text-[9px] font-black uppercase tracking-widest" :class="auditLog?.ok ? 'text-emerald-400' : 'text-red-400'">
+                          <i class="fa-solid mr-1" :class="auditLog?.ok ? 'fa-circle-check' : 'fa-circle-xmark'"></i> Audit Result
+                       </h5>
+                       <button @click="auditLog = null" class="text-[8px] font-black uppercase tracking-widest transition-colors" style="color:var(--text-faint)">Clear</button>
+                    </div>
+                    <p class="text-[10px] font-bold leading-relaxed" style="color:var(--text-secondary)" x-text="auditLog?.msg"></p>
+                    <div x-show="auditLog?.details?.length" class="space-y-1 pt-2 border-t border-[var(--border)]">
+                       <template x-for="detail in (auditLog?.details || [])" :key="detail">
+                           <div class="flex items-start gap-2 text-[9px] font-mono" style="color:var(--text-muted)">
+                             <span class="text-primary mt-0.5">›</span>
+                             <span x-text="detail"></span>
+                          </div>
+                       </template>
+                    </div>
+                 </div>
+              </div>
+
+           </div>
+
+           <!-- Column 2 & 3: Visual Pipeline & Diagnostics Console -->
+           <div class="lg:col-span-2 space-y-6">
+              
+              <!-- E2E Pipeline Map Card -->
+              <div class="rounded-2xl border p-6 space-y-4" style="background:var(--surface-1); border-color:var(--border)">
+                <h4 class="text-[10px] font-black uppercase tracking-widest border-b border-[var(--border)] pb-2" style="color:var(--text-muted)">E2E Integration Pipeline Map</h4>
+                
+                <div class="pipeline-container">
+                  <!-- Step 1 -->
+                  <div class="pipeline-step">
+                    <div class="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center border border-blue-500/20 text-blue-400 text-xs font-bold">
+                      <i class="fa-solid fa-microchip"></i>
+                    </div>
+                    <div class="flex-1">
+                      <p class="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Source Node</p>
+                      <p class="text-xs font-black text-gray-200 leading-none mt-1">FranklinWH Integrator (FHAI)</p>
+                    </div>
+                  </div>
+                  
+                  <div class="pipeline-arrow"><i class="fa-solid fa-arrow-down"></i></div>
+                  
+                  <!-- Step 2 -->
+                  <div class="pipeline-step" :class="haStatus?.connected ? 'pipeline-step-active' : ''">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 text-emerald-400 text-xs font-bold">
+                      <i class="fa-solid fa-server"></i>
+                    </div>
+                    <div class="flex-1">
+                      <p class="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Broker Node</p>
+                      <p class="text-xs font-black text-gray-200 leading-none mt-1">Home Assistant Instance</p>
+                      <p class="text-[8px] font-mono text-gray-400 mt-1" x-text="notif.ha_host || 'Disconnected'"></p>
+                    </div>
+                  </div>
+                  
+                  <div class="pipeline-arrow"><i class="fa-solid fa-arrow-down"></i></div>
+                  
+                  <!-- Step 3 -->
+                  <div class="pipeline-step">
+                    <div class="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center border border-orange-500/20 text-orange-400 text-xs font-bold">
+                      <i class="fa-solid fa-mobile-screen-button"></i>
+                    </div>
+                    <div class="flex-1">
+                      <p class="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Push Destination</p>
+                      <p class="text-xs font-black text-gray-200 leading-none mt-1">Companion App Device</p>
+                      <p class="text-[8px] font-mono text-gray-400 mt-1" x-text="notif.target || 'No Target Selected'"></p>
+                    </div>
+                  </div>
+                  
+                  <div class="pipeline-arrow"><i class="fa-solid fa-arrow-down"></i></div>
+                  
+                  <!-- Step 4 -->
+                  <div class="pipeline-step">
+                    <div class="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center border border-purple-500/20 text-purple-400 text-xs font-bold">
+                      <i class="fa-solid fa-network-wired"></i>
+                    </div>
+                    <div class="flex-1">
+                      <p class="text-[9px] font-black uppercase tracking-widest text-[var(--text-muted)]">Feedback Loop</p>
+                      <p class="text-xs font-black text-gray-200 leading-none mt-1">REST Command Callback Webhook</p>
+                      <p class="text-[8px] font-mono text-gray-400 mt-1 truncate" x-text="notif.callback_url || 'Not Configured'"></p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Warning block -->
+              <div class="warning-block p-4 rounded-xl flex items-start gap-3 border border-amber-500/20 shadow-md">
+                <i class="fa-solid fa-triangle-exclamation text-amber-400 text-lg mt-0.5 animate-pulse"></i>
+                <div>
+                  <p class="text-xs font-black text-amber-300 uppercase tracking-wide">Companion App Alignment Requirement</p>
+                  <p class="text-[10px] text-gray-300 mt-1 font-bold leading-relaxed">
+                    Your mobile phone companion app must be logged into and connected to the exact active Home Assistant instance currently generating notifications (e.g., <span class="font-mono text-amber-200" x-text="notif.ha_host || 'your HA host'"></span>) for actionable buttons to trigger callbacks.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Unified Diagnostic Console Card -->
+              <div class="rounded-2xl border p-6 space-y-4" style="background:var(--surface-1); border-color:var(--border)">
+                <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
+                  <h4 class="text-[10px] font-black uppercase tracking-widest text-blue-400">Unified Pipeline Diagnostic Console</h4>
+                  
+                  <div class="flex items-center gap-3">
+                    <select x-model="testEventTemplate" class="border border-[var(--border)] text-[9px] font-black uppercase rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500/50" style="background:var(--surface-2); color:var(--text-primary)">
+                      <option value="test">Generic Test</option>
+                      <option value="force_charge">Force Charge</option>
+                      <option value="spike">Price Spike</option>
+                      <option value="user_approval_request">Approval Flow</option>
+                      <option value="hold_approval">Hold/Override Flow</option>
+                    </select>
+                    
+                    <button @click="testSend()" :disabled="testing"
+                            class="px-5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-[9px] font-black uppercase tracking-widest transition shadow-md flex items-center gap-2" style="color:var(--text-primary)">
+                      <i class="fas" :class="testing ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+                      <span>Fire Test Notification</span>
+                    </button>
+
+                    <!-- Isolates the return leg: a tap produces nothing
+                         observable here when the rest_command URL is wrong, so
+                         "no response recorded" and "never tapped" look the
+                         same. This drives the callback without a phone. -->
+                    <button @click="testCallbackPath()" :disabled="callbackTesting"
+                            title="Ask Home Assistant to call the webhook itself — no phone needed"
+                            class="px-5 py-1.5 rounded-lg border text-[9px] font-black uppercase tracking-widest transition flex items-center gap-2"
+                            style="background:var(--surface-2); color:var(--text-primary); border-color:var(--border)">
+                      <i class="fas" :class="callbackTesting ? 'fa-spinner fa-spin' : 'fa-rotate-left'"></i>
+                      <span x-text="callbackTesting ? 'Testing…' : 'Test Callback Path'"></span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="terminal-console min-h-[140px] flex flex-col justify-end" data-title="DIAGNOSTIC CONSOLE">
+                  <div class="space-y-1 overflow-y-auto max-h-[220px]">
+                    <div class="terminal-line"><span style="color:var(--text-muted)">[SYSTEM]</span> <span style="color:var(--text-primary)">Diagnostic console ready. Choose preset and fire.</span></div>
+                    
+                    <!-- Alpine bindings for real-time diagnostic output -->
+                    <template x-if="testing">
+                      <div class="space-y-1">
+                        <div class="terminal-line"><span style="color:var(--accent)">[SENT]</span> <span style="color:var(--text-primary)">Actionable payload with ID dispatched to Home Assistant...</span></div>
+                        <div class="terminal-line"><span style="color:var(--warn-text)">[AWAITING]</span> <span style="color:var(--text-primary)">Pending record stored in DB. Awaiting REST webhook callback...</span></div>
+                      </div>
+                    </template>
+                    
+                    <div x-show="saveResult?.msg" class="terminal-line" :style="saveResult?.ok ? 'color:var(--ok)' : 'color:var(--danger)'">
+                      <span style="color:var(--text-muted)">[LOG]</span> <span x-text="saveResult?.msg"></span>
+                    </div>
+                    
+                    <template x-for="log in debugLog.slice(0, 3)" :key="log.id">
+                      <div class="terminal-line">
+                        <span :style="log.direction === 'SENT' ? 'color:var(--accent)' : (log.direction === 'RECEIVED' ? 'color:var(--ok)' : (log.direction === 'SUPPRESSED' ? 'color:var(--text-muted)' : (log.direction === 'CONFIG' ? 'color:var(--warn-text)' : 'color:var(--danger)')))" x-text="'[' + log.direction + ']'"></span>
+                        <span style="color:var(--text-muted)" x-text="log.timestamp"></span>
+                        <span style="color:var(--text-primary)" x-text="log.event + ': ' + log.details"></span>
+                      </div>
+                    </template>
+                    
+                    <div class="terminal-line"><span class="terminal-cursor"></span></div>
+                  </div>
+                </div>
+              </div>
+
+           </div>
+        </div>
+        
+        <!-- Error/Audit Message Footer -->
+        <div x-show="!auditResult().ok" class="p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-start gap-4">
+           <i class="fa-solid fa-circle-exclamation text-orange-400 text-lg"></i>
+           <div>
+              <p class="text-xs font-black text-orange-200 uppercase tracking-tight">Configuration Issue Detected</p>
+              <p class="text-[10px] text-orange-300/80 mt-1 font-bold leading-relaxed" x-text="auditResult().msg"></p>
+           </div>
+        </div>
+      </div>
+
+      <!-- TAB: PREFERENCES -->
+      <div x-show="activeSubTab === 'preferences'" x-cloak class="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+         <!-- Phone-side notification actions advisory (backlog 2026-07-29) -->
+         <div class="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4 shadow-inner flex items-start gap-4">
+            <div class="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+               <i class="fa-solid fa-mobile-screen text-blue-400"></i>
+            </div>
+            <div class="flex-1 min-w-0 space-y-2">
+               <h4 class="text-[11px] font-black uppercase tracking-widest" style="color:var(--text-primary)">
+                  Seeing extra buttons FHAI didn't send? (e.g. Snooze 5/15/60 min)
+               </h4>
+               <p class="text-[10px] leading-relaxed" style="color:var(--text-secondary)">
+                  FHAI sends a specific button set per action type — HOLD prompts get <span class="font-mono font-bold text-blue-300">Hold State / Override</span>; charge/export prompts get <span class="font-mono font-bold text-blue-300">Approve / Skip</span>. Any additional buttons on your phone (Snooze, Remind Me, etc.) are added client-side by the Home Assistant Companion app on your device — <span class="font-bold">not by FHAI or your HA server</span>. They ride along regardless of what FHAI sends.
+               </p>
+               <div class="mt-2 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-1.5">
+                  <p class="text-[9px] font-black uppercase tracking-widest" style="color:var(--text-muted)">To manage them (per device):</p>
+                  <ol class="text-[10px] leading-relaxed list-decimal list-inside" style="color:var(--text-secondary)">
+                     <li>Open the <span class="font-bold">Home Assistant Companion</span> app on your phone</li>
+                     <li>Settings (sidebar) → <span class="font-mono">Companion App</span> → <span class="font-mono">Notifications</span> → <span class="font-mono">Actions</span> (or <span class="font-mono">Categories</span> depending on version)</li>
+                     <li>Delete any custom actions you don't want (e.g. Snooze 5 mins / 15 min / 1 hour)</li>
+                     <li>On iOS 26+: also check <span class="font-mono">iOS Settings → Notifications → Home Assistant → Time Sensitive</span> which enables the OS-level "Remind Me" gestures</li>
+                  </ol>
+               </div>
+               <p class="text-[9px] font-bold uppercase tracking-widest mt-2" style="color:var(--text-faint)">
+                  Any button whose action code doesn't start with <span class="font-mono">FWH_</span> is phone-side. FHAI's callback endpoint only reacts to <span class="font-mono">FWH_*</span> actions.
+               </p>
+            </div>
+         </div>
+
+         <div class="grid grid-cols-1 lg:grid-cols-2 gap-12">
+            <!-- Decision Strategy -->
+            <div class="space-y-6">
+               <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
+                   <h4 class="text-[10px] font-black uppercase tracking-widest" style="color:var(--text-muted)">Decision Engine Strategy</h4>
+                  <div class="flex items-center gap-3">
+                     <span x-show="prefResult" class="text-[9px] font-bold" :class="prefResult?.ok ? 'text-emerald-400' : 'text-red-400'" x-text="prefResult?.msg"></span>
+                     <button @click="savePreferences()" :disabled="savingPref"
+                             class="text-[10px] font-black text-emerald-400 hover:underline uppercase tracking-widest">
+                       <i class="fas mr-1" :class="savingPref ? 'fa-spinner fa-spin' : 'fa-save'"></i> Save Strategy
+                     </button>
+                  </div>
+               </div>
+               <div class="grid grid-cols-1 gap-4">
+                  <template x-for="mode in [
+                    {id:'ask',label:'INTERACTACTIVE (Ask User Approval)',desc:'Always notify and wait for user approval before dispatching commands.',icon:'fa-bell'},
+                    {id:'auto',label:'AUTONOMOUS (Automatic Notify Only)',desc:'Automatically dispatch major grid actions, only notify for information.',icon:'fa-bolt'},
+                    {id:'silent',label:'MUTED (Silent)',desc:'Disable all outbound notifications. Engine runs purely in the background.',icon:'fa-bell-slash'}
+                  ]" :key="mode.id">
+                    <button @click="pref.notification_mode = mode.id; savePreferences()"
+                            class="group flex items-start gap-4 p-5 rounded-2xl border-2 text-left transition-all"
+                            :class="pref.notification_mode === mode.id ? 'border-primary bg-primary/5' : 'border-[var(--border)] hover:border-[var(--border)] hover:bg-white/5'">
+                        <div class="w-10 h-10 rounded-xl flex items-center justify-center border transition-all"
+                             :class="pref.notification_mode === mode.id ? 'bg-primary border-primary' : 'border-[var(--border)] group-hover:bg-white/5'"
+                             :style="pref.notification_mode === mode.id ? 'color:var(--text-primary)' : 'background:var(--surface-2); color:var(--text-muted)'">
+                          <i class="fa-solid" :class="mode.icon"></i>
+                       </div>
+                       <div class="flex-1">
+                           <p class="text-xs font-black uppercase tracking-tight" :style="pref.notification_mode === mode.id ? 'color:var(--text-primary)' : 'color:var(--text-secondary)'" x-text="mode.label"></p>
+                           <p class="text-[10px] font-bold mt-1 leading-relaxed" style="color:var(--text-muted)" x-text="mode.desc"></p>
+                       </div>
+                       <div x-show="pref.notification_mode === mode.id" class="w-5 h-5 rounded-full bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
+                           <i class="fa-solid fa-check text-[10px]" style="color:var(--text-primary)"></i>
+                       </div>
+                    </button>
+                  </template>
+
+                  <!-- Coherence notice: user_approval mode → actionable buttons auto-armed -->
+                  <div x-show="pref.notification_mode === 'ask'" x-cloak
+                       class="flex items-start gap-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+                    <i class="fa-solid fa-check-circle text-emerald-400 text-xs mt-0.5"></i>
+                    <div class="text-[10px] leading-relaxed" style="color:var(--text-secondary)">
+                      <span class="font-black uppercase tracking-widest text-emerald-400">Actionable Buttons Armed</span> —
+                      Approve / Skip buttons will attach to every prompt. HA Companion app can respond in one tap.
+                    </div>
+                  </div>
+               </div>
+            </div>
+
+            <!-- Trigger Events -->
+            <div class="space-y-6">
+                <h4 class="text-[10px] font-black uppercase tracking-widest border-b border-[var(--border)] pb-2" style="color:var(--text-muted)">Active Event Triggers</h4>
+               <div class="grid grid-cols-1 gap-3" :class="pref.notification_mode === 'silent' ? 'opacity-30 pointer-events-none' : ''">
+                  <template x-for="rule in [
+                    {key:'notify_on_demand_charge',   label:'Demand Charge Warning',   desc:'Notify when entering a peak demand billing window.'},
+                    {key:'notify_on_negative_export', label:'Negative Export Warning', desc:'Notify when feed-in prices drop below zero.'},
+                    {key:'notify_on_spike',           label:'Grid Price Spike Warning', desc:'Notify when spot prices exceed your threshold.'},
+                    {key:'notify_on_export_bonus',    label:'Export Bonus Alert',       desc:'Notify when VPP or grid bonuses are active.'},
+                    {key:'notify_on_earnings',        label:'Daily Earnings Summary',   desc:'Summary of yesterday\'s smart dispatch savings.'},
+                    {key:'notify_on_force_charge',    label:'Force Charge Request',     desc:'Notify when a cheap charging window is detected.'}
+                  ]" :key="rule.key">
+                     <label class="flex items-center gap-4 cursor-pointer select-none p-4 rounded-2xl border transition-all"
+                            :class="pref[rule.key] === 1 ? 'border-orange-500/40 bg-orange-500/10' : 'border-[var(--border)] hover:bg-[var(--surface-1)]'"
+                            :style="pref[rule.key] !== 1 ? 'background:var(--bg)' : ''">
+                       <div class="relative w-5 h-5 flex items-center justify-center">
+                          <input type="checkbox" :checked="pref[rule.key] === 1" @change="pref[rule.key] = $event.target.checked ? 1 : 0; savePreferences()" class="peer absolute inset-0 opacity-0 cursor-pointer">
+                          <div class="w-5 h-5 rounded border border-white/20 transition-all flex items-center justify-center peer-checked:bg-orange-500 peer-checked:border-orange-500">
+                              <i class="fa-solid fa-check text-[10px] transition-opacity" :class="pref[rule.key] === 1 ? 'opacity-100' : 'opacity-0'" style="color:var(--text-primary)"></i>
+                          </div>
+                       </div>
+                       <div class="flex-1">
+                           <p class="text-[11px] font-black uppercase tracking-tight" :style="pref[rule.key] === 1 ? 'color:var(--text-primary)' : 'color:var(--text-secondary)'" x-text="rule.label"></p>
+                           <p class="text-[9px] font-bold uppercase tracking-widest mt-0.5" style="color:var(--text-faint)" x-text="rule.desc"></p>
+                       </div>
+                    </label>
+                  </template>
+               </div>
+            </div>
+         </div>
+
+         <!-- Per-Rule Cooldown After Ignore (schema v47) -->
+         <div class="space-y-6">
+            <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
+               <h4 class="text-[10px] font-black uppercase tracking-widest" style="color:var(--text-muted)">Cooldown After Ignored Prompt</h4>
+               <div class="flex items-center gap-3">
+                  <span x-show="cooldownResult" class="text-[9px] font-bold" :class="cooldownResult?.ok ? 'text-emerald-400' : 'text-red-400'" x-text="cooldownResult?.msg"></span>
+                  <button @click="saveCooldownRules()" :disabled="savingCooldown"
+                          class="text-[10px] font-black text-emerald-400 hover:underline uppercase tracking-widest">
+                    <i class="fas mr-1" :class="savingCooldown ? 'fa-spinner fa-spin' : 'fa-save'"></i> Save Cooldown Rules
+                  </button>
+               </div>
+            </div>
+            <p class="text-[9px] font-bold uppercase tracking-widest leading-relaxed" style="color:var(--text-muted)">
+               When you ignore a same-rule actionable prompt until it expires, that rule will be silenced for the interval below (per gateway). Toggle a row off to always re-fire that rule regardless of prior ignores.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <template x-for="row in cooldownRules" :key="row.rule_id">
+                  <div class="flex items-center gap-4 p-4 rounded-2xl border transition-all"
+                       :class="row.enabled === 1 ? 'border-orange-500/40 bg-orange-500/5' : 'border-[var(--border)]'"
+                       :style="row.enabled !== 1 ? 'background:var(--bg)' : ''">
+                     <label class="relative w-5 h-5 flex items-center justify-center cursor-pointer">
+                        <input type="checkbox" :checked="row.enabled === 1" @change="row.enabled = $event.target.checked ? 1 : 0" class="peer absolute inset-0 opacity-0 cursor-pointer">
+                        <div class="w-5 h-5 rounded border border-white/20 transition-all flex items-center justify-center peer-checked:bg-orange-500 peer-checked:border-orange-500">
+                            <i class="fa-solid fa-check text-[10px] transition-opacity" :class="row.enabled === 1 ? 'opacity-100' : 'opacity-0'" style="color:var(--text-primary)"></i>
+                        </div>
+                     </label>
+                     <div class="flex-1 min-w-0">
+                        <p class="text-[11px] font-black uppercase tracking-tight" :style="row.enabled === 1 ? 'color:var(--text-primary)' : 'color:var(--text-secondary)'" x-text="prettyRuleLabel(row.rule_id)"></p>
+                        <p class="text-[9px] font-bold uppercase tracking-widest mt-0.5" style="color:var(--text-faint)" x-text="row.rule_id"></p>
+                     </div>
+                     <div class="flex items-center gap-2">
+                        <input type="number" min="60" max="86400" step="60"
+                               x-model.number="row.cooldown_seconds"
+                               :disabled="row.enabled !== 1"
+                               class="w-24 px-2 py-1 rounded-lg border border-[var(--border)] text-right text-[11px] font-bold tabular-nums"
+                               :style="'background:var(--surface-1); color:var(--text-primary)'">
+                        <span class="text-[9px] font-black uppercase tracking-widest" style="color:var(--text-muted)">sec</span>
+                     </div>
+                  </div>
+               </template>
+            </div>
+         </div>
+      </div>
+
+      <!-- TAB: TEMPLATES -->
+      <div x-show="activeSubTab === 'templates'" x-cloak class="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+         <div class="max-w-4xl space-y-6">
+            <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
+                <h4 class="text-[10px] font-black uppercase tracking-widest" style="color:var(--text-muted)">Global Notification Templates</h4>
+               <div class="flex items-center gap-4">
+                  <span x-show="tplResult" class="text-[9px] font-bold" :class="tplResult?.ok ? 'text-emerald-400' : 'text-red-400'" x-text="tplResult?.msg"></span>
+                   <button @click="saveTemplates()" :disabled="savingTemplates"
+                           class="px-6 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-[10px] font-black uppercase tracking-widest transition shadow-lg shadow-purple-950/20" style="color:var(--text-primary)">
+                    <i class="fas mr-2" :class="savingTemplates ? 'fa-spinner fa-spin' : 'fa-save'"></i> Save Templates
+                  </button>
+               </div>
+            </div>
+
+            <div class="p-4 rounded-2xl bg-purple-500/5 border border-purple-500/20 mb-6">
+               <p class="text-[10px] text-purple-300 font-black uppercase tracking-widest mb-2 flex items-center gap-2">
+                  <i class="fa-solid fa-terminal"></i> Dynamic Context Variables
+               </p>
+               <div class="flex flex-wrap gap-2">
+                  <template x-for="v in ['{tariff_type}','{import_c_kwh}','{action}','{preset_name}','{summary}','{rule_name}','{dispatch_summary}']" :key="v">
+                     <code class="text-[9px] font-mono bg-purple-950/50 text-purple-400 px-2 py-1 rounded border border-purple-500/20" x-text="v"></code>
+                  </template>
+               </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-6">
+               <template x-for="ev in ['spike', 'force_charge', 'peak_start', 'signal_change', 'test', 'daily_summary', 'user_approval_request']" :key="ev">
+                   <div class="p-6 rounded-2xl border border-[var(--border)] group hover:border-[var(--border)] transition-all" style="background:var(--bg)">
+                     <div class="flex items-center justify-between mb-4">
+                         <span class="px-3 py-1 rounded-lg border border-[var(--border)] text-[10px] font-black uppercase tracking-widest transition" :style="activeSubTab === 'templates' ? 'background:var(--surface-1); color:var(--text-secondary)' : ''" x-text="ev.replace(/_/g, ' ')"></span>
+                         <button @click="restoreTemplateDefault(ev)" class="text-[9px] font-black uppercase tracking-widest transition-colors" style="color:var(--text-faint)">
+                           <i class="fa-solid fa-rotate-left mr-1"></i> Reset
+                        </button>
+                     </div>
+                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="relative">
+                            <span class="absolute left-3 top-2.5 text-[8px] font-black uppercase" style="color:var(--text-faint)">Title</span>
+                           <input type="text" x-model="tpl.custom[ev + '_title']" :placeholder="tpl.defaults.titles[ev] || ''"
+                                   class="w-full text-xs font-black rounded-xl px-3 pt-5 pb-2 border border-[var(--border)] focus:border-primary outline-none transition" style="background:var(--surface-1); color:var(--text-primary)">
+                        </div>
+                        <div class="relative">
+                            <span class="absolute left-3 top-2.5 text-[8px] font-black uppercase" style="color:var(--text-faint)">Message Body</span>
+                           <textarea x-model="tpl.custom[ev + '_message']" :placeholder="tpl.defaults.messages[ev] || ''" rows="1"
+                                      class="w-full text-xs font-bold rounded-xl px-3 pt-5 pb-2 border border-[var(--border)] focus:border-primary outline-none transition resize-none" style="background:var(--surface-1); color:var(--text-primary)"></textarea>
+                        </div>
+                     </div>
+                  </div>
+               </template>
+            </div>
+         </div>
+      </div>
+
+      <!-- TAB: LOGS — fetch is attached to the tab button (line ~59) rather
+           than to a reactive x-effect on this div. Alpine 3.14.1's x-effect
+           has a race condition where the async fetchDebugLog's finally-block
+           state updates get swallowed under some tick sequences, leaving
+           fetchingLog=true forever and debugLog=[] even after the network
+           request returns 200. Direct click-handler wiring is deterministic. -->
+      <div x-show="activeSubTab === 'logs'" x-cloak class="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+         <div class="flex items-center justify-between border-b border-[var(--border)] pb-2 gap-3 flex-wrap">
+             <div class="flex items-center gap-3">
+                <h4 class="text-[10px] font-black uppercase tracking-widest" style="color:var(--text-muted)">Live Notification Audit Ledger</h4>
+                <!-- Batch N.2 (2026-07-29): toggle between brief and full details -->
+                <label class="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest cursor-pointer" style="color:var(--text-muted)">
+                   <input type="checkbox" x-model="auditShowFull" class="rounded text-emerald-500 bg-[var(--surface-1)] border-[var(--border)] focus:ring-emerald-500 focus:ring-offset-0">
+                   <span>Show full details</span>
+                </label>
+                <span class="text-[9px]" style="color:var(--text-faint)">or click a row to expand one</span>
+             </div>
+             <button @click="fetchDebugLog()" :disabled="fetchingLog"
+                      class="px-5 py-2 rounded-xl border border-[var(--border)] text-[10px] font-black uppercase tracking-widest hover:bg-gray-700 transition flex items-center gap-2" style="background:var(--surface-2); color:var(--text-primary)">
+               <i class="fa-solid fa-arrows-rotate" :class="fetchingLog ? 'fa-spin' : ''"></i> Refresh Logs
+             </button>
+         </div>
+
+          <div class="rounded-2xl border border-[var(--border)] overflow-hidden shadow-inner" style="background:var(--bg)">
+            <div class="overflow-y-auto max-h-[600px] custom-scrollbar">
+               <table class="w-full text-left border-collapse">
+                  <thead>
+                     <tr class="text-[9px] font-black uppercase tracking-widest" style="background:var(--surface-1); color:var(--text-muted)">
+                       <th class="px-3 py-4 w-6"></th>
+                       <th class="px-6 py-4">Timestamp</th>
+                       <th class="px-6 py-4">Direction</th>
+                       <th class="px-6 py-4">Event</th>
+                       <th class="px-6 py-4">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-white/5 text-[11px] font-mono">
+                     <tr x-show="debugLog.length === 0">
+                         <td colspan="5" class="px-6 py-12 text-center italic font-sans font-bold uppercase tracking-widest" style="color:var(--text-faint)">No recent pipeline activity found.</td>
+                     </tr>
+                     <template x-for="log in debugLog" :key="log.id">
+                        <tr class="hover:bg-white/5 transition-colors group align-top"
+                            :class="{ 'cursor-pointer': log.details_json, 'bg-white/5': auditExpanded === log.id }"
+                            @click="log.details_json && (auditExpanded = auditExpanded === log.id ? null : log.id)">
+                           <td class="px-3 py-3 w-6 text-center" style="color:var(--text-muted)">
+                              <template x-if="log.details_json">
+                                 <i class="fa-solid text-[10px] transition-transform"
+                                    :class="auditExpanded === log.id ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                              </template>
+                              <template x-if="!log.details_json">
+                                 <span class="text-[8px]" style="color:var(--text-faint)">—</span>
+                              </template>
+                           </td>
+                           <td class="px-6 py-3 w-40 whitespace-nowrap" style="color:var(--text-muted)" x-text="log.timestamp"></td>
+                           <td class="px-6 py-3 w-32">
+                              <span class="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest"
+                                    :class="log.direction === 'SENT' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : (log.direction === 'RECEIVED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : (log.direction === 'SUPPRESSED' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : (log.direction === 'CONFIG' ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20')))"
+                                    x-text="log.direction"></span>
+                           </td>
+                           <td class="px-6 py-3 font-black uppercase tracking-tight" style="color:var(--text-primary)" x-text="log.event"></td>
+                           <td class="px-6 py-3 transition-colors" style="color:var(--text-secondary)">
+                              <div x-text="log.details"></div>
+                              <!-- Batch N.2 (2026-07-29): inline expander for details_json.
+                                   Shows when user clicks a row (auditExpanded === log.id)
+                                   OR when the global "Show full details" toggle is on
+                                   AND this row actually has a details_json blob. -->
+                              <div x-show="log.details_json && (auditExpanded === log.id || auditShowFull)"
+                                   x-cloak class="mt-3 rounded-lg border border-[var(--border)] p-3"
+                                   style="background:var(--surface-1)">
+                                 <div class="flex items-center justify-between mb-2">
+                                    <span class="text-[9px] font-black uppercase tracking-widest" style="color:var(--text-muted)">Full payload (details_json)</span>
+                                    <button @click.stop="copyToClipboard(log.details_json)"
+                                            class="text-[9px] font-black uppercase tracking-widest text-emerald-400 hover:underline">
+                                       <i class="fa-regular fa-copy mr-1"></i> Copy JSON
+                                    </button>
+                                 </div>
+                                 <pre class="text-[10px] font-mono whitespace-pre-wrap break-all max-h-96 overflow-y-auto p-3 rounded border border-[var(--border)]"
+                                      style="background:var(--bg); color:var(--text-secondary)"
+                                      x-text="prettyJson(log.details_json)"></pre>
+                              </div>
+                           </td>
+                        </tr>
+                     </template>
+                  </tbody>
+               </table>
+            </div>
+         </div>
+      </div>
+
+      <!-- TAB: DIAGNOSTICS (Batch O.3) -->
+      <div x-show="activeSubTab === 'diagnostics'" x-cloak class="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+         <div class="flex flex-wrap items-center justify-between border-b border-[var(--border)] pb-2 gap-4">
+             <div class="flex items-center gap-4">
+                <h4 class="text-[10px] font-black uppercase tracking-widest" style="color:var(--text-muted)">Notification Audit — Correlated with Battery + Pricing</h4>
+                <span class="text-[9px] font-bold" style="color:var(--text-muted)">
+                   <span x-text="auditRows.length"></span> rows,
+                   <span class="text-amber-400" x-text="auditAnomalyCount"></span> anomalies
+                </span>
+             </div>
+             <div class="flex items-center gap-3">
+                <select x-model="auditWindow" @change="fetchAudit()"
+                        class="text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl border border-[var(--border)]"
+                        style="background:var(--surface-2); color:var(--text-primary)">
+                   <option value="24h">Last 24h</option>
+                   <option value="72h">Last 72h</option>
+                   <option value="7d">Last 7d</option>
+                </select>
+                <label class="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest cursor-pointer" style="color:var(--text-muted)">
+                   <input type="checkbox" x-model="auditAnomaliesOnly" @change="fetchAudit()" class="rounded text-amber-500 bg-[var(--surface-1)] border-[var(--border)] focus:ring-amber-500 focus:ring-offset-0">
+                   <span>Anomalies only</span>
+                </label>
+                <button @click="fetchAudit()" :disabled="auditLoading"
+                        class="px-4 py-2 rounded-xl border border-[var(--border)] text-[10px] font-black uppercase tracking-widest hover:bg-gray-700 transition flex items-center gap-2" style="background:var(--surface-2); color:var(--text-primary)">
+                   <i class="fa-solid fa-arrows-rotate" :class="auditLoading ? 'fa-spin' : ''"></i> Refresh
+                </button>
+             </div>
+         </div>
+
+         <p class="text-[9px] font-bold uppercase tracking-widest leading-relaxed" style="color:var(--text-muted)">
+            Each notification joined against battery state + pricing at emit time. Anomaly rules mirror the Batch O.2 event-stale gate — if a row is flagged, that's the gate that <em>should</em> have suppressed it. Post-fix these should disappear.
+         </p>
+
+         <!-- Batch P (2026-07-30): Shadow decisions panel — SD deferred to external control -->
+         <div x-show="shadowRows.length > 0" x-cloak
+              class="rounded-2xl border border-purple-500/30 bg-purple-500/5 p-4 shadow-inner space-y-3">
+            <div class="flex items-center justify-between flex-wrap gap-3">
+               <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                     <i class="fa-solid fa-diagram-project text-purple-400 text-xs"></i>
+                  </div>
+                  <div>
+                     <h4 class="text-[10px] font-black uppercase tracking-widest" style="color:var(--text-primary)">
+                        Shadow Decisions — SD deferred to external control
+                     </h4>
+                     <p class="text-[9px] font-bold" style="color:var(--text-muted)">
+                        <span class="text-purple-400" x-text="shadowRows.length"></span> ticks where SD evaluated but did not act
+                        (VPP / Modbus Bridge / Manual owns the gateway)
+                     </p>
+                  </div>
+               </div>
+               <button @click="shadowExpanded = !shadowExpanded"
+                       class="text-[10px] font-black uppercase tracking-widest text-purple-400 hover:underline flex items-center gap-1">
+                  <i class="fa-solid" :class="shadowExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                  <span x-text="shadowExpanded ? 'Collapse' : 'Show rows'"></span>
+               </button>
+            </div>
+            <div x-show="shadowExpanded" x-cloak class="rounded-lg border border-[var(--border)] overflow-hidden" style="background:var(--bg)">
+               <div class="overflow-x-auto overflow-y-auto max-h-64 custom-scrollbar">
+                  <table class="w-full text-left border-collapse text-[11px]">
+                     <thead>
+                        <tr class="text-[9px] font-black uppercase tracking-widest whitespace-nowrap" style="background:var(--surface-1); color:var(--text-muted)">
+                           <th class="px-3 py-2">Timestamp</th>
+                           <th class="px-3 py-2">SD Wanted</th>
+                           <th class="px-3 py-2">Rule</th>
+                           <th class="px-3 py-2 text-right">SoC</th>
+                           <th class="px-3 py-2 text-right">Imp¢</th>
+                           <th class="px-3 py-2 text-right">Exp¢</th>
+                           <th class="px-3 py-2">Deferred To</th>
+                        </tr>
+                     </thead>
+                     <tbody class="divide-y divide-white/5 font-mono">
+                        <template x-for="row in shadowRows" :key="row.ts + row.action">
+                           <tr class="hover:bg-white/5">
+                              <td class="px-3 py-2 whitespace-nowrap" style="color:var(--text-muted)" x-text="row.ts"></td>
+                              <td class="px-3 py-2 font-black uppercase tracking-tight" style="color:var(--text-primary)" x-text="row.action"></td>
+                              <td class="px-3 py-2 whitespace-nowrap" style="color:var(--text-secondary)" x-text="(row.rule_name || '—').substring(0, 30)"></td>
+                              <td class="px-3 py-2 text-right tabular-nums" x-text="row.soc_pct == null ? '—' : row.soc_pct.toFixed(1) + '%'"></td>
+                              <td class="px-3 py-2 text-right tabular-nums" x-text="row.import_c_kwh == null ? '—' : row.import_c_kwh.toFixed(1)"></td>
+                              <td class="px-3 py-2 text-right tabular-nums" x-text="row.export_c_kwh == null ? '—' : row.export_c_kwh.toFixed(1)"></td>
+                              <td class="px-3 py-2">
+                                 <span class="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                                       x-text="row.shadow_reason"></span>
+                              </td>
+                           </tr>
+                        </template>
+                     </tbody>
+                  </table>
+               </div>
+            </div>
+         </div>
+
+         <div class="rounded-2xl border border-[var(--border)] overflow-hidden shadow-inner" style="background:var(--bg)">
+           <div class="overflow-x-auto overflow-y-auto max-h-[600px] custom-scrollbar">
+              <table class="w-full text-left border-collapse text-[11px]">
+                 <thead>
+                    <tr class="text-[9px] font-black uppercase tracking-widest whitespace-nowrap" style="background:var(--surface-1); color:var(--text-muted)">
+                      <th class="px-3 py-3">Timestamp</th>
+                      <th class="px-3 py-3">Event</th>
+                      <th class="px-3 py-3 text-right">SoC</th>
+                      <th class="px-3 py-3 text-right">Battery kW</th>
+                      <th class="px-3 py-3 text-right">Grid kW</th>
+                      <th class="px-3 py-3 text-right">Imp¢</th>
+                      <th class="px-3 py-3 text-right">Exp¢</th>
+                      <th class="px-3 py-3">Mode</th>
+                      <th class="px-3 py-3">Rule</th>
+                      <th class="px-3 py-3">Anomaly</th>
+                    </tr>
+                 </thead>
+                 <tbody class="divide-y divide-white/5 font-mono">
+                    <tr x-show="auditRows.length === 0 && !auditLoading">
+                        <td colspan="10" class="px-6 py-12 text-center italic font-sans font-bold uppercase tracking-widest" style="color:var(--text-faint)">
+                          <span x-show="auditAnomaliesOnly">No anomalies in this window — engine is behaving.</span>
+                          <span x-show="!auditAnomaliesOnly">No notifications in this window.</span>
+                        </td>
+                    </tr>
+                    <template x-for="row in auditRows" :key="row.id">
+                       <tr class="hover:bg-white/5 transition-colors" :class="row.anomaly ? 'bg-amber-500/5' : ''">
+                         <td class="px-3 py-2 whitespace-nowrap" style="color:var(--text-muted)" x-text="row.timestamp"></td>
+                         <td class="px-3 py-2 font-black uppercase tracking-tight" style="color:var(--text-primary)" x-text="row.event"></td>
+                         <td class="px-3 py-2 text-right tabular-nums" x-text="row.soc == null ? '—' : row.soc.toFixed(1) + '%'"></td>
+                         <td class="px-3 py-2 text-right tabular-nums"
+                             :class="row.batt_kw != null && row.batt_kw < -0.2 ? 'text-emerald-400' : (row.batt_kw > 0.2 ? 'text-blue-400' : '')"
+                             x-text="row.batt_kw == null ? '—' : (row.batt_kw >= 0 ? '+' : '') + row.batt_kw.toFixed(2)"></td>
+                         <td class="px-3 py-2 text-right tabular-nums"
+                             :class="row.grid_kw != null && row.grid_kw < -0.2 ? 'text-emerald-400' : (row.grid_kw > 0.2 ? 'text-red-400' : '')"
+                             x-text="row.grid_kw == null ? '—' : (row.grid_kw >= 0 ? '+' : '') + row.grid_kw.toFixed(2)"></td>
+                         <td class="px-3 py-2 text-right tabular-nums" x-text="row.imp_c == null ? '—' : row.imp_c.toFixed(1)"></td>
+                         <td class="px-3 py-2 text-right tabular-nums" x-text="row.exp_c == null ? '—' : row.exp_c.toFixed(1)"></td>
+                         <td class="px-3 py-2 whitespace-nowrap" style="color:var(--text-secondary)" x-text="row.mode || '—'"></td>
+                         <td class="px-3 py-2 whitespace-nowrap" style="color:var(--text-secondary)" x-text="(row.rule || '—').substring(0, 30)"></td>
+                         <td class="px-3 py-2">
+                            <template x-if="row.anomaly">
+                              <span class="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                    :title="row.anomaly_reason"
+                                    x-text="row.anomaly"></span>
+                            </template>
+                            <template x-if="!row.anomaly">
+                              <span style="color:var(--text-faint)">—</span>
+                            </template>
+                         </td>
+                       </tr>
+                    </template>
+                 </tbody>
+              </table>
+           </div>
+         </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODAL: HA BLUEPRINT (Global Trigger) -->
+  <div x-show="showBlueprintModal" x-cloak
+       class="fixed inset-0 z-[300] flex items-center justify-center p-4 sm:p-8"
+       style="background:var(--glass-bg); backdrop-filter:blur(20px)">
+      <div class="relative w-full max-w-6xl rounded-[2.5rem] overflow-hidden border border-[var(--border)] shadow-[0_60px_150px_rgba(0,0,0,1)] flex flex-col"
+           style="background:var(--surface-0); max-height:90vh">
+        
+        <div class="flex items-center justify-between px-10 py-8 border-b border-[var(--border)]" style="background:var(--surface-1)">
+          <div class="flex items-center gap-6">
+            <div class="w-16 h-16 rounded-[1.25rem] bg-blue-500/10 flex items-center justify-center border border-blue-500/20 shadow-xl shadow-blue-500/5">
+              <i class="fa-solid fa-code text-blue-400 text-2xl"></i>
+            </div>
+            <div>
+               <h2 class="text-xl font-black uppercase tracking-tighter leading-none" style="color:var(--text-primary)">Home Assistant Integration Blueprint</h2>
+               <p class="text-[11px] font-bold uppercase tracking-widest mt-2" style="color:var(--text-secondary)">Required YAML blocks for end-to-end communication</p>
+            </div>
+          </div>
+          <button @click="showBlueprintModal = false"
+                   class="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/5 hover:bg-red-500/20 hover:text-red-400 border border-[var(--border)] transition-all" style="color:var(--text-primary)">
+            <i class="fa-solid fa-xmark text-xl"></i>
+          </button>
+        </div>
+
+        <div class="p-10 overflow-y-auto custom-scrollbar space-y-12">
+           <section class="space-y-4">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-black uppercase tracking-widest text-emerald-400 flex items-center gap-3">
+                   <span class="w-6 h-6 rounded-lg bg-emerald-500/10 flex items-center justify-center text-[10px]">1</span>
+                   configuration.yaml
+                </h3>
+                <button @click="copyConfigYaml()" class="px-6 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500/20 transition-all">
+                  <i class="fa-regular" :class="copiedConfig ? 'fa-circle-check' : 'fa-copy'"></i> <span x-text="copiedConfig ? 'Copied to Clipboard' : 'Copy REST Command'"></span>
+                </button>
+              </div>
+              <div class="relative rounded-[2rem] bg-black border border-[var(--border)] p-8 overflow-x-auto shadow-inner group">
+                <pre class="text-xs font-mono !text-emerald-400 font-bold whitespace-pre leading-relaxed" x-text="yamlConfigBlueprint()"></pre>
+              </div>
+              <p class="text-[10px] font-bold uppercase tracking-wide px-2" style="color:var(--text-muted)">
+                <i class="fa-solid fa-circle-info mr-1"></i> Defines the <code>franklinwh_action_callback</code> REST service used by automation buttons.
+              </p>
+           </section>
+
+           <section class="space-y-4">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-black uppercase tracking-widest text-blue-400 flex items-center gap-3">
+                   <span class="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center text-[10px]">2</span>
+                   automations.yaml
+                </h3>
+                <button @click="copyYaml()" class="px-6 py-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/20 transition-all">
+                  <i class="fa-regular" :class="copied ? 'fa-circle-check' : 'fa-copy'"></i> <span x-text="copied ? 'Copied to Clipboard' : 'Copy Automation'"></span>
+                </button>
+              </div>
+              <div class="relative rounded-[2rem] bg-black border border-[var(--border)] p-8 overflow-x-auto shadow-inner group">
+                <pre class="text-xs font-mono !text-blue-400 font-bold whitespace-pre leading-relaxed" x-text="yamlBlueprint()"></pre>
+              </div>
+              <p class="text-[10px] font-bold uppercase tracking-wide px-2" style="color:var(--text-muted)">
+                <i class="fa-solid fa-circle-info mr-1"></i> Captures the <code>mobile_app_notification_action</code> event and routes it back to the integrator.
+              </p>
+           </section>
+        </div>
+        
+        <div class="p-8 border-t border-[var(--border)] text-center" style="background:var(--surface-1)">
+            <button @click="showBlueprintModal = false" class="px-16 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest border border-[var(--border)] hover:bg-gray-700 transition shadow-xl" style="background:var(--surface-2); color:var(--text-primary)">Close Blueprint</button>
+        </div>
+     </div>
+  </div>
+
+</div>
+
+<script>
+function notificationsTab() {
+  return {
+    testEventTemplate: 'test',
+    notif: { enabled: false, target: '', info_targets: '', callback_url: window.location.origin, ha_host: '', ha_token: '' },
+    pref: {
+      notification_mode: 'ask',
+      notify_on_demand_charge: 0, notify_on_negative_export: 0,
+      notify_on_spike: 0, notify_on_export_bonus: 0,
+      notify_on_earnings: 0, notify_on_force_charge: 0
+    },
+    haStatus: null, targets: [],
+    detecting: false, savingGlobal: false, testing: false, savingPref: false,
+    testingConn: false, testConnResult: null, showToken: false,
+    testingCallback: false, callbackTestResult: null,
+    activeSubTab: 'connectivity',
+    auditLog: null,
+    saveResult: null, prefResult: null, copied: false, copiedConfig: false, activeDevicesList: [],
+    verifying: false, showAdvancedSetup: false, showBlueprintModal: false,
+    hostUrl: window.location.origin,
+
+    debugLog: [], fetchingLog: false,
+    tpl: { defaults: {titles:{}, messages:{}}, custom: {} },
+    savingTemplates: false, tplResult: null,
+
+    cooldownRules: [], cooldownResult: null, savingCooldown: false,
+
+    // Batch O.3 — Diagnostics sub-tab state
+    auditRows: [], auditLoading: false, auditLoaded: false,
+    auditAnomalyCount: 0, auditWindow: '72h', auditAnomaliesOnly: false,
+
+    // Batch N.2 (2026-07-29): audit-log row expander state
+    auditShowFull: false,     // global toggle — shows details_json for ALL rows
+    auditExpanded: null,      // id of the one row expanded by click (or null)
+
+    // Batch P (2026-07-30): shadow decisions panel state
+    shadowRows: [], shadowExpanded: false,
+
+    async init() {
+      // NOTE: fetchDebugLog() is INTENTIONALLY OMITTED from this Promise.all.
+      // Previously it was fetched on mount, but the Audit Log sub-tab is
+      // hidden by default (activeSubTab='connectivity'). Fetching + assigning
+      // debugLog while the <template x-for> inside a dormant sub-tab is not
+      // fully wired triggers an Alpine 3.14.1 reactivity edge case that
+      // null-derefs in its key-management path:
+      //   PAGEERROR: undefined is not an object (evaluating 'O.after')
+      // The error aborts the audit-log <tbody> render — table headers show
+      // but zero rows materialise (see backlog P2 dated 2026-07-09).
+      //
+      // Fix: defer fetchDebugLog until the Audit Log sub-tab is actually
+      // visible. Uses x-effect on the sub-tab container (line ~541 below)
+      // which re-runs on every activeSubTab change and fires the fetch
+      // lazily on first visit. x-effect is preferred over $watch inside
+      // async init() because the async awaits can delay $watch registration
+      // past the user's first click.
+      await Promise.all([
+        this.loadGlobal(),
+        this.loadPref(),
+        this.loadTemplates(),
+        this.loadCooldownRules()
+      ]);
+    },
+
+    async loadCooldownRules() {
+      try {
+        const r = await fetch('api/automation/notifications/cooldown-rules');
+        const d = await r.json();
+        if (d.ok && Array.isArray(d.rules)) {
+          this.cooldownRules = d.rules.map(x => ({
+            rule_id: x.rule_id,
+            cooldown_seconds: Number(x.cooldown_seconds) || 7200,
+            enabled: Number(x.enabled) === 1 ? 1 : 0,
+          }));
+        }
+      } catch (e) {
+        console.warn('Failed to load cooldown rules', e);
+      }
+    },
+
+    prettyRuleLabel(ruleId) {
+      const map = {
+        spike:              'Grid Price Spike',
+        force_charge:       'Force Charge Request',
+        export_bonus:       'Export Bonus Alert',
+        demand_charge:      'Demand Charge Warning',
+        earnings_target:    'Daily Earnings Summary',
+        negative_export:    'Negative Export Warning',
+        force_export:       'Force Export Request',
+        time_schedule:      'Time-of-Day Schedule',
+        solar_optimization: 'Solar Optimization',
+        custom:             'Custom User Rule',
+      };
+      return map[ruleId] || ruleId.replace(/_/g, ' ');
+    },
+
+    async saveCooldownRules() {
+      this.savingCooldown = true;
+      this.cooldownResult = null;
+      try {
+        const r = await fetch('api/automation/notifications/cooldown-rules', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rules: this.cooldownRules }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.cooldownResult = { ok: true, msg: `SAVED (${d.updated?.length || 0})` };
+          if (Array.isArray(d.rules)) {
+            this.cooldownRules = d.rules.map(x => ({
+              rule_id: x.rule_id,
+              cooldown_seconds: Number(x.cooldown_seconds) || 7200,
+              enabled: Number(x.enabled) === 1 ? 1 : 0,
+            }));
+          }
+        } else {
+          this.cooldownResult = { ok: false, msg: d.error || 'SAVE FAILED' };
+        }
+      } catch (e) {
+        this.cooldownResult = { ok: false, msg: 'NETWORK ERROR' };
+      } finally {
+        this.savingCooldown = false;
+        setTimeout(() => { this.cooldownResult = null; }, 3000);
+      }
+    },
+
+    navigateToHAConfig() {
+      this.$store.app.activeTab = 'home_automation';
+      const haEl = document.querySelector('[x-data="homeAutomationTab()"]');
+      if (haEl && window.Alpine) {
+        const data = Alpine.$data(haEl);
+        if (data) {
+          data.activeView = 'config';
+          data.loadConfig();
+        }
+      }
+    },
+
+    async loadTemplates() {
+      try {
+        const r = await fetch('api/automation/notifications/templates');
+        const d = await r.json();
+        if (d.ok) {
+          this.tpl.defaults = d.defaults;
+          this.tpl.custom = d.custom || {};
+        }
+      } catch (e) {
+        console.warn('Failed to load templates', e);
+      }
+    },
+
+    restoreTemplateDefault(ev) {
+      delete this.tpl.custom[ev + '_title'];
+      delete this.tpl.custom[ev + '_message'];
+    },
+
+    async saveTemplates() {
+      this.savingTemplates = true;
+      this.tplResult = null;
+      try {
+        // Clean empty strings
+        const cleaned = {};
+        for (const [k, v] of Object.entries(this.tpl.custom)) {
+          if (v && v.trim() !== '') {
+            cleaned[k] = v;
+          }
+        }
+        this.tpl.custom = cleaned;
+
+        const r = await fetch('api/automation/notifications/templates', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ templates: this.tpl.custom })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.tplResult = { ok: true, msg: '✓ Saved & Logged' };
+        } else {
+          this.tplResult = { ok: false, msg: 'Failed' };
+        }
+      } catch (e) {
+        this.tplResult = { ok: false, msg: 'Error' };
+      } finally {
+        this.savingTemplates = false;
+        setTimeout(() => { this.tplResult = null; }, 3000);
+      }
+    },
+
+    // Batch N.2 (2026-07-29): helpers for audit-log expander
+    prettyJson(raw) {
+      if (!raw) return '';
+      try {
+        return JSON.stringify(JSON.parse(raw), null, 2);
+      } catch (e) {
+        return raw;
+      }
+    },
+
+    async copyToClipboard(text) {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (e) {
+        console.warn('Clipboard write failed', e);
+      }
+    },
+
+    async fetchDebugLog() {
+      this.fetchingLog = true;
+      try {
+        const r = await fetch('api/automation/notifications/debug-log');
+        const d = await r.json();
+        if (d.ok) this.debugLog = d.log || [];
+      } catch (e) {
+        console.warn('Failed to fetch debug log', e);
+      } finally {
+        this.fetchingLog = false;
+      }
+    },
+
+    // Batch O.3 — Notification Audit (correlated diagnostics)
+    // Batch P (2026-07-30) — also fetches shadow decisions in the same window.
+    async fetchAudit() {
+      this.auditLoading = true;
+      try {
+        const params = new URLSearchParams({
+          last: this.auditWindow || '72h',
+          anomalies_only: this.auditAnomaliesOnly ? 'true' : 'false',
+        });
+        const [auditResp, shadowResp] = await Promise.all([
+          fetch(`api/automation/notifications/audit?${params}`).then(r => r.json()),
+          fetch(`api/automation/notifications/audit/shadow-decisions?last=${this.auditWindow || '72h'}`)
+              .then(r => r.json())
+              .catch(e => ({ ok: false, rows: [] })),
+        ]);
+        if (auditResp.ok) {
+          this.auditRows = auditResp.rows || [];
+          this.auditAnomalyCount = auditResp.anomaly_count || 0;
+          this.auditLoaded = true;
+        }
+        if (shadowResp.ok) {
+          this.shadowRows = shadowResp.rows || [];
+        }
+      } catch (e) {
+        console.warn('Failed to fetch notification audit', e);
+      } finally {
+        this.auditLoading = false;
+      }
+    },
+
+    auditResult() {
+      if (!this.notif.ha_host) return { ok: false, msg: 'HA Host URL is not set.' };
+      if (!this.notif.callback_url) return { ok: false, msg: 'Callback URL is not set.' };
+      if (this.notif.ha_host.includes('homeassistant') && !['localhost', 'homeassistant'].includes(window.location.hostname)) {
+        return { ok: false, msg: 'Integrator is pointed to a Docker internal HA, but you are accessing from a real IP. You likely need to change the HA Host URL to your Production HA IP.' };
+      }
+      if (this.ipMismatch()) {
+        return { ok: false, msg: 'Your Integrator IP and Callback URL mismatch. HA will send responses to the wrong address!' };
+      }
+      if (this.$store.app.env === 'ha_addon') {
+        return { ok: true, msg: 'Running as an add-on — taps arrive over the Home Assistant WebSocket, so the callback URL is not used.' };
+      }
+      return { ok: true, msg: 'Everything looks correctly aligned.' };
+    },
+
+    ipMismatch() {
+      try {
+        // Under the Supervisor this comparison cannot mean anything. The
+        // browser reaches the panel through ingress, so window.location is
+        // Home Assistant's own address — a Tailscale name, a LAN IP, whatever
+        // the user typed — while the callback URL is the add-on's hostname on
+        // the Docker network, which is exactly what Home Assistant must use to
+        // reach us. They are different by design, so this warned of a fault
+        // that did not exist, on every single page load.
+        if (this.$store.app.env === 'ha_addon') return false;
+
+        const url = new URL(this.notif.callback_url);
+        const browserIp = window.location.hostname;
+        // If browser is localhost/127.0.0.1, we can't easily compare, so skip
+        if (['localhost', '127.0.0.1'].includes(browserIp)) return false;
+        return url.hostname !== browserIp;
+      } catch (e) { return false; }
+    },
+
+    async loadGlobal() {
+      try {
+        const r = await fetch('api/automation/notifications/settings');
+        const d = await r.json();
+        this.notif.enabled = d.enabled ?? false;
+        this.notif.target = d.ha_target || '';
+        this.notif.ha_host = d.ha_host || '';
+        this.notif.ha_token = ''; // Never pre-fill token
+        this.notif.callback_url = d.fhai_host || '';
+        this.haStatus = { connected: d.ha_connected, url: d.ha_host || '' };
+
+        // Fetch active routed multi-devices
+        const devR = await fetch('api/ha/devices');
+        if (devR.ok) {
+          const devD = await devR.json();
+          const devices = devD.devices || devD || [];
+          this.activeDevicesList = (Array.isArray(devices) ? devices : []).filter(dev => dev.enabled);
+        } else {
+          this.activeDevicesList = [];
+        }
+      } catch(e) { console.warn('Global notif error:', e); }
+    },
+
+    async testConnection() {
+      this.testingConn = true;
+      this.testConnResult = null;
+      try {
+        // We test with the current form values by calling the test API
+        // which uses the stored config, so we might need a way to test unsaved...
+        // For now, let's just save then test, or use the dedicated test endpoint.
+        const res = await fetch('api/ha/test', { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+          this.testConnResult = { ok: true, msg: '✓ Connected to ' + (d.ha_name || 'HA') };
+        } else {
+          this.testConnResult = { ok: false, msg: '✗ ' + (d.error || 'Failed') };
+        }
+      } catch (e) {
+        this.testConnResult = { ok: false, msg: '✗ Error' };
+      } finally {
+        this.testingConn = false;
+        setTimeout(() => this.testConnResult = null, 5000);
+      }
+    },
+
+    async testCallback() {
+      this.testingCallback = true;
+      this.callbackTestResult = null;
+      try {
+        // Call our backend test endpoint which will perform the ping from the server side.
+        // This avoids CORS issues and truly tests if the app can reach itself via that URL.
+        const r = await fetch('api/automation/notifications/test-webhook', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ url: this.notif.callback_url })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.callbackTestResult = { ok: true, msg: '✓ Success: Integrator reached itself via ' + this.notif.callback_url };
+        } else {
+          this.callbackTestResult = { ok: false, msg: '✗ Failed: ' + (d.note || d.error || 'Check network') };
+        }
+      } catch (e) {
+        this.callbackTestResult = { ok: false, msg: '✗ Error: ' + e.message };
+      } finally {
+        this.testingCallback = false;
+        setTimeout(() => { this.callbackTestResult = null; }, 6000);
+      }
+    },
+
+    async verifyAutomation() {
+      this.verifying = true;
+      this.auditLog = { ok: true, msg: 'Auditing Home Assistant configuration... (Silent Check)', details: [] };
+      try {
+        const r = await fetch('api/automation/notifications/verify-yaml');
+        const d = await r.json();
+        
+        if (d.ok) {
+          this.auditLog = { ok: true, msg: d.msg, details: d.results?.details || [] };
+        } else {
+          this.auditLog = { ok: false, msg: d.msg, details: d.results?.details || [] };
+        }
+      } catch (e) {
+        this.auditLog = { ok: false, msg: 'Verification error: ' + e.message, details: [] };
+      } finally {
+        this.verifying = false;
+      }
+    },
+
+
+    async loadPref() {
+      try {
+        // Read per-gateway config when a gateway is selected — the engine's
+        // evaluate_and_log() reads per-gateway too. Prior code defaulted to
+        // ?gateway_id=global which caused the DISPATCH MODE pill to reflect
+        // the global row while the engine acted on the per-gateway row.
+        // Root cause of P1 cluster #2 (UI/DB mode divergence). Fixed 2026-07-08.
+        const gw = Alpine.store('app')?.selectedGateway;
+        const url = 'api/smart_dispatch/config' + (gw ? '?gateway_id=' + gw : '');
+        const r = await fetch(url);
+        const d = await r.json();
+        const c = d.config || {};
+        this.pref.notification_mode = c.notification_mode || 'ask';
+        this.notif.info_targets = c.info_notify_targets || '';
+        ['demand_charge','negative_export','spike','export_bonus','earnings','force_charge'].forEach(k => {
+          this.pref['notify_on_' + k] = c['notify_on_' + k] ?? 0;
+        });
+      } catch(e) { console.warn('Pref load error:', e); }
+    },
+
+    async detectTargets() {
+      this.detecting = true;
+      try {
+        const r = await fetch('api/automation/notifications/targets');
+        const d = await r.json();
+        this.targets = d.targets || [];
+        if (this.targets.length === 1 && !this.notif.target) this.notif.target = this.targets[0];
+      } catch(e) {} finally { this.detecting = false; }
+    },
+
+    async toggleGlobalEnabled() {
+      // This switch used to flip a local flag and nothing else, so it read
+      // "System Live" while the server still had notifications off — and the
+      // test replied "Global Notifications are toggled OFF" against a green
+      // toggle. Persist immediately, and put it back if the save fails.
+      const next = !this.notif.enabled;
+      this.notif.enabled = next;
+      try {
+        const r = await fetch('api/automation/notifications/settings', {
+          method: 'PUT', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ enabled: next })   // partial: the server merges
+        });
+        if (!r.ok) throw new Error('save failed');
+        this.saveResult = { ok: true, msg: next ? 'Notifications enabled' : 'Notifications muted' };
+        setTimeout(() => { if (this.saveResult && this.saveResult.ok) this.saveResult = null; }, 3000);
+      } catch (e) {
+        this.notif.enabled = !next;
+        this.saveResult = { ok: false, msg: 'Could not save that — the toggle has been put back.' };
+      }
+    },
+
+    async saveGlobal() {
+      this.savingGlobal = true; this.saveResult = null;
+      try {
+        const r = await fetch('api/automation/notifications/settings', {
+          method: 'PUT', headers: {'Content-Type': 'application/json'},
+          // ha_host and ha_token are deliberately absent: the endpoint
+          // ignores them ("HA credentials are managed solely in the Home
+          // Automation settings tab"), so sending them implied this form
+          // saved credentials when it never did.
+          body: JSON.stringify({
+            enabled: this.notif.enabled,
+            ha_target: this.notif.target,
+            fhai_host: this.notif.callback_url
+          })
+        });
+
+        
+        // Also save info_targets to smart_dispatch_config — scoped to
+        // the selected gateway (see loadPref for context on the fix).
+        const gw2 = Alpine.store('app')?.selectedGateway;
+        const url2 = 'api/smart_dispatch/config' + (gw2 ? '?gateway_id=' + gw2 : '');
+        await fetch(url2, {
+          method: 'PUT', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ info_notify_targets: this.notif.info_targets })
+        });
+
+        const d = await r.json();
+        this.saveResult = d.ok ? { ok: true, msg: '✓ Saved' } : { ok: false, msg: d.detail || 'Save failed' };
+        setTimeout(() => { this.saveResult = null; }, 3000);
+      } catch(e) { this.saveResult = { ok: false, msg: 'Error' }; }
+      finally { this.savingGlobal = false; }
+    },
+
+    callbackTesting: false,
+
+    async testCallbackPath() {
+      this.callbackTesting = true;
+      this.saveResult = null;
+      try {
+        const r = await fetch('api/automation/notifications/test-callback-path', { method: 'POST' });
+        const d = await r.json();
+        this.saveResult = {
+          ok: !!d.ok,
+          msg: (d.ok ? '✓ ' : '✗ ') + (d.detail || d.error || 'No detail returned'),
+        };
+        this.fetchDebugLog();
+      } catch (e) {
+        this.saveResult = { ok: false, msg: `Error: ${e && e.message ? e.message : e}` };
+      } finally {
+        this.callbackTesting = false;
+      }
+    },
+
+    async testSend() {
+      this.testing = true;
+      try {
+        const r = await fetch('api/automation/notifications/test', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ event_type: this.testEventTemplate })
+        });
+        const d = await r.json();
+        this.fetchDebugLog();
+        
+        if (d.ok) {
+          this.saveResult = { ok: true, msg: '✓ Sent! Please tap an action on your phone...' };
+          
+          // Poll for up to 30 seconds (15 tries * 2s)
+          let tries = 0;
+          const poll = setInterval(async () => {
+            tries++;
+            if (tries > 15) {
+              clearInterval(poll);
+              this.saveResult = { ok: false, msg: 'Test timed out waiting for action.' };
+              this.testing = false;
+              return;
+            }
+            try {
+              const res = await fetch('api/automation/notifications/test-result');
+              const data = await res.json();
+              if (data.ok && data.action) {
+                clearInterval(poll);
+                this.saveResult = { ok: true, msg: `✓ Received feedback: ${data.action}` };
+                this.fetchDebugLog();
+                this.testing = false;
+                setTimeout(() => { this.saveResult = null; }, 6000);
+              }
+            } catch (e) {}
+          }, 2000);
+          return; // leave testing = true until poll completes
+        } else {
+          // The server says why it failed, in `detail`. Replacing that with
+          // the word "Send failed" and erasing it four seconds later is what
+          // made this undiagnosable: the reason existed and was discarded.
+          const rows = Array.isArray(d.results) ? d.results : [];
+          const failed = rows.filter(r => r && !r.ok);
+          let msg = d.detail || d.error || d.message || 'Send failed (no reason given)';
+          if (failed.length) {
+            msg += ' — ' + failed.map(r => `${r.alias}: ${r.error || 'failed'}`).join('; ');
+          }
+          this.saveResult = { ok: false, msg };
+        }
+      } catch(e) {
+        this.saveResult = { ok: false, msg: `Error: ${e && e.message ? e.message : e}` };
+      }
+
+      this.testing = false;
+      // Only clear a success. A failure stays until the next attempt, so it
+      // can be read, scrolled back to, and copied.
+      if (this.saveResult && this.saveResult.ok) {
+        setTimeout(() => { if (this.saveResult && this.saveResult.ok) this.saveResult = null; }, 4000);
+      }
+    },
+
+    async savePreferences() {
+      this.savingPref = true; this.prefResult = null;
+      try {
+        // Write per-gateway when a gateway is selected — matches the engine's
+        // read scope. See loadPref() note for the divergence this fixes.
+        const gw = Alpine.store('app')?.selectedGateway;
+        const url = 'api/smart_dispatch/config' + (gw ? '?gateway_id=' + gw : '');
+        const payload = Object.assign({}, this.pref);
+        const r = await fetch(url, {
+          method: 'PUT', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        this.prefResult = d.ok ? { ok: true, msg: '✓ Saved' } : { ok: false, msg: d.detail || 'Failed' };
+        setTimeout(() => { this.prefResult = null; }, 3000);
+      } catch(e) { this.prefResult = { ok: false, msg: 'Error' }; }
+      finally { this.savingPref = false; }
+    },
+
+    yamlConfigBlueprint() {
+      const base = (this.notif.callback_url || '').replace(/\/$/, '');
+      // A self-signed or locally-trusted certificate is not in Home Assistant's
+      // trust store, so HA aborts the callback on verification unless this is
+      // set — and the failure surfaces only as a 500 from the rest_command,
+      // with nothing arriving at FHAI to explain it. Mirrors
+      // generate_ha_automation_yaml() in src/services/notification_sender.py;
+      // the two must stay in step (tests/test_ha_blueprint_parity.py).
+      const sslLine = base.startsWith('https://')
+        ? '\n    verify_ssl: false  # Required if using self-signed TLS/HTTPS certs'
+        : '';
+      return `{% raw %}rest_command:
+  franklinwh_action_callback:
+    # ⚠️ IMPORTANT: The URL below MUST be reachable from Home Assistant.
+    # Use the network IP of this machine, not 'localhost' or 'fwhhai-app'.
+    url: "${base}/api/automation/notifications/override"
+    method: POST
+    content_type: "application/json"{% endraw %}${sslLine}{% raw %}
+    payload: >
+      {
+        "action_id": "{{ action_id }}",
+        "gateway_id": "{{ gateway_id }}",
+        "request_id": "{{ request_id }}",
+        "ha_user_id": "{{ ha_user_id }}",
+        "response": "{{ response }}"
+      }
+{% endraw %}`;
+    },
+
+    yamlBlueprint() {
+      return `{% raw %}- id: "franklinwh_smart_dispatch_action_callback"
+  alias: "FranklinWH Smart Dispatch Action Callback"
+  description: "Handles actionable push notifications from the FranklinWH Engine"
+  mode: parallel
+  max: 10
+  trigger:
+    - platform: event
+      event_type: mobile_app_notification_action
+  condition:
+    - condition: template
+      value_template: >-
+        {{ trigger.event.data.action.startswith('FWH_') }}
+  action:
+    # Optional: Uncomment to debug event data in HA logs (Settings -> System -> Logs)
+    # - action: system_log.write
+    #   data:
+    #     message: "FHAI Event data: {{ trigger.event.data }}"
+    #     level: info
+    - action: rest_command.franklinwh_action_callback
+      data:
+        action_id: "{{ trigger.event.data.action }}"
+        gateway_id: "{{ trigger.event.data.gateway_id | default(trigger.event.data.get('action_data', {}).get('gateway_id', '')) }}"
+        request_id: "{{ trigger.event.data.request_id | default(trigger.event.data.get('action_data', {}).get('request_id', '')) }}"
+        ha_user_id: "{{ trigger.event.context.user_id | default('unknown') }}"
+        response: "{{ trigger.event.data.response | default(trigger.event.data.reply_text | default('')) }}"
+{% endraw %}`;
+    },
+
+    copyConfigYaml() {
+      navigator.clipboard.writeText(this.yamlConfigBlueprint());
+      this.copiedConfig = true;
+      setTimeout(() => this.copiedConfig = false, 2000);
+    },
+
+    copyYaml() {
+      navigator.clipboard.writeText(this.yamlBlueprint());
+      this.copied = true;
+      setTimeout(() => this.copied = false, 2000);
+    }
+  };
+}
+</script>

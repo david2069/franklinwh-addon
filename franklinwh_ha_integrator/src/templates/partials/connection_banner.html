@@ -1,0 +1,334 @@
+<!-- Connection Status Banner — Ported from FEM with HA Integrator CSS Vars -->
+<style>
+.transition-enter { transition: all 0.3s ease-out; }
+.transition-leave { transition: all 0.2s ease-in; }
+.opacity-0 { opacity: 0; }
+.opacity-100 { opacity: 1; }
+.-translate-y-full { transform: translateY(-100%); }
+.translate-y-0 { transform: translateY(0); }
+</style>
+<div x-data="connectionBanner()" x-init="startPolling()" x-cloak>
+
+    <!-- ═══ Slim Top Banner (red/amber/green) ═══ -->
+    <div x-show="showBanner && !bannerDismissed" 
+         x-transition:enter="transition-enter"
+         x-transition:enter-start="opacity-0 -translate-y-full" 
+         x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition-leave" 
+         x-transition:leave-start="opacity-100 translate-y-0"
+         x-transition:leave-end="opacity-0 -translate-y-full"
+         style="position:fixed;top:var(--topbar-h, 64px);left:0;right:0;z-index:99;font-size:0.875rem;font-weight:700;color:#fff;box-shadow:0 4px 6px rgba(0,0,0,0.1);display:flex;align-items:center"
+         :style="{ background: connectionOk ? 'var(--ok)' : (consecutiveFailures >= 8 ? 'var(--danger)' : '#f97316') }">
+        
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 16px;cursor:pointer;position:relative;left:20px;" @click="showDiagModal = true">
+            <i class="fas" :class="connectionOk ? 'fa-check-circle' : 'fa-sync-alt fa-spin'"></i>
+            <span x-text="connectionOk ? 'Connected' : 'Connection Lost - Reconnecting...'"></span>
+            <span style="font-size:0.75rem;opacity:0.8;font-weight:500">(click for details)</span>
+        </div>
+        
+        <button type="button" class="hover-opacity" style="color:white;opacity:0.8;padding:8px;margin-right:8px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;cursor:pointer;" @click.stop="showBanner = false; bannerDismissed = true">
+            <svg style="width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;" aria-hidden="true" viewBox="0 0 24 24"><use href="#x"/></svg>
+        </button>
+    </div>
+
+    <!-- ═══ Success Flash Banner ═══ -->
+    <div x-show="showSuccess" 
+         x-transition.duration.500ms
+         style="position:fixed;top:var(--topbar-h, 64px);left:0;right:0;z-index:99;background:var(--ok);color:#fff;text-align:center;padding:6px 0;font-size:0.875rem;font-weight:700;box-shadow:0 4px 6px rgba(0,0,0,0.1)">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#check-circle"/></svg> Reconnected — all systems go
+    </div>
+
+    <!-- ═══ Diagnostic Modal ═══ -->
+    <template x-if="showDiagModal">
+      <div class="modal-backdrop" @click.self="showDiagModal = false" style="z-index:10000">
+          <div class="modal-panel" style="max-width:500px">
+              
+              <!-- Header -->
+              <div style="padding:20px 24px;color:#fff;border-top-left-radius:var(--radius-lg);border-top-right-radius:var(--radius-lg)" :style="connectionOk ? 'background:var(--ok)' : 'background:var(--danger)'">
+                  <h3 style="margin:0;font-size:1.15rem;display:flex;align-items:center;gap:10px;font-weight:700">
+                      <i class="fas" style="font-size:1.25rem;transform:translateY(1px)" :class="connectionOk ? 'fa-check-circle' : 'fa-stethoscope'"></i>
+                      <span x-text="connectionOk ? 'System Status — All OK' : 'System Status — Reconnecting'"></span>
+                  </h3>
+                  <p style="margin:8px 0 0 32px;font-size:0.85rem;opacity:0.9;line-height:1.4"
+                      x-text="connectionOk ? 'All components are running normally' : 'Waiting for server to respond...'">
+                  </p>
+                  <div x-show="!connectionOk && offlineSince" style="margin:12px 0 0 30px;font-size:0.75rem;font-family:monospace;background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:6px">
+                      <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#clock"/></svg>
+                      <span>Offline since <span x-text="offlineSince"></span> <span style="opacity:0.8">(<span x-text="offlineDuration"></span>)</span></span>
+                  </div>
+              </div>
+
+              <!-- Body -->
+              <div style="padding:24px;display:flex;flex-direction:column;gap:12px">
+                  
+                  <div x-show="!connectionOk && retryCount >= 4" style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);padding:12px;border-radius:var(--radius-md);margin-bottom:8px">
+                      <div style="font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:0.85rem">
+                          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#info"/></svg> Why is this taking a while?
+                      </div>
+                      <p style="font-size:0.8rem;color:var(--text-secondary);line-height:1.4;margin:0">
+                          A cold start or Docker/HA Add-on restart typically takes 15-20 seconds to initialize the database and reconnect to the Gateway layer. Please wait.
+                      </p>
+                  </div>
+
+                  <template x-for="comp in components" :key="comp.name">
+                      <div style="display:flex;align-items:center;gap:16px;padding:14px 16px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--surface-1)">
+                          <i class="fas" style="font-size:1.4rem;display:flex;align-items:center;justify-content:center;width:24px"
+                             :class="comp.status === 'ok' ? 'fa-check-circle c-ok' : comp.status === 'waiting' ? 'fa-spinner fa-spin c-warn' : comp.status === 'error' ? 'fa-times-circle c-danger' : 'fa-circle c-muted'"></i>
+                          <div style="flex:1;display:flex;flex-direction:column;justify-content:center">
+                              <div style="font-weight:600;font-size:0.95rem;color:var(--text-primary);line-height:1.2" x-text="comp.name"></div>
+                              <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px;line-height:1.2" x-text="comp.detail || ''" x-show="comp.detail"></div>
+                          </div>
+                          <span style="font-size:0.8rem;font-family:monospace;color:var(--text-muted)" x-text="comp.latency || ''" x-show="comp.latency"></span>
+                      </div>
+                  </template>
+              </div>
+
+              <!-- Footer -->
+              <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface-0)">
+                  <div style="font-size:0.75rem;color:var(--text-muted)">
+                      <template x-if="!connectionOk">
+                          <span x-text="'Attempt ' + retryCount + ' • Next retry in ' + retryCountdown + 's'"></span>
+                      </template>
+                      <template x-if="connectionOk && autoCloseIn > 0">
+                          <span style="color:var(--ok);font-weight:600">
+                              <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#check-circle"/></svg> Auto-closing in <span x-text="autoCloseIn"></span>s
+                          </span>
+                      </template>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:12px">
+                      <template x-if="!connectionOk">
+                          <button class="btn btn-primary" @click="checkHealth()">
+                              <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><use href="#refresh-cw"/></svg> Retry Now
+                          </button>
+                      </template>
+                      <button class="btn btn-secondary" @click="showDiagModal = false">
+                          Dismiss
+                      </button>
+                  </div>
+              </div>
+          </div>
+      </div>
+    </template>
+</div>
+
+<script>
+    function connectionBanner() {
+        return {
+            showBanner: false,  // Stays hidden until first health check confirms connection (avoids stuck-on-load state)
+            bannerDismissed: false,
+            showSuccess: false,
+            showDiagModal: false,
+            connectionOk: true,
+            retryCount: 0,
+            retryCountdown: 3,
+            autoCloseIn: 0,
+            offlineSinceTime: null,
+            offlineSince: '',
+            offlineDuration: '',
+            pollTimer: null,
+            retryTimer: null,
+            autoCloseTimer: null,
+            durationTimer: null,
+            bannerAutoDismiss: null,
+            consecutiveFailures: 0,
+            _checking: false,     // guard: prevent concurrent health-check calls
+            components: [
+                { name: 'Web Server', status: 'unknown', detail: '', latency: '' },
+                { name: 'Data Provider', status: 'unknown', detail: '', latency: '' },
+                { name: 'API Worker', status: 'unknown', detail: '', latency: '' },
+            ],
+
+            startPolling() {
+                // First health check after 1.5s — banner shows if unhealthy, stays hidden if OK
+                setTimeout(() => this.checkHealth(), 1500);
+                
+                setInterval(() => {
+                    if (this.connectionOk && document.visibilityState === 'visible') {
+                        this.checkHealth();
+                    }
+                }, 10000);
+            },
+
+            async checkHealth() {
+                if (this._checking) return;
+                this._checking = true;
+                try {
+                    const controller = new AbortController();
+                    // 15s timeout — bumped from 10s after observing real flap during
+                    // Smart Dispatch eval bursts. SD opens Promise.all([5 fetches])
+                    // simultaneously, saturating the browser's 6-connections-per-origin
+                    // pool; the health probe queues behind the eval and only fires
+                    // when the SD eval responds (often 3-8s for fresh polls). Combined
+                    // with the 4-failure threshold below this gives ~35s of true
+                    // downtime detection — generous enough to absorb burst traffic,
+                    // strict enough to flag a real backend stall.
+                    const timeout = setTimeout(() => controller.abort(), 15000);
+                    const t0 = Date.now();
+                    // priority: 'high' — Fetch Priority hint asks the browser to push
+                    // this probe ahead of other queued fetches when the connection
+                    // pool is full. Supported in Chrome/Edge/Safari 17+; ignored
+                    // elsewhere (no-op fallback).
+                    const r = await fetch('api/health', {
+                        signal: controller.signal,
+                        priority: 'high',
+                    });
+                    clearTimeout(timeout);
+                    const latency = Date.now() - t0;
+
+                    if (r.ok) {
+                        const data = await r.json();
+                        this.onHealthy(data, latency);
+                    } else {
+                        this.onUnhealthy('Server returned HTTP ' + r.status);
+                    }
+                } catch (e) {
+                    this.onUnhealthy(e.name === 'AbortError' ? 'Timeout (15s)' : (e.message || 'Network unreachable'));
+                } finally {
+                    this._checking = false;
+                }
+            },
+
+            onHealthy(data, latency) {
+                // Initialize active reference IDs on first successful load
+                if (!this.activeBootId && data.boot_id) {
+                    this.activeBootId = data.boot_id;
+                    this.activeVersion = data.version || '';
+                } else if (this.activeBootId) {
+                    // Check if server rebooted or version upgraded (handles rapid restarts between polls)
+                    if (data.boot_id && data.boot_id !== this.activeBootId) {
+                        location.reload();
+                        return;
+                    } else if (data.version && data.version !== this.activeVersion) {
+                        location.reload();
+                        return;
+                    }
+                }
+
+                this.components[0] = {
+                    name: 'Web Server', status: 'ok',
+                    detail: 'v' + (data.version || '?'),
+                    latency: latency + 'ms',
+                };
+                this.components[1] = {
+                    name: 'Data Provider', status: data.status === 'ok' ? 'ok' : 'warn',
+                    detail: (data.uptime ? Math.floor(data.uptime) + 's uptime' : 'Running'),
+                    latency: '',
+                };
+                this.components[2] = {
+                    name: 'API Worker', status: 'ok',
+                    detail: data.env || 'Docker',
+                    latency: '',
+                };
+
+                if (this.consecutiveFailures > 0) {
+                    // Server recovered
+                    this.showBanner = false;
+                    this.bannerDismissed = false;
+                    this.showSuccess = true;
+                    this.connectionOk = true;
+
+                    // Stop retry polling
+                    if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
+                    if (this.durationTimer) { clearInterval(this.durationTimer); this.durationTimer = null; }
+
+                    this.consecutiveFailures = 0;
+                    this.retryCount = 0;
+                    this.offlineSinceTime = null;
+                    this.offlineSince = '';
+                    this.offlineDuration = '';
+
+                    // Auto-close modal if open
+                    if (this.showDiagModal) this.startAutoClose();
+                    
+                    setTimeout(() => { this.showSuccess = false; }, 2500);
+
+                    // Re-trigger global app refresh cleanly
+                    if (window.Alpine && window.Alpine.store('app')) {
+                        window.Alpine.store('app').refresh();
+                    }
+                    return;
+                }
+
+                this.consecutiveFailures = 0;
+                this.connectionOk = true;
+                // Suppress the "Connected" flash on normal page load.
+                // The topbar Online indicator already communicates this.
+                // Banner only appears when recovering from a real failure (showSuccess covers that).
+                this.showBanner = false;
+                this.bannerDismissed = true;
+                this.retryCount = 0;
+            },
+
+            onUnhealthy(detail) {
+                this.consecutiveFailures++;
+                this.connectionOk = false;
+
+                // Immediately spin up fast-retry polling if not active
+                if (!this.retryTimer) this.startRetryPolling();
+
+                // Show orange banner only after 4 consecutive failures (~25s of true
+                // downtime at the 5s retry cadence). Red flips at 8 (~45s). The
+                // higher thresholds prevent flapping when a single slow tick during
+                // heavy polling / DevTools-open sessions blows the per-check timeout.
+                // The user can always open the diagnostic modal manually if they
+                // suspect a problem before the banner appears.
+                if (this.consecutiveFailures >= 4 || this.showDiagModal) {
+                    if (!this.offlineSinceTime) {
+                        this.offlineSinceTime = new Date();
+                        this.offlineSince = this.offlineSinceTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        this.updateDuration();
+                        this.durationTimer = setInterval(() => this.updateDuration(), 1000);
+                    }
+
+                    if (this.consecutiveFailures >= 4) { this.showBanner = true; this.bannerDismissed = false; }
+                    this.retryCount++;
+
+                    this.components[0] = { name: 'Web Server', status: 'waiting', detail: detail, latency: '' };
+                    this.components[1] = { name: 'Data Provider', status: 'unknown', detail: 'Waiting...', latency: '' };
+                    this.components[2] = { name: 'API Worker', status: 'unknown', detail: 'Waiting...', latency: '' };
+                }
+            },
+
+            startRetryPolling() {
+                // 5s between retries (was 3s) — less hammering of an already-struggling
+                // server, and combined with the 4-failure threshold gives true-downtime
+                // detection at ~20-25s instead of ~6s.
+                this.retryCountdown = 5;
+                this.retryTimer = setInterval(() => {
+                    this.retryCountdown--;
+                    if (this.retryCountdown <= 0) {
+                        this.retryCountdown = 5;
+                        this.checkHealth();
+                    }
+                }, 1000);
+            },
+
+            updateDuration() {
+                if (!this.offlineSinceTime) return;
+                const secs = Math.floor((new Date() - this.offlineSinceTime) / 1000);
+                const m = Math.floor(secs / 60);
+                const s = secs % 60;
+                this.offlineDuration = m > 0 ? `${m}m ${s}s` : `${s}s`;
+            },
+
+            startAutoClose() {
+                this.autoCloseIn = 3;
+                if (this.autoCloseTimer) clearInterval(this.autoCloseTimer);
+                this.autoCloseTimer = setInterval(() => {
+                    this.autoCloseIn--;
+                    if (this.autoCloseIn <= 0) {
+                        clearInterval(this.autoCloseTimer);
+                        this.autoCloseTimer = null;
+                        this.showDiagModal = false;
+                    }
+                }, 1000);
+            },
+            
+            destroy() {
+                if (this.retryTimer) clearInterval(this.retryTimer);
+                if (this.durationTimer) clearInterval(this.durationTimer);
+                if (this.autoCloseTimer) clearInterval(this.autoCloseTimer);
+            }
+        };
+    }
+</script>

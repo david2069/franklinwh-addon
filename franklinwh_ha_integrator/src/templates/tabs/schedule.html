@@ -1,0 +1,2008 @@
+<!-- ── Schedule Tab v2 ── TOU Schedule Editor ── -->
+<div x-data="scheduleTab()" x-init="init()" class="space-y-5 max-w-5xl">
+
+  <!-- Header + Gateway Selector -->
+  <div class="flex flex-wrap items-end gap-4">
+    <div>
+      <h1 class="text-xl font-black text-gray-100 flex items-center gap-2">
+        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><use href="#calendar-clock"/></svg>
+        Schedule
+      </h1>
+      <p class="text-xs text-gray-400 mt-0.5">Time-of-Use schedule editor</p>
+    </div>
+    <div class="flex items-center gap-3 ml-auto flex-wrap">
+      <select x-model="selectedGw" @change="load()"
+              class="bg-gray-800 border border-gray-700 text-gray-200 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary transition">
+        <option value="">— select gateway —</option>
+        <template x-for="gw in gateways" :key="gw.short_id">
+          <option :value="gw.short_id" x-text="(gw.name || gw.short_id) + ' [' + gw.short_id + ']'"></option>
+        </template>
+      </select>
+    </div>
+  </div>
+
+  <!-- No gateway selected -->
+  <template x-if="!selectedGw && !loading">
+    <div class="rounded-xl border border-dashed border-gray-700 bg-gray-800/30 p-16 text-center">
+      <p class="text-4xl mb-4">📅</p>
+      <p class="text-sm text-gray-500">Select a gateway above to view and manage its TOU schedule.</p>
+    </div>
+  </template>
+
+  <!-- Loading -->
+  <template x-if="loading">
+    <div class="flex items-center justify-center p-16 gap-3 text-gray-500">
+      <i class="fas fa-sync-alt animate-spin"></i>
+      <span class="text-sm">Loading schedule from device…</span>
+    </div>
+  </template>
+
+  <!-- Error -->
+  <template x-if="!loading && error">
+    <div class="rounded-xl border border-red-500/30 bg-red-500/5 px-5 py-4 flex items-center gap-3">
+      <i class="fas fa-exclamation-circle text-red-400"></i>
+      <span class="text-sm text-red-400 font-bold" x-text="error"></span>
+    </div>
+  </template>
+
+  <!-- Schedule Content -->
+  <template x-if="selectedGw && !loading && !error && schedule">
+    <div class="space-y-5">
+
+      <!-- ── R7: TOU Not Configured guard ───────────────────────────── -->
+      <template x-if="schedule.entrance_info && schedule.entrance_info.tariff_setting_flag === false">
+        <div class="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 flex items-start gap-4">
+          <i class="fas fa-exclamation-triangle text-amber-400 mt-0.5 text-lg flex-shrink-0"></i>
+          <div>
+            <p class="text-sm font-bold text-amber-300">TOU Not Configured on this Gateway</p>
+            <p class="text-xs text-amber-400/80 mt-1 leading-relaxed">
+              This aGate doesn't have a Time-of-Use tariff enabled. To use the Schedule Editor,
+              first enable TOU mode in the <strong>FranklinWH app</strong>: Settings → Tariff Settings.
+            </p>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── R2: Tariff Identity card ────────────────────────────────── -->
+      <template x-if="usageType >= 2 && tariffInfo">
+        <div class="rounded-xl border border-gray-700 bg-gray-800/50 px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-3 flex-wrap">
+            <span class="text-[9px] font-black uppercase tracking-widest text-gray-600">Tariff Plan</span>
+            <span class="font-bold text-gray-100 text-sm" x-text="tariffInfo.name || 'Custom'"></span>
+            <span x-show="tariffInfo.utility" class="text-xs text-gray-400" x-text="tariffInfo.utility"></span>
+            <span x-show="tariffInfo.is_nbt"
+                  class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30">NBT</span>
+            <span class="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-700 text-gray-400"
+                  x-text="['', 'Time-of-Use', 'Flat Rate', 'Tiered'][tariffInfo.electricity_type] || 'TOU'"></span>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button @click="openTariffSetup()"
+                    class="px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-bold hover:bg-gray-700 hover:text-gray-200 transition">
+              <i class="fas fa-exchange-alt text-[9px] mr-1"></i>Change Tariff
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── R1: Usage Type prompt callout (when usageType=null, no modal) ── -->
+      <template x-if="usageType === null">
+        <div class="rounded-xl border border-primary/30 bg-primary/5 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-bold text-gray-100">How will you use the Schedule tab?</p>
+            <p class="text-xs text-gray-400 mt-0.5">Set your usage type to unlock pricing features.</p>
+          </div>
+          <button @click="showUsageTypeModal = true"
+                  class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:opacity-90 transition">
+            <i class="fas fa-cog text-[10px] mr-1"></i>Set Up Now
+          </button>
+        </div>
+      </template>
+
+      <!-- Editor Header -->
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 space-y-3">
+        <!-- Row 1: title + buttons -->
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-bold text-gray-100">Schedule Editor</p>
+            <p class="text-[11px] font-semibold text-gray-300 mt-0.5 tracking-wide">Manage TOU time blocks, strategies, and presets.</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- Refresh from device -->
+            <button @click="openRefreshModal()"
+                    class="px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 bg-gray-800/60 text-xs font-bold hover:bg-gray-700 hover:text-gray-200 transition">
+              <i class="fas fa-sync text-[9px] mr-1"></i>Refresh
+            </button>
+            <!-- Pricing reference (only when pricing mode active) -->
+            <template x-if="usageType >= 2">
+              <button @click="openPricingModal()"
+                      class="px-3 py-1.5 rounded-lg border border-primary/40 text-primary-light bg-primary/5 text-xs font-bold hover:bg-primary/10 transition">
+                <i class="fas fa-dollar-sign text-[9px] mr-1"></i>Pricing
+              </button>
+            </template>
+            <!-- Save to Gateway (glows amber when dirty) -->
+            <button type="button" @click.prevent="saveToGateway()"
+                    class="px-4 py-1.5 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary-dark transition-all"
+                    :class="isDirty() ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-gray-900 shadow-lg shadow-amber-500/40 animate-pulse' : ''">
+              <i class="fas fa-upload text-[9px] mr-1"></i>
+              <span>Save to Gateway</span>
+            </button>
+            <!-- Usage Type -->
+            <button @click="showUsageTypeModal = true"
+                    class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-700 text-gray-500 text-[10px] font-bold hover:text-primary-light hover:border-primary/40 hover:bg-primary/5 transition"
+                    title="Change schedule usage type">
+              <i class="fas fa-cog text-[9px]"></i>
+              <span>Usage Type</span>
+            </button>
+          </div>
+
+        </div>
+        <!-- Row 2: context status bar -->
+        <div class="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-700/60">
+          <!-- Source pill -->
+          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold"
+               :class="loadedPresetName
+                 ? 'bg-primary/10 border border-primary/30 text-primary-light'
+                 : 'bg-teal-500/10 border border-teal-500/30 text-teal-400'">
+            <i class="fas text-[9px]" :class="sourceIcon()"></i>
+            <span x-text="sourceLabel()"></span>
+          </div>
+          <!-- Unsaved changes badge -->
+          <div x-show="isDirty()"
+               class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-black animate-pulse">
+            <i class="fas fa-exclamation-triangle text-[9px]"></i>
+            UNSAVED CHANGES
+          </div>
+          <!-- Hint when clean -->
+          <p x-show="!isDirty()" class="text-[9px] text-gray-600"
+             x-text="loadedPresetName ? 'No changes since preset was loaded.' : 'Edit blocks below — changes tracked automatically.'"></p>
+
+          <!-- ── TOU Health Badge (Gap 2) ──────────────────────────────── -->
+          <div class="ml-auto flex items-center gap-2" x-show="selectedGw">
+            <!-- Loading spinner -->
+            <template x-if="touHealthLoading && !touHealth">
+              <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border bg-gray-700/40 border-gray-600 text-gray-500 text-[10px] font-bold">
+                <i class="fas fa-heartbeat text-[9px] animate-pulse"></i>
+                Checking…
+              </span>
+            </template>
+            <!-- Health badge -->
+            <template x-if="touHealth && !touHealthLoading">
+              <div class="flex items-center gap-2">
+                <button @click="showResetTouModal = true; resetTouResult = null"
+                        x-show="touHealth.health_status === 'DEGRADED' || touHealth.health_status === 'FAULT'"
+                        class="flex items-center gap-1 px-2 py-0.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-[10px] font-bold hover:bg-red-500/20 transition"
+                        title="Gateway may be stuck — click to reset TOU execution">
+                  <i class="fas fa-redo text-[8px]"></i> Reset TOU
+                </button>
+                <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold cursor-pointer"
+                      :class="touHealthClass()"
+                      @click="fetchTouHealth()"
+                      :title="(touHealth.fault_reasons || []).join(' | ') || 'TOU execution status — click to refresh'">
+                  <i class="fas text-[9px]" :class="touHealthIcon()"></i>
+                  <span x-text="touHealth.health_status"></span>
+                </span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── NOW EDITING: compact context banner (seasons managed in $ Pricing modal) ── -->
+      <div x-show="strategyList.length > 0"
+           class="rounded-xl border border-gray-700 bg-gray-900/80 px-4 py-2.5 flex items-center justify-between gap-4 flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[9px] font-black uppercase tracking-widest text-primary-light opacity-80">Editing</span>
+          <span class="text-sm font-black text-gray-100"
+                x-text="(strategyList[activeSeason]?.seasonName || strategyList[activeSeason]?.name || ('Season ' + (activeSeason+1)))
+                         + (strategyList[activeSeason]?.dayTypeVoList?.length > 1
+                             ? '  ·  ' + (activeDayType === 1 ? 'Weekdays' : activeDayType === 2 ? 'Weekends' : 'Everyday')
+                             : '')"></span>
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                :class="isActiveSeason(strategyList[activeSeason])
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : 'bg-gray-700/60 text-gray-400 border-gray-600'"
+                x-text="isActiveSeason(strategyList[activeSeason]) ? '● Active now' : 'Not active today'"></span>
+        </div>
+        <div class="flex items-center gap-3 text-xs text-gray-500">
+          <span>
+            <span class="font-bold text-gray-400" x-text="editableSchedule.length"></span>
+            block<span x-show="editableSchedule.length !== 1">s</span>
+          </span>
+          <span x-show="seasonMonthRange(strategyList[activeSeason])"
+                class="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400 text-[10px] font-bold"
+                x-text="seasonMonthRange(strategyList[activeSeason])"></span>
+          <button @click="openPricingModal()"
+                  class="text-[10px] font-bold text-primary-light/70 hover:text-primary-light transition flex items-center gap-1">
+            <i class="fas fa-sliders-h text-[9px]"></i> Manage seasons
+          </button>
+        </div>
+      </div>
+
+      <!-- Empty state: schedule loaded but no season data at all -->
+      <div x-show="schedule !== null && !loading && strategyList.length === 0"
+           class="rounded-xl border border-dashed border-gray-700 bg-gray-900/40 px-6 py-8 text-center">
+        <p class="text-sm font-bold text-gray-400 mb-1">No schedule seasons found</p>
+        <p class="text-xs text-gray-600 mb-4">The gateway returned no season data. Add a season or refresh to try again.</p>
+        <div class="flex items-center justify-center gap-3">
+          <button @click="addSeason()"
+                  class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition">
+            <i class="fas fa-plus text-[9px] mr-1"></i>Add Season
+          </button>
+          <button @click="openRefreshModal()"
+                  class="px-4 py-2 rounded-xl border border-gray-700 text-gray-400 text-xs font-bold hover:bg-gray-800 transition">
+            <i class="fas fa-sync text-[9px] mr-1"></i>Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Add -->
+
+      <div class="rounded-xl border border-gray-700 bg-gray-800/40 p-4">
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">Quick Add Block</p>
+        <div class="flex flex-wrap items-end gap-3">
+          <div>
+            <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1">Start</label>
+            <input type="text" x-model="quickAdd.start"
+                   placeholder="HH:MM" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                   class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm font-bold font-mono text-primary-light focus:outline-none focus:border-primary w-24">
+          </div>
+          <div>
+            <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1">End</label>
+            <input type="text" x-model="quickAdd.end"
+                   placeholder="HH:MM" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                   class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm font-bold font-mono text-primary-light focus:outline-none focus:border-primary w-24">
+          </div>
+          <div class="flex-1 min-w-28">
+            <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1">Name</label>
+            <input type="text" x-model="quickAdd.name"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-primary">
+          </div>
+          <div class="min-w-36">
+            <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1">Dispatch</label>
+            <select x-model.number="quickAdd.dispatchId"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-primary">
+              <!-- Populated from the catalogue so the intent is visible at the
+                   point of choosing: "Home Loads" alone does not say that it
+                   exports surplus solar and leaves the battery alone. -->
+              {% for c in dispatch_codes if c.id != 0 %}<option value="{{ c.id }}" title="{{ c.description }}">{{ c.label }} — {{ c.intent }}</option>{% endfor %}
+            </select>
+          </div>
+          <button @click="doQuickAdd()"
+                  class="flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition">
+            <i class="fas fa-plus text-[10px]"></i>Add
+          </button>
+
+        </div>
+      </div>
+
+
+
+      <!-- Visual Timeline -->
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-5">
+        <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-4">
+          <i class="fas fa-calendar-alt mr-1.5"></i>Time-of-Use Visual Timeline
+        </p>
+        <!-- Bar + current-time overlay -->
+        <div class="h-10 rounded-lg overflow-hidden bg-gray-800 flex w-full shadow-inner relative"
+             x-data="{ nowPct: ((new Date().getHours()*60+new Date().getMinutes())/1440*100) }"
+             x-init="setInterval(() => { nowPct = (new Date().getHours()*60+new Date().getMinutes())/1440*100 }, 60000)">
+          <template x-for="(seg, si) in calculateTimeline()" :key="si">
+            <div class="h-full flex flex-col items-center justify-center text-white text-[9px] font-black uppercase overflow-hidden border-r border-black/10"
+                 :style="'width:' + seg.width + '%;background:' + getDispatchColor(seg.dispatchId)"
+                 :title="getDispatchName(seg.dispatchId) + ' · ' + getWaveLabel(seg.waveType) + ' · ' + seg.name">
+              <span x-show="seg.width > 5" x-text="getDispatchShortName(seg.dispatchId)"></span>
+              <span x-show="seg.width > 10" class="text-[7px] opacity-75 font-bold normal-case" x-text="getWaveLabel(seg.waveType)"></span>
+            </div>
+          </template>
+          <!-- Current time red marker -->
+          <div class="absolute top-0 bottom-0 z-10 pointer-events-none"
+               :style="'left: calc(' + nowPct + '% - 1px)'">
+            <div class="w-0.5 h-full bg-red-500 shadow-lg shadow-red-500/60"></div>
+            <!-- Triangle cap at top -->
+            <div class="absolute -top-0 left-1/2 -translate-x-1/2"
+                 style="width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:6px solid #ef4444"></div>
+          </div>
+        </div>
+        <!-- Time labels -->
+        <div class="flex justify-between mt-2 text-[9px] font-bold font-mono text-gray-600">
+          <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
+        </div>
+        <!-- Legend — larger text for legibility -->
+        <div class="flex flex-wrap gap-3 mt-4 text-xs font-bold text-gray-400">
+          <!-- From the catalogue, not a literal. The title carries the
+               description, so hovering says what the code does rather than
+               only what it is called. -->
+          {% for c in dispatch_codes if c.id != 0 %}
+          <div class="flex items-center gap-1.5" title="{{ c.label }} — {{ c.intent }}. {{ c.description }}">
+            <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="'background:' + getDispatchColor({{ c.id }})"></span>
+            <span>{{ c.label }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        
+        <!-- Expandable Energy Forecast -->
+        <div class="mt-6 border-t border-gray-700/60 pt-4">
+          <button @click="showForecastChart = !showForecastChart"
+                  class="flex items-center gap-2 text-[10px] font-bold text-gray-400 hover:text-primary-light transition w-full text-left">
+            <i class="fas" :class="showForecastChart ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+            <span>Energy Forecast Preview</span>
+            <span class="px-2 py-0.5 rounded bg-primary/10 text-primary-light text-[9px] ml-auto">Live Simulation</span>
+          </button>
+          
+          <div x-show="showForecastChart" x-transition class="mt-4 border border-gray-700/50 bg-gray-900/50 rounded-xl p-4">
+            <div class="h-[250px] w-full relative">
+              <!-- Empty state fallback -->
+              <div x-show="!engineSlots || engineSlots.length === 0" class="absolute inset-0 flex flex-col items-center justify-center text-gray-500 z-10 pointer-events-none">
+                <i class="fas fa-satellite-dish text-2xl mb-2 opacity-50"></i>
+                <span class="text-xs font-bold">Waiting for Smart Dispatch forecast...</span>
+              </div>
+              <canvas id="scheduleForecastChart" class="relative z-20"></canvas>
+            </div>
+            <p class="text-[9px] text-gray-500 mt-3 text-center">
+              Forecast is mapped against your <strong class="text-gray-400">active schedule edits</strong> to dynamically preview SOC trajectory and power flows.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Inline price strip — read-only rates for current season + day-type, shown below timeline -->
+      <template x-if="showPriceStrip && usageType >= 2">
+        <div x-data x-init="$el.scrollIntoView({behavior:'smooth',block:'nearest'})"
+             class="rounded-xl border-l-4 border border-primary/30 border-l-primary bg-gray-900/80 p-4">
+          <div class="flex items-center justify-between mb-3">
+            <p class="text-[9px] font-black uppercase tracking-widest text-primary/80">
+              <i class="fas fa-dollar-sign mr-1"></i>
+              <span x-text="(strategyList[activeSeason]?.seasonName || 'Season') + ' · ' + dayTypeLabel(activeDayTypeEntry() || {})"></span>
+              &nbsp;— Rates
+            </p>
+            <div class="flex items-center gap-3">
+              <button @click="openPricingModal(); showPriceStrip = false"
+                      class="text-[10px] text-primary-light/60 hover:text-primary-light transition underline underline-offset-2">
+                Edit rates →
+              </button>
+              <button @click="showPriceStrip = false"
+                      class="text-gray-600 hover:text-gray-400 transition text-xs leading-none">✕</button>
+            </div>
+          </div>
+          <template x-if="activeDayTypeEntry()">
+            <div class="flex flex-wrap gap-3">
+              <template x-for="rate in waveRateSummary(activeDayTypeEntry())" :key="rate.waveType">
+                <div class="flex items-center gap-2 bg-gray-800/60 rounded-lg px-3 py-1.5 text-[11px]">
+                  <span class="w-2 h-2 rounded-full flex-shrink-0"
+                        :style="'background:' + ({'0':'#6b7280','1':'#f59e0b','2':'#ef4444','4':'#3b82f6'}[rate.waveType] || '#6b7280')"></span>
+                  <span class="font-bold text-gray-300" x-text="rate.label + ':'"></span>
+                  <span class="font-mono text-primary-light font-bold" x-text="rate.buy"></span>
+                  <span class="text-gray-600 text-[9px]">buy</span>
+                  <span class="text-gray-700 mx-0.5">/</span>
+                  <span class="font-mono text-gray-400" x-text="rate.sell"></span>
+                  <span class="text-gray-600 text-[9px]">sell</span>
+                </div>
+              </template>
+              <template x-if="(waveRateSummary(activeDayTypeEntry()) || []).length === 0">
+                <p class="text-[10px] text-gray-500 italic">No rates configured.
+                  <button @click="openPricingModal()" class="text-primary-light underline">Set rates →</button></p>
+              </template>
+            </div>
+
+            <!-- Standing charges, read-only.
+                 They belong on this strip because this is where a schedule is
+                 judged on cost, and a per-kWh-only view understates every day by
+                 a fixed amount. Deliberately NOT editable here: the utility
+                 service owns them, and a second place to edit one number is how
+                 fhai_host, gateway_phase and pricing_provider each ended up with
+                 two disagreeing copies. Show in both places, edit in one. -->
+            <template x-if="standingChargeCDay > 0">
+              <div class="mt-3 pt-3 border-t border-gray-700/50 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <span class="text-gray-400">
+                  <i class="fas fa-receipt text-[9px] mr-1.5 opacity-60"></i>
+                  Daily supply charge
+                  <span class="text-gray-600">— applies whether or not any energy moves</span>
+                </span>
+                <span class="flex items-center gap-3">
+                  <span class="font-mono font-bold text-gray-300"
+                        x-text="standingChargeCDay.toFixed(3) + ' c/day'"></span>
+                  <span class="font-mono text-gray-500"
+                        x-text="'$' + (standingChargeCDay * 365 / 100).toFixed(0) + '/yr'"></span>
+                  <button @click="$store.app.setTab('pricing')"
+                          class="text-primary-light/60 hover:text-primary-light underline underline-offset-2">Edit in Services →</button>
+                </span>
+              </div>
+            </template>
+          </template>
+        </div>
+      </template>
+
+      <!-- Schedule Table -->
+      <div class="rounded-xl border border-gray-700 bg-gray-800/60 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs min-w-[700px]">
+            <thead>
+              <tr class="border-b border-gray-700 bg-gray-800 text-[9px] font-black uppercase tracking-widest text-gray-600">
+                <th class="px-4 py-3 text-left">Start</th>
+                <th class="px-4 py-3 text-left">End</th>
+                <th class="px-4 py-3 text-left">Name</th>
+                <th class="px-4 py-3 text-left">Dispatch</th>
+                <th class="px-4 py-3 text-left">Wave</th>
+                 <template x-if="usageType >= 2">
+                   <th class="px-4 py-3 text-left cursor-help"
+                       title="Buy / Sell rate for this wave type">Price</th>
+                 </template>
+                <template x-if="showAdvanced">
+                  <th class="px-4 py-3 text-left cursor-help" title="Max Charging SOC Cut-off — charging will cease at this %">Max Chg%</th>
+                </template>
+                <template x-if="showAdvanced">
+                  <th class="px-4 py-3 text-left cursor-help" title="Min Discharging SOC Cut-off — discharging will cease at this %">Min Dis%</th>
+                </template>
+                <template x-if="showAdvanced">
+                  <th class="px-4 py-3 text-left cursor-help" title="Grid Charge Power — Max grid charging power (watts)">Grid Chrg(W)</th>
+                </template>
+                <template x-if="showAdvanced">
+                  <th class="px-4 py-3 text-left cursor-help" title="Grid Discharge Power — Max grid discharging power (watts)">Grid Dischg(W)</th>
+                </template>
+                <th class="px-4 py-3 text-left">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="(p, i) in editableSchedule" :key="i">
+                <tr class="border-b border-gray-700/40">
+                  <td class="px-3 py-2">
+                    <input type="text" x-model="p.startHourTime"
+                           placeholder="HH:MM" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                           class="bg-transparent font-bold font-mono text-primary-light border-none outline-none text-xs w-16">
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="text" x-model="p.endHourTime"
+                           placeholder="HH:MM" maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]"
+                           class="bg-transparent font-bold font-mono text-primary-light border-none outline-none text-xs w-16">
+                  </td>
+                  <td class="px-3 py-2">
+                    <input type="text" x-model="p.name"
+                           class="bg-transparent text-gray-100 border-none outline-none w-full text-xs font-semibold">
+                  </td>
+                  <td class="px-3 py-2">
+                    <select x-model.number="p.dispatchId"
+                            class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-100 focus:outline-none">
+                      {% for c in dispatch_codes if c.id != 0 %}<option value="{{ c.id }}" title="{{ c.description }}">{{ c.label }} — {{ c.intent }}</option>{% endfor %}
+                    </select>
+                  </td>
+                  <td class="px-3 py-2">
+                    <select x-model.number="p.waveType"
+                            class="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-100 focus:outline-none">
+                      <option value="4">Super Off-Peak</option>
+                      <option value="0">Off-Peak</option>
+                      <option value="1">Mid-Peak</option>
+                      <option value="2">On-Peak</option>
+                    </select>
+                  </td>
+                   <!-- PRICE column: buy/sell rate for this block's wave type -->
+                   <template x-if="usageType >= 2">
+                     <td class="px-3 py-2">
+                       <template x-if="activeDayTypeEntry()">
+                         <div class="flex flex-col gap-0.5 leading-tight">
+                           <span class="font-mono font-bold text-[11px] text-primary-light"
+                                 x-text="rateFromDayType(activeDayTypeEntry(), p, 'buy')"></span>
+                           <span class="font-mono text-[10px] text-gray-500"
+                                 x-text="rateFromDayType(activeDayTypeEntry(), p, 'sell') + ' sell'"></span>
+                         </div>
+                       </template>
+                       <template x-if="!activeDayTypeEntry()">
+                         <span class="text-gray-600 text-[10px]">—</span>
+                       </template>
+                     </td>
+                   </template>
+                  <template x-if="showAdvanced">
+                    <td class="px-3 py-2"
+                        :class="p.dispatchId !== 8 ? 'opacity-25 pointer-events-none' : ''"
+                        :title="p.dispatchId !== 8 ? 'Only applies to Grid Charge (8) blocks' : ''">
+                      <input type="number" x-model.number="p.maxChargeSoc"
+                             :disabled="p.dispatchId !== 8"
+                             class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 w-16 focus:outline-none"></td>
+                  </template>
+                  <template x-if="showAdvanced">
+                    <td class="px-3 py-2"
+                        :class="p.dispatchId !== 7 ? 'opacity-25 pointer-events-none' : ''"
+                        :title="p.dispatchId !== 7 ? 'Only applies to Grid Export (7) blocks' : ''">
+                      <input type="number" x-model.number="p.minDischargeSoc"
+                             :disabled="p.dispatchId !== 7"
+                             class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 w-16 focus:outline-none"></td>
+                  </template>
+                  <template x-if="showAdvanced">
+                    <td class="px-3 py-2"
+                        :class="p.dispatchId !== 8 ? 'opacity-25 pointer-events-none' : ''"
+                        :title="p.dispatchId !== 8 ? 'Only applies to Grid Charge (8) blocks' : ''">
+                      <input type="number" x-model.number="p.gridChargeMax"
+                             :disabled="p.dispatchId !== 8"
+                             class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 w-20 focus:outline-none"></td>
+                  </template>
+                  <template x-if="showAdvanced">
+                    <td class="px-3 py-2"
+                        :class="p.dispatchId !== 7 ? 'opacity-25 pointer-events-none' : ''"
+                        :title="p.dispatchId !== 7 ? 'Only applies to Grid Export (7) blocks' : ''">
+                      <input type="number" x-model.number="p.gridDischargeMax"
+                             :disabled="p.dispatchId !== 7"
+                             class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 w-20 focus:outline-none"></td>
+                  </template>
+                  <td class="px-3 py-2">
+                    <button @click="removeRow(i)"
+                            class="w-7 h-7 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition flex items-center justify-center">
+                      <i class="fas fa-trash-alt text-[10px]"></i>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <tr>
+                <td colspan="10" class="px-4 py-2 bg-gray-800/40 border-t border-gray-700/40">
+                  <div class="flex items-center justify-between flex-wrap gap-2">
+                    <!-- Add Time Block + Show Prices (right of it, same row) -->
+                    <div class="flex items-center gap-3">
+                      <button @click="addNewRow()"
+                              class="flex items-center gap-1.5 text-xs font-bold text-primary-light hover:text-primary transition">
+                        <i class="fas fa-plus-circle"></i>Add Time Block
+                      </button>
+                      <template x-if="usageType >= 2">
+                        <button @click="showPriceStrip = !showPriceStrip"
+                                class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition"
+                                :class="showPriceStrip
+                                  ? 'border-primary/40 text-primary-light bg-primary/8'
+                                  : 'border-gray-600 text-gray-500 bg-gray-800/60 hover:bg-gray-700 hover:text-gray-300'">
+                          <i class="fas fa-dollar-sign text-[9px]"></i>
+                          <span x-text="showPriceStrip ? 'Hide Prices ▴' : 'Show Prices ▾'"></span>
+                        </button>
+                      </template>
+                    </div>
+                    <!-- Editor actions (season-agnostic, operate on current table) -->
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <!-- Push history lived only inside the Pricing modal, so
+                           schedule restore points were reachable only by opening
+                           a dialog about rates. It belongs beside the other
+                           schedule actions. -->
+                      <button @click="_showHistory = !_showHistory; if(_showHistory) loadSnapshotHistory()"
+                              class="flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition"
+                              :class="_showHistory
+                                ? 'border-primary/40 text-primary-light bg-primary/10'
+                                : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'">
+                        <i class="fas fa-history text-[8px]"></i>History
+                      </button>
+                      <!-- Derives a schedule from the tariff and saves it as a
+                           preset. Never applies it: the result is a proposal
+                           about how the house runs, inferred from a rate table,
+                           and it reaches the battery only by the same
+                           load-then-Save-to-Gateway path as any other preset.
+
+                           usageType === 2 exactly, not >= 2. Type 2 is a static
+                           tariff — fixed, TOU or tiered — where tomorrow's
+                           prices are known and a day can be planned. Type 3 is
+                           real-time spot, where a precomputed daily schedule is
+                           the wrong instrument: Smart Dispatch and Automations
+                           react to the live price instead. Offering this there
+                           would propose a plan built on prices that have not
+                           happened yet. -->
+                      <button x-show="usageType === 2"
+                              @click="optimiseSchedule()" :disabled="optimising"
+                              :class="optimising ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500/10'"
+                              class="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-emerald-500/40 text-emerald-400 bg-emerald-500/5 text-[10px] font-bold transition"
+                              title="Suggest a schedule from your tariff rates and solar forecast">
+                        <i class="fas text-[8px]" :class="optimising ? 'fa-circle-notch fa-spin' : 'fa-wand-magic-sparkles'"></i>
+                        <span x-text="optimising ? 'Optimising…' : 'Optimise'"></span>
+                      </button>
+                      <button @click="validateSchedule()"
+                              class="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-primary/30 text-primary-light bg-primary/5 text-[10px] font-bold hover:bg-primary/10 transition">
+                        <i class="fas fa-check-double text-[8px]"></i>Validate
+                      </button>
+                      <button @click="openSavePresetModal()"
+                              class="relative flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition"
+                              :class="isDirty()
+                                ? 'border-amber-500/40 text-amber-400 bg-amber-500/8 hover:bg-amber-500/12'
+                                : 'border-gray-600 text-gray-500 bg-gray-800/60 hover:bg-gray-700'">
+                        <i class="fas fa-save text-[8px]"></i>Save Preset
+                        <span x-show="isDirty()" class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0"></span>
+                      </button>
+                      <button @click="openLoadPresetModal()"
+                              class="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-600 text-gray-500 bg-gray-800/60 text-[10px] font-bold hover:bg-gray-700 transition">
+                        <i class="fas fa-folder-open text-[8px]"></i>Load Preset
+                      </button>
+                      <button @click="showAdvanced = !showAdvanced"
+                              class="flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-bold transition"
+                              :class="showAdvanced ? 'border-primary/40 text-primary-light bg-primary/8' : 'border-gray-600 text-gray-500 bg-gray-800/60 hover:bg-gray-700'">
+                        <i class="fas fa-sliders-h text-[8px]"></i>Advanced
+                      </button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── CLI Table View (Gap 1) ───────────────────────────────────────────────── -->
+      <div x-show="(strategyList.length > 0 || editableSchedule.length > 0) && schedule !== null"
+           class="rounded-xl border border-gray-700 bg-gray-900/60">
+        <!-- Toggle bar -->
+        <button @click="showTableView = !showTableView"
+                class="w-full flex items-center justify-between px-4 py-2.5 text-[10px] font-bold text-gray-500 hover:text-gray-300 transition">
+          <span class="flex items-center gap-1.5">
+            <i class="fas fa-table text-[9px]"></i>
+            Table View
+            <span class="text-[9px] font-normal opacity-60">— all seasons &amp; day-types</span>
+          </span>
+          <i class="fas text-[9px]" :class="showTableView ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </button>
+        <!-- Collapsible content -->
+        <div x-show="showTableView" x-transition class="border-t border-gray-800">
+          <div class="px-4 py-3 flex items-center justify-between">
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-600">
+              <i class="fas fa-list-ul mr-1"></i>Full Schedule — All Seasons
+            </p>
+            <button @click="copyTableToClipboard()"
+                    class="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-700 text-gray-500 text-[9px] font-bold hover:text-primary-light hover:border-primary/40 transition">
+              <i class="fas fa-clipboard text-[8px]"></i> Copy TSV
+            </button>
+          </div>
+          <div class="overflow-x-auto pb-2">
+            <table class="w-full font-mono text-[11px] min-w-[640px]">
+              <thead>
+                <tr class="border-b border-gray-800 text-[9px] font-black uppercase tracking-widest text-gray-600 bg-gray-800/60">
+                  <th class="px-3 py-2 text-left">Season</th>
+                  <th class="px-3 py-2 text-left">Day Type</th>
+                  <th class="px-3 py-2 text-left">Start</th>
+                  <th class="px-3 py-2 text-left">End</th>
+                  <th class="px-3 py-2 text-left">Name</th>
+                  <th class="px-3 py-2 text-left">Dispatch</th>
+                  <th class="px-3 py-2 text-left">Wave</th>
+                  <template x-if="usageType >= 2">
+                    <th class="px-3 py-2 text-left text-primary-light">Buy</th>
+                  </template>
+                  <template x-if="usageType >= 2">
+                    <th class="px-3 py-2 text-left text-gray-500">Sell</th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(row, ri) in tableRows()" :key="ri">
+                  <tr class="border-b border-gray-800/40 hover:bg-gray-800/20 transition">
+                    <td class="px-3 py-1.5 text-gray-400 font-sans" x-text="row.season"></td>
+                    <td class="px-3 py-1.5 text-gray-500 font-sans" x-text="row.dayType"></td>
+                    <td class="px-3 py-1.5 font-bold text-primary-light" x-text="row.startHourTime"></td>
+                    <td class="px-3 py-1.5 font-bold text-primary-light" x-text="row.endHourTime"></td>
+                    <td class="px-3 py-1.5 text-gray-300 font-sans" x-text="row.name || '—'"></td>
+                    <td class="px-3 py-1.5">
+                      <span class="inline-flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full flex-shrink-0"
+                              :style="'background:' + getDispatchColor(row.dispatchId)"></span>
+                        <span class="text-gray-300 font-sans" x-text="getDispatchName(row.dispatchId)"></span>
+                      </span>
+                    </td>
+                    <td class="px-3 py-1.5 text-gray-400 font-sans" x-text="getWaveLabel(row.waveType)"></td>
+                    <template x-if="usageType >= 2">
+                      <td class="px-3 py-1.5 font-bold text-primary-light" x-text="rateFromBlock(row, 'buy')"></td>
+                    </template>
+                    <template x-if="usageType >= 2">
+                      <td class="px-3 py-1.5 text-gray-500" x-text="rateFromBlock(row, 'sell')"></td>
+                    </template>
+                  </tr>
+                </template>
+                <template x-if="tableRows().length === 0">
+                  <tr>
+                    <td colspan="9" class="px-4 py-6 text-center text-gray-600 text-[11px] italic">No schedule data — load from device first.</td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- Submit Modal -->
+      <div x-show="showSubmitModal" x-cloak x-transition.opacity
+           class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+           @click.self="showSubmitModal=false">
+        <div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+            <h4 class="font-bold text-gray-100 flex items-center gap-2">
+              <i class="fas fa-upload text-emerald-400"></i>Submit Custom Schedule
+            </h4>
+            <button @click="showSubmitModal=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+          </div>
+          <!-- ── Inline result panel (shows after submit, replaces form content) ── -->
+          <div x-show="submitResult !== null" x-transition class="p-6 space-y-4">
+            <!-- Success -->
+            <div x-show="submitResult && submitResult.ok"
+                 class="rounded-xl border border-emerald-500/40 bg-emerald-500/8 px-4 py-4 space-y-2">
+              <div class="flex items-center gap-2">
+                <i class="fas fa-check-circle text-emerald-400"></i>
+                <span class="text-sm font-bold text-emerald-300">Schedule pushed successfully</span>
+              </div>
+            </div>
+            <!-- Error -->
+            <div x-show="submitResult && !submitResult.ok"
+                 class="rounded-xl border border-red-500/40 bg-red-500/8 px-4 py-4 space-y-2">
+              <div class="flex items-center gap-2">
+                <i class="fas fa-times-circle text-red-400"></i>
+                <span class="text-sm font-bold text-red-300">Cloud API rejected the schedule</span>
+              </div>
+              <p class="text-xs text-red-300 break-words font-mono bg-gray-900 rounded px-3 py-2 border border-red-900/40"
+                 x-text="submitResult ? submitResult.message : ''"></p>
+              <p class="text-[10px] text-gray-600">Fix the issue above and try again. No changes were made to the gateway.</p>
+            </div>
+
+            <div class="flex justify-end">
+              <button @click="showSubmitModal=false; submitResult=null; if(_submitAutoCloseTimer) clearTimeout(_submitAutoCloseTimer)"
+                      class="px-5 py-2 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Close</button>
+            </div>
+          </div>
+
+          <!-- ── Gap-fill form (only shown when no result yet) ── -->
+          <div x-show="submitResult === null">
+            <div class="p-6 space-y-4">
+              <p class="text-xs text-gray-500 leading-relaxed">
+                Gaps detected in the schedule. Choose how to fill them before submitting.
+              </p>
+              <!-- Multi-season context badge -->
+              <template x-if="isMultiSeason">
+                <div class="rounded-lg bg-blue-500/10 border border-blue-500/30 px-3 py-2 flex items-center gap-2">
+                  <i class="fas fa-layer-group text-blue-400 text-[10px]"></i>
+                  <p class="text-[10px] text-blue-300">
+                    <span class="font-bold">Multi-season schedule</span> —
+                    all <span class="font-bold" x-text="strategyList.length"></span> seasons will be preserved and written atomically.
+                  </p>
+                </div>
+              </template>
+              <div>
+                <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Submit Operation</label>
+                <select x-model.number="submitForm.operation"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-xs text-gray-100 focus:outline-none focus:border-primary">
+                  <option value="0">0: Overwrite All</option>
+                  <option value="1">1: Insert Entries</option>
+                  <option value="2">2: Delete Entries</option>
+                </select>
+              </div>
+              <div class="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3">
+                <p class="text-[9px] font-black uppercase tracking-widest text-primary-light">Gap-Fill Defaults</p>
+                <div>
+                  <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Default Strategy</label>
+                  <select x-model="submitForm.default_strategy"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none">
+                    <option value="SELF">Self Consumption</option>
+                    <option value="HOME">Home Priority</option>
+                    <option value="SOLAR">Solar Charge</option>
+                    <option value="STANDBY">Standby</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Default Tariff / Wave</label>
+                  <select x-model="submitForm.default_tariff"
+                          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none">
+                    <option value="OFF_PEAK">Off-Peak</option>
+                    <option value="MID_PEAK">Mid-Peak</option>
+                    <option value="ON_PEAK">On-Peak</option>
+                    <option value="SUPER_OFF_PEAK">Super Off-Peak</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+              <button @click="showSubmitModal=false; submitResult=null"
+                      class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Cancel</button>
+              <button @click="submitSchedule(true)" :disabled="submitting"
+                      class="flex-[2] py-2.5 rounded-xl bg-emerald-500 text-white text-xs font-bold hover:bg-emerald-600 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                <i class="text-[10px] fas" :class="submitting ? 'fa-sync-alt animate-spin' : 'fa-upload'"></i>
+                <span x-text="submitting ? 'Pushing to Cloud…' : 'Submit Schedule'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </template>
+
+<!-- Modals are inside the same scheduleTab() Alpine scope as the editor -->
+
+
+<!-- ── Refresh Modal ──────────────────────────────────────────── -->
+<div x-show="showRefreshModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @click.self="showRefreshModal=false">
+  <div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <h4 class="font-bold text-gray-100 flex items-center gap-2">
+        <i class="fas fa-sync-alt text-blue-400"></i>Refresh Schedule
+      </h4>
+      <button @click="showRefreshModal=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-6 space-y-4">
+      <!-- Loading state -->
+      <template x-if="!refreshResult">
+        <div class="flex flex-col items-center gap-4 py-4">
+          <i class="fas fa-sync-alt animate-spin text-2xl text-blue-400"></i>
+          <p class="text-sm text-gray-400">Fetching live schedule from Cloud API…</p>
+          <p class="text-[10px] font-mono text-gray-600" x-text="'Auto-close in ' + refreshCountdown + 's'"></p>
+        </div>
+      </template>
+      <!-- Result state -->
+      <template x-if="refreshResult">
+        <div class="space-y-3">
+          <div :class="refreshResult.ok ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'"
+               class="rounded-xl border px-4 py-3 flex items-center gap-3">
+            <i class="fas" :class="refreshResult.ok ? 'fa-check-circle' : 'fa-exclamation-circle'"></i>
+            <span class="text-sm font-semibold" x-text="refreshResult.message"></span>
+          </div>
+          <p class="text-[10px] font-mono text-gray-600" x-text="'Auto-close in ' + refreshCountdown + 's'"></p>
+        </div>
+      </template>
+    </div>
+    <div class="px-6 py-4 border-t border-gray-800">
+      <button @click="showRefreshModal=false"
+              class="w-full py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Validate Modal ─────────────────────────────────────────── -->
+<div x-show="showValidateModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @click.self="showValidateModal=false">
+  <div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <h4 class="font-bold text-gray-100 flex items-center gap-2">
+        <i class="fas fa-check-double text-purple-400"></i>Validate Schedule
+      </h4>
+      <button @click="showValidateModal=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-6">
+      <!-- Checking state -->
+      <template x-if="!validateResult">
+        <div class="flex flex-col items-center gap-4 py-6">
+          <i class="fas fa-spinner animate-spin text-2xl text-purple-400"></i>
+          <p class="text-sm text-gray-400">Checking 24-hour coverage…</p>
+        </div>
+      </template>
+      <!-- Pass -->
+      <template x-if="validateResult && validateResult.pass">
+        <div class="space-y-3">
+          <div class="rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
+            <i class="fas fa-check-circle text-emerald-400 text-lg"></i>
+            <span class="text-sm text-emerald-400 font-semibold" x-text="validateResult.message"></span>
+          </div>
+        </div>
+      </template>
+      <!-- Fail -->
+      <template x-if="validateResult && !validateResult.pass">
+        <div class="space-y-3">
+          <div class="rounded-xl border px-4 py-3 flex items-start gap-3"
+               style="background:var(--warn-bg);border-color:rgba(245,158,11,0.35)">
+            <i class="fas fa-exclamation-triangle mt-0.5 flex-shrink-0"
+               style="color:var(--warn-text)"></i>
+            <div>
+              <p class="text-xs font-bold mb-2" style="color:var(--warn-text)">Schedule has issues — submit is blocked until fixed:</p>
+              <ul class="space-y-1">
+                <template x-for="issue in validateResult.issues" :key="issue">
+                  <li class="text-xs flex items-start gap-1.5" style="color:var(--warn-text)">
+                    <span class="mt-0.5" style="color:var(--warn)">•</span>
+                    <span x-text="issue"></span>
+                  </li>
+                </template>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div class="px-6 py-4 border-t border-gray-800">
+      <button @click="showValidateModal=false"
+              class="w-full py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Save Preset Modal ──────────────────────────────────────── -->
+<div x-show="showSavePresetModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @keydown.escape.window="showSavePresetModal=false">
+  <div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <h4 class="font-bold text-gray-100 flex items-center gap-2">
+        <i class="fas fa-save text-gray-400"></i>Save Preset
+      </h4>
+      <button @click="showSavePresetModal=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-6 space-y-4">
+      <p class="text-xs text-gray-500 leading-relaxed">
+        Save the current schedule editor state as a reusable preset.
+        Presets are shared across all gateways — include a gateway name in the preset name if needed.
+      </p>
+      <div>
+        <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Preset Name <span class="text-red-400">*</span></label>
+        <input type="text" x-model="presetName" placeholder="e.g. Peak export — GW-99900001"
+               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary"
+               @keydown.enter="savePreset()">
+      </div>
+      <div>
+        <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Description (optional)</label>
+        <input type="text" x-model="presetDescription" placeholder="e.g. Grid charge during off-peak tariff window"
+               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-100 focus:outline-none focus:border-primary">
+      </div>
+      <!-- Result feedback: 3-state: success / error / overwrite-warning -->
+      <template x-if="presetSaveResult">
+        <div :class="presetSaveResult.ok === true
+                       ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                       : presetSaveResult.ok === null
+                         ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                         : 'bg-red-500/10 border-red-500/30 text-red-400'"
+             class="rounded-lg border px-3 py-2 text-xs flex items-center gap-2">
+          <i class="fas"
+             :class="presetSaveResult.ok === true ? 'fa-check-circle'
+                     : presetSaveResult.ok === null ? 'fa-exclamation-triangle'
+                     : 'fa-exclamation-circle'"></i>
+          <span x-text="presetSaveResult.message"></span>
+        </div>
+      </template>
+    </div>
+    <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+      <button @click="showSavePresetModal=false"
+              class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Cancel</button>
+      <button @click="savePreset()" :disabled="savingPreset || !presetName.trim()"
+              class="flex-[2] py-2.5 rounded-xl bg-gray-600 text-white text-xs font-bold hover:bg-gray-500 transition disabled:opacity-40 flex items-center justify-center gap-2">
+        <i class="text-[10px] fas" :class="savingPreset ? 'fa-sync-alt animate-spin' : 'fa-save'"></i>
+        <span x-text="savingPreset ? 'Saving…' : 'Save Preset'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Load Preset Modal ──────────────────────────────────────── -->
+<div x-show="showLoadPresetModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @click.self="showLoadPresetModal=false">
+  <div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <h4 class="font-bold text-gray-100 flex items-center gap-2">
+        <i class="fas fa-folder-open text-gray-400"></i>Load Preset
+      </h4>
+      <button @click="showLoadPresetModal=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-4 max-h-[60vh] overflow-y-auto">
+      <!-- Empty state -->
+      <template x-if="presets.length === 0">
+        <div class="text-center py-10">
+          <p class="text-3xl mb-3">📋</p>
+          <p class="text-sm text-gray-500">No presets saved yet.</p>
+          <p class="text-xs text-gray-600 mt-1">Use <strong class="text-gray-400">Save Preset</strong> to create one.</p>
+        </div>
+      </template>
+      <!-- Preset list -->
+      <template x-if="presets.length > 0">
+        <div class="space-y-2">
+          <template x-for="preset in presets" :key="preset.name">
+            <div class="rounded-xl border border-gray-700 bg-gray-800/60 px-4 py-3 flex items-center gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-xs font-bold text-gray-100" x-text="preset.name"></span>
+                  <template x-if="preset.built_in">
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/15 text-blue-400 border border-blue-500/30">Built-in</span>
+                  </template>
+                </div>
+                <p class="text-[10px] text-gray-500 mt-0.5 truncate" x-text="preset.description || ' '"></p>
+                <p class="text-[9px] text-gray-600 mt-0.5">
+                  <span x-text="preset.slot_count + ' block' + (preset.slot_count !== 1 ? 's' : '')"></span>
+                  <span x-show="preset.created_at" x-text="' · ' + preset.created_at"></span>
+                </p>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button @click="loadPreset(preset.name)" :disabled="loadingPreset"
+                        class="px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary-light text-xs font-bold hover:bg-primary/20 transition disabled:opacity-50">
+                  <i class="fas fa-upload text-[9px] mr-1"></i>Load
+                </button>
+                <button @click="deletePreset(preset.name)"
+                        class="w-7 h-7 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition flex items-center justify-center">
+                  <i class="fas fa-trash-alt text-[10px]"></i>
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+    <div class="px-6 py-4 border-t border-gray-800">
+      <button @click="showLoadPresetModal=false"
+              class="w-full py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Close</button>
+    </div>
+  </div>
+</div>
+<!-- ── TOU Health Reset Modal (Gap 2) ─────────────────────────────────── -->
+<div x-show="showResetTouModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @keydown.escape.window="showResetTouModal=false">
+  <div class="w-full max-w-md rounded-2xl border border-red-900/60 bg-gray-900 shadow-2xl overflow-hidden">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-red-900/40 bg-red-500/5">
+      <h4 class="font-bold text-gray-100 flex items-center gap-2">
+        <i class="fas fa-redo text-red-400"></i>Reset TOU Schedule Execution
+      </h4>
+      <button @click="showResetTouModal=false" class="text-gray-500 hover:text-gray-300 transition">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <!-- Body -->
+    <div class="p-6 space-y-4">
+      <!-- Fault reasons from health check -->
+      <div x-show="(touHealth?.fault_reasons || []).length > 0"
+           class="rounded-xl border border-amber-500/30 bg-amber-500/8 px-4 py-3">
+        <p class="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-2">
+          <i class="fas fa-exclamation-triangle mr-1"></i>Detected Issues
+        </p>
+        <ul class="space-y-1">
+          <template x-for="(reason, ri) in (touHealth?.fault_reasons || [])" :key="ri">
+            <li class="text-xs text-amber-300 flex items-start gap-1.5">
+              <i class="fas fa-dot-circle text-[8px] mt-1 flex-shrink-0 text-amber-500"></i>
+              <span x-text="reason"></span>
+            </li>
+          </template>
+        </ul>
+      </div>
+
+      <!-- Warning description -->
+      <div class="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-xs text-gray-400 space-y-1.5">
+        <p class="font-bold text-gray-300 flex items-center gap-2">
+          <i class="fas fa-info-circle text-primary-light text-[10px]"></i>What this does
+        </p>
+        <p>Temporarily switches the gateway to <strong class="text-gray-200">Self-Consumption</strong> mode, then back to <strong class="text-gray-200">Time-of-Use</strong>. This forces the firmware to re-read its local TOU schedule database and restart schedule execution.</p>
+        <p class="text-[10px] text-gray-600"><i class="fas fa-clock mr-1"></i>Takes ~60 seconds. Battery operation is uninterrupted during the toggle.</p>
+      </div>
+
+      <!-- Result log (visible after attempt) -->
+      <div x-show="resetTouResult !== null" x-transition class="rounded-xl border overflow-hidden"
+           :class="resetTouResult?.ok ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'">
+        <div class="px-4 py-2 flex items-center gap-2 border-b"
+             :class="resetTouResult?.ok ? 'border-emerald-500/20' : 'border-red-500/20'">
+          <i class="fas text-[10px]" :class="resetTouResult?.ok ? 'fa-check-circle text-emerald-400' : 'fa-times-circle text-red-400'"></i>
+          <span class="text-[11px] font-bold" x-text="resetTouResult?.ok ? 'Reset successful' : 'Reset failed'"
+                :class="resetTouResult?.ok ? 'text-emerald-300' : 'text-red-300'"></span>
+          <span x-show="resetTouResult?.sync_cleared" class="ml-auto text-[10px] text-emerald-400 font-bold">
+            <i class="fas fa-check mr-1"></i>Sync confirmed
+          </span>
+        </div>
+        <!-- Error message -->
+        <p x-show="!resetTouResult?.ok && resetTouResult?.error"
+           class="px-4 py-2 text-xs text-red-300" x-text="resetTouResult?.error"></p>
+        <!-- Step log -->
+        <div x-show="(resetTouResult?.steps || []).length > 0" class="px-4 py-2 space-y-0.5">
+          <template x-for="(step, si) in (resetTouResult?.steps || [])" :key="si">
+            <p class="text-[10px] text-gray-500 font-mono" x-text="step"></p>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+      <button @click="showResetTouModal=false"
+              class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">
+        <span x-text="resetTouResult?.ok ? 'Close' : 'Cancel'"></span>
+      </button>
+      <button @click="resetTou()"
+              :disabled="resetTouLoading || resetTouResult?.ok"
+              x-show="!resetTouResult?.ok"
+              class="flex-[2] py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition disabled:opacity-40 flex items-center justify-center gap-2">
+        <i class="fas text-[10px]" :class="resetTouLoading ? 'fa-spinner animate-spin' : 'fa-redo'"></i>
+        <span x-text="resetTouLoading ? 'Resetting…' : 'Confirm Reset'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Usage Type Modal (R1) ──────────────────────────────────────────── -->
+<div x-show="showUsageTypeModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @click.self="showUsageTypeModal=false">
+  <div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <h4 class="font-bold text-gray-100 flex items-center gap-2">
+        <i class="fas fa-cog text-primary-light"></i>Schedule Usage Type
+      </h4>
+      <button @click="showUsageTypeModal=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-6 space-y-3">
+      <p class="text-xs text-gray-400 leading-relaxed">Choose how you want to use the schedule editor. This affects which features and columns are shown.</p>
+      <p class="text-[10px] text-gray-600"><i class="fas fa-info-circle mr-1"></i>You can change this at any time — tap the <strong class="text-gray-500">⚙ Usage Type</strong> button in the editor toolbar.</p>
+
+      <!-- Option 1: Scheduling Only -->
+      <button @click="setUsageType(1)"
+              class="w-full rounded-xl border px-5 py-4 text-left transition hover:border-primary/40 hover:bg-primary/5 group"
+              :class="usageType === 1 ? 'border-primary/50 bg-primary/8' : 'border-gray-700 bg-gray-800/40'">
+        <div class="flex items-center gap-3">
+          <span class="w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center"
+                :class="usageType === 1 ? 'border-primary bg-primary' : 'border-gray-600'">
+            <span x-show="usageType === 1" class="w-1.5 h-1.5 rounded-full bg-white"></span>
+          </span>
+          <div>
+            <p class="text-sm font-bold text-gray-100">Scheduling Only</p>
+            <p class="text-xs text-gray-500 mt-0.5">Manage time blocks and dispatch modes. No rates or pricing columns.</p>
+          </div>
+        </div>
+      </button>
+
+      <!-- Option 2: Schedule & Pricing -->
+      <button @click="setUsageType(2)"
+              class="w-full rounded-xl border px-5 py-4 text-left transition hover:border-primary/40 hover:bg-primary/5 group"
+              :class="usageType === 2 ? 'border-primary/50 bg-primary/8' : 'border-gray-700 bg-gray-800/40'">
+        <div class="flex items-center gap-3">
+          <span class="w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center"
+                :class="usageType === 2 ? 'border-primary bg-primary' : 'border-gray-600'">
+            <span x-show="usageType === 2" class="w-1.5 h-1.5 rounded-full bg-white"></span>
+          </span>
+          <div>
+            <p class="text-sm font-bold text-gray-100">Schedule &amp; Pricing</p>
+            <p class="text-xs text-gray-500 mt-0.5">Enter static Buy/Sell rates per time period. Works with any utility worldwide — enter your plan details directly.</p>
+            <div class="flex gap-1.5 mt-2 flex-wrap">
+              <span class="px-2 py-0.5 rounded text-[9px] font-bold bg-primary/15 text-primary-light border border-primary/30">TOU / Fixed / Tiered</span>
+              <span class="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-700 text-gray-400">Any country</span>
+            </div>
+          </div>
+        </div>
+      </button>
+
+      <!-- Option 3: Dynamic Pricing (gated) -->
+      <button @click="setUsageType(3)"
+              class="w-full rounded-xl border px-5 py-4 text-left transition hover:border-primary/40 hover:bg-primary/5 group"
+              :class="usageType === 3 ? 'border-primary/50 bg-primary/8' : 'border-gray-700 bg-gray-800/40'">
+        <div class="flex items-center gap-3">
+          <span class="w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center"
+                :class="usageType === 3 ? 'border-primary bg-primary' : 'border-gray-600'">
+            <span x-show="usageType === 3" class="w-1.5 h-1.5 rounded-full bg-white"></span>
+          </span>
+          <div>
+            <p class="text-sm font-bold text-gray-100">Schedule &amp; Pricing</p>
+            <p class="text-xs text-gray-500 mt-0.5">Real-time spot prices from Amber Electric, Octopus Energy, or other providers (requires Pricing tab setup).</p>
+            <span class="mt-2 inline-block px-2 py-0.5 rounded text-[9px] font-bold bg-orange-500/15 text-orange-400 border border-orange-500/30">Coming Soon / BKL-DYNPRICE-01</span>
+          </div>
+        </div>
+      </button>
+
+    </div>
+    <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+      <button @click="showUsageTypeModal=false"
+              class="flex-1 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Done</button>
+      <template x-if="usageType === 2">
+        <button @click="showUsageTypeModal=false; openTariffSetup()"
+                class="flex-[2] py-2.5 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary-dark transition">
+          <i class="fas fa-tag text-[10px] mr-1"></i>Set Up Tariff
+        </button>
+      </template>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Tariff Setup Modal (R3) — 3-step, country-agnostic ────── -->
+<!-- ── Tariff Setup Modal — 3-step, country-agnostic ──────────── -->
+<div x-show="showTariffSetupModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @keydown.escape.window="showTariffSetupModal=false">
+  <div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
+      <div>
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-tag text-primary-light"></i>
+          <span x-text="tariffSetupStep === 1 ? 'Step 1 of 3 — Tariff Type' :
+                         tariffSetupStep === 2 ? 'Step 2 of 3 — Tariff Identity' :
+                         'Step 3 of 3 — Confirm'"></span>
+        </h4>
+        <p class="text-[10px] text-gray-600 mt-0.5">Works with any utility worldwide — US, AU, CA, EU, or custom</p>
+      </div>
+      <button @click="showTariffSetupModal=false" class="text-gray-500 hover:text-gray-300 transition p-1">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <!-- Step indicators -->
+    <div class="flex items-center gap-2 px-6 py-3 border-b border-gray-800 bg-gray-800/40 flex-shrink-0">
+      <template x-for="s in [1,2,3]" :key="s">
+        <div class="flex items-center">
+          <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black border-2 transition"
+               :class="tariffSetupStep > s ? 'bg-primary border-primary text-white' :
+                        tariffSetupStep === s ? 'border-primary-light text-primary-light bg-primary/10' :
+                        'border-gray-700 text-gray-700'">
+            <template x-if="tariffSetupStep > s"><i class="fas fa-check text-[8px]"></i></template>
+            <span x-show="tariffSetupStep <= s" x-text="s"></span>
+          </div>
+          <div x-show="s < 3" class="w-12 h-px flex-shrink-0"
+               :class="tariffSetupStep > s ? 'bg-primary/50' : 'bg-gray-700'"></div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Content (scrollable) -->
+    <div class="flex-1 overflow-y-auto">
+
+      <!-- Step 1: Tariff Type -->
+      <template x-if="tariffSetupStep === 1">
+        <div class="p-6 space-y-3">
+          <p class="text-xs text-gray-400">Select the type of pricing your utility uses. This controls how rates are entered in the schedule.</p>
+          <template x-for="opt in [
+            {id:1, label:'Time of Use (TOU)',  desc:'Rates vary by time of day — On-Peak, Off-Peak, Mid-Peak, Super Off-Peak.'},
+            {id:2, label:'Fixed Rate',         desc:'One flat buy rate all day, year-round. Simplest tariff structure.'},
+            {id:3, label:'Tiered',             desc:'Rate tiers based on monthly usage volume, not time of day.'}
+          ]" :key="opt.id">
+            <button @click="tariffSetupForm.type = opt.id"
+                    class="w-full rounded-xl border px-5 py-3.5 text-left transition"
+                    :class="tariffSetupForm.type === opt.id
+                      ? 'border-primary/50 bg-primary/8'
+                      : 'border-gray-700 bg-gray-800/40 hover:border-gray-600'">
+              <div class="flex items-center gap-3">
+                <span class="w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center"
+                      :class="tariffSetupForm.type === opt.id ? 'border-primary bg-primary' : 'border-gray-600'">
+                  <span x-show="tariffSetupForm.type === opt.id" class="w-1.5 h-1.5 rounded-full bg-white"></span>
+                </span>
+                <div>
+                  <p class="text-sm font-bold text-gray-100" x-text="opt.label"></p>
+                  <p class="text-xs text-gray-500 mt-0.5" x-text="opt.desc"></p>
+                </div>
+              </div>
+            </button>
+          </template>
+        </div>
+      </template>
+
+      <!-- Step 2: Tariff Identity -->
+      <template x-if="tariffSetupStep === 2">
+        <div class="p-6 space-y-4">
+          <p class="text-xs text-gray-400">Enter your utility and tariff name. For reference only — FHAI doesn't look them up externally.</p>
+          <div>
+            <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Utility / Billing Provider <span class="text-red-400">*</span></label>
+            <input type="text" x-model="tariffSetupForm.utility"
+                   placeholder="e.g. Amber Electric, PG&amp;E, Ausgrid, AGL, Octopus Energy…"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-100 focus:outline-none focus:border-primary">
+          </div>
+          <div>
+            <label class="block text-[9px] font-bold uppercase text-gray-500 mb-1.5">Tariff / Plan Name <span class="text-red-400">*</span></label>
+            <input type="text" x-model="tariffSetupForm.name"
+                   placeholder="e.g. EA011 TOU, E-TOU-C, Flexible Export, Agile Octopus…"
+                   class="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-100 focus:outline-none focus:border-primary">
+          </div>
+          <!-- NBT / NEM 3.0 toggle -->
+          <div class="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3">
+            <label class="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" x-model="tariffSetupForm.is_nbt" class="mt-0.5 accent-primary">
+              <div>
+                <p class="text-xs font-bold text-gray-200">Net Billing Tariff (NBT / NEM 3.0)</p>
+                <p class="text-[10px] text-gray-500 mt-0.5">CA PG&amp;E, SCE, SDG&amp;E only. Rate fields will be read-only per FranklinWH policy. Dispatch modes remain editable.</p>
+              </div>
+            </label>
+          </div>
+        </div>
+      </template>
+
+      <!-- Step 3: Confirm -->
+      <template x-if="tariffSetupStep === 3">
+        <div class="p-6 space-y-4">
+          <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-4 space-y-2.5 text-xs">
+            <div class="flex justify-between items-center">
+              <span class="text-gray-500">Type</span>
+              <span class="font-bold text-gray-100"
+                    x-text="['', 'Time-of-Use (TOU)', 'Fixed Rate', 'Tiered'][tariffSetupForm.type]"></span>
+            </div>
+            <div class="flex justify-between items-center">
+              <span class="text-gray-500">Utility</span>
+              <span class="text-gray-200 font-semibold" x-text="tariffSetupForm.utility || '—'"></span>
+            </div>
+            <div class="flex justify-between items-center">
+              <span class="text-gray-500">Tariff Name</span>
+              <span class="text-gray-200 font-semibold" x-text="tariffSetupForm.name || '—'"></span>
+            </div>
+            <div x-show="tariffSetupForm.is_nbt" class="flex justify-between items-center">
+              <span class="text-gray-500">NBT / NEM 3.0</span>
+              <span class="px-2 py-0.5 rounded text-[9px] font-bold bg-primary/15 text-primary-light border border-primary/30">Read-only rates</span>
+            </div>
+          </div>
+          <!-- What happens next -->
+          <div class="rounded-xl border border-gray-700 bg-gray-800/40 px-4 py-3 text-xs text-gray-400 space-y-1">
+            <p class="font-bold text-gray-300 mb-1">What happens next</p>
+            <template x-if="tariffSetupForm.type === 1">
+              <p><i class="fas fa-info-circle mr-1.5 text-primary-light"></i>
+                <strong class="text-gray-200">TOU:</strong> Buy/Sell rate fields appear on each time block in the schedule table.
+              </p>
+            </template>
+            <template x-if="tariffSetupForm.type === 2">
+              <p><i class="fas fa-info-circle mr-1.5 text-primary-light"></i>
+                <strong class="text-gray-200">Fixed:</strong> A single flat Buy/Sell rate field appears in the Tariff card above the editor.
+              </p>
+            </template>
+            <template x-if="tariffSetupForm.type === 3">
+              <p><i class="fas fa-info-circle mr-1.5 text-primary-light"></i>
+                <strong class="text-gray-200">Tiered:</strong> Tier thresholds and rates appear in the Tariff card. No per-block rates needed.
+              </p>
+            </template>
+          </div>
+        </div>
+      </template>
+
+    </div><!-- /scrollable -->
+
+    <!-- Footer -->
+    <div class="px-6 py-4 border-t border-gray-800 flex gap-3 flex-shrink-0">
+      <button x-show="tariffSetupStep > 1" @click="tariffSetupStep--"
+              class="px-4 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">
+        <i class="fas fa-arrow-left text-[9px] mr-1"></i>Back
+      </button>
+      <button x-show="tariffSetupStep === 1" @click="showTariffSetupModal=false"
+              class="px-4 py-2.5 rounded-xl border border-gray-700 text-xs font-semibold text-gray-400 hover:text-gray-200 transition">Cancel</button>
+      <button @click="tariffSetupNext()"
+              :disabled="tariffSetupStep === 2 && (!tariffSetupForm.utility.trim() || !tariffSetupForm.name.trim())"
+              class="flex-1 py-2.5 rounded-xl text-xs font-bold transition disabled:opacity-40 bg-primary hover:bg-primary-dark text-white">
+        <span x-text="tariffSetupStep === 3 ? '&#10003; Save Tariff Setup' : 'Next \u2192'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Pricing Modal ──────────────────────────────────────────────── -->
+<div x-show="showPricingModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @keydown.escape.window="showPricingModal && (showPricingModal=false)">
+  <div class="w-full max-w-3xl rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl flex flex-col max-h-[92vh]">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
+      <div>
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-dollar-sign text-primary-light"></i>
+          <span x-text="tariffInfo?.name ? tariffInfo.name + ' — Pricing' : 'Pricing Schedule'"></span>
+        </h4>
+        <p class="text-[11px] font-semibold text-gray-300 mt-0.5 tracking-wide"
+           x-text="'Today: ' + new Date().toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'})
+                   + (tariffInfo?.utility ? ' · ' + tariffInfo.utility : '')"></p>
+      </div>
+      <button @click="showPricingModal=false" class="text-gray-500 hover:text-gray-300 transition p-1">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <!-- ── Fixed Season Management Header ── -->
+    <div class="border-b border-gray-800 bg-gray-900 flex-shrink-0">
+
+      <!-- ── Row 1: Season tabs + Add Season ── -->
+      <div class="flex items-center gap-0 pl-4 pr-4 pt-3 pb-0 overflow-x-auto">
+        <template x-for="(season, si) in (strategyList || [])" :key="si">
+          <div class="relative group flex-shrink-0">
+            <button @click="selectSeason(si)"
+                    class="flex items-center gap-2 px-4 py-2 text-xs font-bold whitespace-nowrap border-b-2 mr-1 transition-all rounded-t-lg"
+                    :class="si === activeSeason
+                      ? 'text-gray-100 border-primary bg-primary/15'
+                      : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-gray-800/60'">
+              <span x-show="isActiveSeason(season)"
+                    class="w-2 h-2 rounded-full flex-shrink-0"
+                    :class="si === activeSeason ? 'bg-emerald-400 animate-pulse shadow-lg shadow-emerald-400/60' : 'bg-emerald-700'"></span>
+              <span x-text="season.seasonName || season.name || ('Season ' + (si+1))"></span>
+              <span class="text-[10px] font-normal opacity-60" x-text="seasonMonthRange(season)"></span>
+            </button>
+            <!-- Remove season (hover ×) -->
+            <button x-show="strategyList.length > 1"
+                    @click.stop="removeSeason(si)"
+                    class="absolute -top-0.5 -right-0.5 hidden group-hover:flex w-5 h-5 rounded-full border items-center justify-center transition-all z-10"
+                    :class="_pendingRemoveSeason === si
+                      ? 'bg-red-500 border-red-400 text-white animate-pulse'
+                      : 'bg-gray-800 border-gray-600 text-gray-500 hover:text-red-400 hover:border-red-500/60 hover:bg-red-500/10'"
+                    :title="_pendingRemoveSeason === si ? 'Tap again to confirm' : 'Remove season'">
+              <i class="fas fa-times text-[8px]"></i>
+            </button>
+          </div>
+        </template>
+
+        <!-- Add Season — shows inline form or + button -->
+        <template x-if="!_showAddSeasonForm && (strategyList || []).length < 4">
+          <button @click="addSeason()"
+                  class="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 ml-1 rounded-lg border border-dashed border-gray-700 text-gray-500 text-[10px] font-bold hover:border-primary/40 hover:text-primary-light transition">
+            <i class="fas fa-plus text-[8px]"></i> Add Season
+          </button>
+        </template>
+
+        <!-- Inline name entry (replaces window.prompt which is blocked in HA ingress) -->
+        <template x-if="_showAddSeasonForm">
+          <div class="flex items-center gap-1.5 ml-2 bg-gray-800 border border-primary/30 rounded-lg px-2 py-1">
+            <i class="fas fa-tag text-primary-light text-[9px]"></i>
+            <input id="addSeasonNameInput"
+                   type="text"
+                   x-model="_addingSeasonName"
+                   @keydown.enter="confirmAddSeason()"
+                   @keydown.escape="cancelAddSeason()"
+                   placeholder="Season name"
+                   class="bg-transparent text-xs text-gray-200 outline-none w-28 placeholder-gray-600">
+            <button @click="confirmAddSeason()"
+                    class="text-[9px] font-bold text-emerald-400 hover:text-emerald-300 px-1.5 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition">
+              Add
+            </button>
+            <button @click="cancelAddSeason()"
+                    class="text-[9px] text-gray-600 hover:text-gray-400 transition">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </template>
+      </div>
+
+      <!-- ── Row 2: Month chip picker (FranklinWH-style) ── -->
+      <div class="px-5 py-3 bg-gray-800/40 border-t border-gray-800">
+        <!-- Month summary + name editor in one line -->
+        <div class="flex items-center gap-3 mb-2.5">
+          <label class="text-[10px] font-black uppercase tracking-widest text-gray-600 flex-shrink-0">Months</label>
+          <span class="text-[11px] text-emerald-400 font-semibold"
+                x-text="strategyList.length ? seasonMonthRange(strategyList[activeSeason]) : ''"></span>
+          <div class="flex items-center gap-1.5 ml-auto">
+            <label class="text-[10px] font-black uppercase tracking-widest text-gray-600 flex-shrink-0">Name</label>
+            <input type="text"
+                   :value="strategyList[activeSeason]?.seasonName || strategyList[activeSeason]?.name || ''"
+                   @change="if(strategyList[activeSeason]) { strategyList[activeSeason].seasonName = $event.target.value; strategyList[activeSeason].name = $event.target.value; }"
+                   @blur="$event.target.value = strategyList[activeSeason]?.seasonName || strategyList[activeSeason]?.name || ''"
+                   placeholder="e.g. Summer"
+                   class="w-28 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-primary transition">
+          </div>
+        </div>
+        <!-- 4x3 month chip grid — guarded; renders only after strategyList loads -->
+        <div class="grid grid-cols-6 gap-1.5" x-show="strategyList.length > 0">
+          <template x-for="m in [1,2,3,4,5,6,7,8,9,10,11,12]" :key="m">
+            <button
+              @click="toggleMonth(m)"
+              class="relative h-8 rounded-lg text-[10px] font-bold border transition-all"
+              :class="{
+                'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-[0_0_6px_rgba(52,211,153,0.15)]': monthInActiveSeason(m),
+                'bg-gray-800/30 border-gray-700/60 text-gray-600 cursor-not-allowed opacity-50': !monthInActiveSeason(m) && monthOwner(m) !== -1 && monthOwner(m) !== activeSeason,
+                'bg-gray-800/10 border-gray-700/40 text-gray-500 hover:border-emerald-500/40 hover:text-emerald-400 hover:bg-emerald-500/5': !monthInActiveSeason(m) && (monthOwner(m) === -1 || monthOwner(m) === activeSeason),
+                'ring-2 ring-amber-400 ring-offset-1 ring-offset-gray-900 animate-pulse !font-black': m === (new Date().getMonth() + 1)
+              }"
+              :title="(m === (new Date().getMonth() + 1) ? 'Current month · ' : '') + (monthOwner(m) !== -1 && !monthInActiveSeason(m)
+                ? 'Owned by ' + (strategyList[monthOwner(m)]?.seasonName || 'Season ' + (monthOwner(m)+1)) + ' — click to move'
+                : (monthInActiveSeason(m) ? 'Click to remove from this season' : 'Click to add to this season'))"
+              x-text="['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]">
+            </button>
+          </template>
+        </div>
+        <p class="text-[9px] text-gray-700 mt-1.5">Dimmed months belong to another season · click to move them</p>
+      </div>
+
+
+      <!-- ── Row 3: Day-type management ── -->
+      <div class="px-5 py-2 bg-gray-800/20 border-t border-gray-800 flex items-center gap-3 flex-wrap">
+        <label class="text-[10px] font-black uppercase tracking-widest text-gray-600 flex-shrink-0">Days</label>
+
+        <!-- When split: show weekday/weekend tabs + merge option -->
+        <template x-if="(strategyList[activeSeason]?.dayTypeVoList?.length ?? 0) > 1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <template x-for="dt in (strategyList[activeSeason]?.dayTypeVoList || [])" :key="dt.dayType">
+              <button @click="selectDayType(dt.dayType)"
+                      class="flex items-center gap-1.5 px-3 py-1 text-[11px] font-bold rounded-lg border transition"
+                      :class="dt.dayType === activeDayType
+                        ? 'border-primary bg-primary/10 text-gray-100'
+                        : 'border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-600'">
+                <i class="fas text-[9px]"
+                   :class="dt.dayType === 1 ? 'fa-briefcase' : 'fa-umbrella-beach'"></i>
+                <span x-text="dt.dayType === 1 ? 'Weekdays (Mon–Fri)' : 'Weekends (Sat–Sun)'"></span>
+                <span x-show="dt.dayType === activeDayType && isActiveSeason(strategyList[activeSeason])"
+                      class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              </button>
+            </template>
+            <button @click="mergeDayTypeGuard(activeSeason)"
+                    class="text-[10px] text-gray-600 hover:text-amber-400 transition px-2 py-1 rounded border border-gray-700 hover:border-amber-500/40 flex items-center gap-1"
+                    :class="_pendingMerge === activeSeason ? 'text-amber-400 border-amber-500/60 animate-pulse' : ''">
+              <i class="fas fa-compress-arrows-alt text-[9px]"></i>
+              <span x-text="_pendingMerge === activeSeason ? 'Confirm merge?' : 'Merge to All Days'"></span>
+            </button>
+          </div>
+        </template>
+
+        <!-- When not split: show single pill + option to split -->
+        <template x-if="(strategyList[activeSeason]?.dayTypeVoList?.length ?? 0) <= 1">
+          <div class="flex items-center gap-2">
+            <span class="text-[11px] font-bold text-gray-400 px-3 py-1 rounded-lg border border-gray-700 bg-gray-800/40">
+              <i class="fas fa-calendar text-[9px] mr-1.5 text-gray-500"></i>All Days (Everyday)
+            </span>
+            <button @click="addDayType(activeSeason)"
+                    class="flex items-center gap-1 text-[10px] font-bold text-gray-500 hover:text-primary-light transition px-2 py-1 rounded border border-dashed border-gray-700 hover:border-primary/40">
+              <i class="fas fa-plus text-[8px]"></i> Split Weekday / Weekend
+            </button>
+          </div>
+        </template>
+      </div>
+
+      <!-- ── Row 4: Copy Rates button (two-step guard) ── -->
+      <div class="px-5 py-2.5 bg-gray-900 border-t border-gray-800 flex items-center gap-3 flex-wrap">
+        <!-- Normal state -->
+        <template x-if="!_showCopyConfirm">
+          <div class="flex items-center gap-3 w-full">
+            <button @click="requestCopyRatesToAll()"
+                    x-show="strategyList.length > 1"
+                    class="flex items-center gap-1.5 text-[10px] font-bold text-gray-500 hover:text-amber-400 border border-gray-700 hover:border-amber-500/40 px-3 py-1 rounded-lg transition">
+              <i class="fas fa-copy text-[9px]"></i> Copy rates → All seasons
+            </button>
+            <span class="text-[10px] text-gray-600 ml-auto">
+              Editing:
+              <span class="text-gray-500 font-bold"
+                    x-text="(strategyList[activeSeason]?.seasonName || strategyList[activeSeason]?.name || 'Season ' + (activeSeason+1))
+                             + (strategyList[activeSeason]?.dayTypeVoList?.length > 1
+                                 ? ' · ' + (activeDayType === 1 ? 'Weekdays' : activeDayType === 2 ? 'Weekends' : 'Everyday')
+                                 : '')"></span>
+            </span>
+          </div>
+        </template>
+        <!-- Confirm overlay (replaces window.confirm which is blocked in HA ingress) -->
+        <template x-if="_showCopyConfirm">
+          <div class="flex items-center gap-3 w-full">
+            <span class="text-[11px] text-amber-400 font-bold flex items-center gap-1.5">
+              <i class="fas fa-exclamation-triangle text-[9px]"></i>
+              Overwrite rates in ALL <span x-text="strategyList.length"></span> seasons and day-types?
+            </span>
+            <button @click="copyRatesToAllSeasons()"
+                    class="text-[10px] font-bold text-white bg-amber-600 hover:bg-amber-500 px-3 py-1 rounded-lg border border-amber-400/40 transition">
+              Yes, overwrite all
+            </button>
+            <button @click="_showCopyConfirm = false"
+                    class="text-[10px] text-gray-500 hover:text-gray-300 px-2 py-1 rounded border border-gray-700 transition">
+              Cancel
+            </button>
+          </div>
+        </template>
+      </div>
+
+    </div>
+
+    <!-- ── Scrollable content ── -->
+    <div class="flex-1 overflow-y-auto">
+      <template x-if="pricingDayTypeEntry()">
+        <div class="p-5 space-y-5">
+
+          <!-- Rate grid — always shows all 4 wave types -->
+          <div>
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">
+              <i class="fas fa-table mr-1"></i>Rate Grid &mdash; Buy &amp; Sell per Wave Type
+            </p>
+            <div class="rounded-xl border border-gray-800 overflow-hidden">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b border-gray-800 bg-gray-800/80 text-[9px] font-black uppercase tracking-widest text-gray-500">
+                    <th class="px-4 py-2 text-left">Wave Type</th>
+                    <th class="px-4 py-2 text-left text-primary-light">Buy $/kWh</th>
+                    <th class="px-4 py-2 text-left text-gray-500">Sell $/kWh</th>
+                    <th class="px-4 py-2 text-left">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="rate in allWaveRates(pricingDayTypeEntry())" :key="rate.waveType">
+                    <tr class="border-b border-gray-800/60 transition"
+                        :class="rate.usedInBlocks ? 'bg-gray-800/10 hover:bg-gray-800/30' : 'opacity-60 hover:opacity-80'">
+                      <td class="px-4 py-3">
+                        <div class="flex items-center gap-2">
+                          <span class="w-3 h-3 rounded-full flex-shrink-0"
+                                :style="'background:' + rate.color"></span>
+                          <span class="font-bold text-gray-200" x-text="rate.label"></span>
+                          <!-- Warning: wave used in blocks but buy rate $0.00 — rates not set for this day-type -->
+                          <span x-show="hasMissingRates(rate)"
+                                class="flex items-center gap-1 text-[9px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-full"
+                                title="Rate is $0.00 but this wave type is used in schedule blocks &#8212; rates may not have been set for this day-type. Use 'Copy rates' below to fill from the other day-type.">
+                            <i class="fas fa-exclamation-triangle text-[8px]"></i> unset
+                          </span>
+                        </div>
+                      </td>
+                      <td class="px-4 py-3">
+                        <div class="flex items-center gap-1">
+                          <span class="text-gray-600 text-[10px]">$</span>
+                          <input type="number" step="0.01" min="0"
+                                 :value="rate.rawBuy.toFixed(2)"
+                                 @change="setWaveRate(pricingDayTypeEntry(), rate.waveType, 'buy', $event.target.value)"
+                                 @blur="$event.target.value = parseFloat($event.target.value || 0).toFixed(2)"
+                                 @focus="$event.target.select()"
+                                 class="w-20 bg-gray-900 border border-primary/30 rounded px-2 py-1 text-primary-light font-bold text-xs text-right focus:outline-none focus:border-primary transition">
+                        </div>
+                      </td>
+                      <td class="px-4 py-3">
+                        <div class="flex items-center gap-1">
+                          <span class="text-gray-600 text-[10px]">$</span>
+                          <input type="number" step="0.01" min="0"
+                                 :value="rate.rawSell.toFixed(2)"
+                                 @change="setWaveRate(pricingDayTypeEntry(), rate.waveType, 'sell', $event.target.value)"
+                                 @blur="$event.target.value = parseFloat($event.target.value || 0).toFixed(2)"
+                                 @focus="$event.target.select()"
+                                 class="w-20 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-400 font-semibold text-xs text-right focus:outline-none focus:border-gray-500 transition">
+                        </div>
+                      </td>
+                      <td class="px-4 py-3">
+                        <span x-show="rate.usedInBlocks"
+                              class="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          ● Active
+                        </span>
+                        <span x-show="!rate.usedInBlocks"
+                              class="text-[10px] text-gray-600 italic">not used</span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Reference block table (read-only) -->
+          <div>
+            <p class="text-[9px] font-black uppercase tracking-widest text-gray-600 mb-3">
+              <i class="fas fa-list-ul mr-1"></i>Schedule Blocks &mdash; reference only (edit in main editor)
+            </p>
+            <div class="overflow-x-auto rounded-xl border border-gray-800">
+              <table class="w-full font-mono text-[11px] min-w-[520px]">
+                <thead>
+                  <tr class="border-b border-gray-800 text-[9px] font-black uppercase tracking-widest text-gray-600 bg-gray-800/80">
+                    <th class="px-4 py-2 text-left">Start</th>
+                    <th class="px-4 py-2 text-left">End</th>
+                    <th class="px-4 py-2 text-left">Name</th>
+                    <th class="px-4 py-2 text-left">Dispatch</th>
+                    <th class="px-4 py-2 text-left">Wave</th>
+                    <th class="px-4 py-2 text-left text-primary-light">Buy</th>
+                    <th class="px-4 py-2 text-left text-gray-500">Sell</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(b, bi) in (pricingDayTypeEntry()?.detailVoList || [])" :key="bi">
+                    <tr class="border-b border-gray-800/60 hover:bg-gray-800/20 transition">
+                      <td class="px-4 py-2 font-bold text-primary-light" x-text="b.startHourTime"></td>
+                      <td class="px-4 py-2 font-bold text-primary-light" x-text="b.endHourTime"></td>
+                      <td class="px-4 py-2 text-gray-300 font-sans" x-text="b.name || '—'"></td>
+                      <td class="px-4 py-2">
+                        <span class="inline-flex items-center gap-1.5">
+                          <span class="w-2 h-2 rounded-full flex-shrink-0"
+                                :style="'background:' + getDispatchColor(b.dispatchId)"></span>
+                          <span class="text-gray-300 font-sans" x-text="getDispatchName(b.dispatchId)"></span>
+                        </span>
+                      </td>
+                      <td class="px-4 py-2 text-gray-400 font-sans" x-text="getWaveLabel(b.waveType)"></td>
+                      <td class="px-4 py-2 font-bold text-primary-light" x-text="rateFromDayType(pricingDayTypeEntry(), b, 'buy')"></td>
+                      <td class="px-4 py-2 text-gray-500" x-text="rateFromDayType(pricingDayTypeEntry(), b, 'sell')"></td>
+                    </tr>
+                  </template>
+                  <template x-if="(pricingDayTypeEntry()?.detailVoList || []).length === 0">
+                    <tr>
+                      <td colspan="7" class="px-4 py-6 text-center text-gray-600 text-[11px] italic">
+                        No blocks defined — add blocks in the main editor.
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </template>
+
+      <!-- Empty state -->
+      <template x-if="!pricingDayTypeEntry()">
+        <div class="p-10 text-center">
+          <p class="text-3xl mb-3">💰</p>
+          <p class="text-sm text-gray-500">No pricing data available. Load a schedule first.</p>
+        </div>
+      </template>
+    </div>
+
+    <!-- Footer -->
+    <div class="px-5 py-3 border-t border-gray-800 flex-shrink-0">
+      <!-- ── Savings result pill (shows after calculate) ── -->
+      <div x-show="_savingsResult" class="flex items-center gap-2 mb-2">
+        <span class="text-[10px] font-black uppercase tracking-widest text-gray-600">Est. Savings</span>
+        <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold">
+          ~$<span x-text="_savingsResult?.savings30?.toFixed(2)"></span>/mo
+        </span>
+        <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400/70 text-[11px] font-semibold">
+          ~$<span x-text="_savingsResult?.savings365?.toFixed(2)"></span>/yr
+        </span>
+        <button @click="_savingsResult = null" class="text-[9px] text-gray-700 hover:text-gray-500 ml-1"><i class="fas fa-times"></i></button>
+      </div>
+
+      <!-- ── Footer action bar ── -->
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <!-- Calculate Savings -->
+          <button @click="calculateSavings()"
+                  :disabled="_savingsLoading"
+                  class="flex items-center gap-1.5 text-[10px] font-semibold px-3 py-1.5 rounded-lg border border-emerald-700/50 text-emerald-600 hover:text-emerald-400 hover:border-emerald-500/50 hover:bg-emerald-500/5 transition disabled:opacity-40">
+            <i class="fas fa-calculator text-[9px]" :class="_savingsLoading ? 'animate-spin fa-spinner' : 'fa-calculator'"></i>
+            <span x-text="_savingsLoading ? 'Calculating...' : 'Estimate Savings'"></span>
+          </button>
+        </div>
+        <div class="flex items-center gap-3">
+            <p class="text-[10px] text-gray-600">
+              <i class="fas fa-info-circle mr-1"></i>Rates saved on <strong class="text-gray-500">Save to Gateway</strong>
+            </p>
+            <button @click="cancelPricingModal()"
+                    class="px-4 py-2 rounded-xl border border-gray-700 text-xs font-semibold text-gray-500 hover:text-amber-400 hover:border-amber-500/40 transition">
+              <i class="fas fa-times text-[9px] mr-1"></i>Cancel
+            </button>
+            <button @click="closePricingModal()"
+                    class="px-5 py-2 rounded-xl bg-primary/10 border border-primary/40 text-primary-light text-xs font-semibold hover:bg-primary/20 transition">
+              <i class="fas fa-check text-[9px] mr-1"></i>Close
+            </button>
+          </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- ──────────────────────────────────────────────────
+  Nav Guard Modal — intercepts sidebar navigation when dirty
+  ───────────────────────────────────────────────── -->
+  <div x-show="showNavGuardModal"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 -translate-y-4"
+       x-transition:enter-end="opacity-100 translate-y-0"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100 translate-y-0"
+       x-transition:leave-end="opacity-0 -translate-y-4"
+       class="fixed inset-0 z-[200] flex items-start justify-center pt-16 px-4"
+       style="display:none">
+    <!-- Backdrop -->
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="cancelNavAway()"></div>
+    <!-- Dialog -->
+    <div class="relative bg-gray-900 border border-amber-500/40 rounded-2xl shadow-2xl shadow-amber-900/30 w-full max-w-md z-10">
+      <!-- Header -->
+      <div class="flex items-center gap-3 px-6 py-5 border-b border-gray-800">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-exclamation-triangle text-amber-400"></i>
+        </div>
+        <div>
+          <h4 class="text-sm font-bold text-gray-100">Unsaved Schedule Changes</h4>
+          <p class="text-[10px] text-gray-500 mt-0.5">You have changes that haven’t been saved to the gateway.</p>
+        </div>
+      </div>
+      <!-- Body -->
+      <div class="px-6 py-5 space-y-3">
+        <p class="text-xs text-gray-400 leading-relaxed">
+          If you leave now, your changes to the TOU schedule and pricing will be <strong class="text-amber-300">lost</strong>.
+          Return to the Schedule tab and click
+          <strong class="text-white">Save to Gateway</strong> to preserve them.
+        </p>
+        <div class="rounded-lg bg-amber-500/8 border border-amber-500/25 px-3 py-2 flex items-center gap-2">
+          <i class="fas fa-info-circle text-amber-500 text-[10px]"></i>
+          <p class="text-[10px] text-amber-300">
+            Navigating to: <strong x-text="_pendingNavTab || ''"></strong>
+          </p>
+        </div>
+      </div>
+      <!-- Footer -->
+      <div class="px-6 py-4 border-t border-gray-800 flex gap-3">
+        <button @click="cancelNavAway()"
+                class="flex-1 py-2.5 rounded-xl bg-primary/10 border border-primary/40 text-primary-light text-xs font-bold hover:bg-primary/20 transition">
+          <i class="fas fa-arrow-left text-[9px] mr-1"></i>
+          Stay on Schedule
+        </button>
+        <button @click="confirmNavAway()"
+                class="flex-1 py-2.5 rounded-xl border border-amber-600/40 text-amber-400 text-xs font-semibold hover:bg-amber-500/10 transition">
+          <i class="fas fa-sign-out-alt text-[9px] mr-1"></i>
+          Leave &amp; Discard
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /scheduleTab() Alpine scope -->
+
+<!-- ── Push History ───────────────────────────────────────────────────────
+     Was an inline panel wedged under the block table: ~340px wide, rows
+     wrapping, six controls per row. A restore point is chosen by reading
+     across several columns at once, which that layout made impossible. -->
+<div x-show="_showHistory" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @click.self="_showHistory=false" @keydown.escape.window="_showHistory=false">
+  <div class="w-full max-w-4xl max-h-[85vh] flex flex-col rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
+      <h4 class="font-bold text-gray-100 flex items-center gap-2">
+        <i class="fas fa-history text-gray-400"></i>Push History
+        <span class="text-[11px] font-normal text-gray-500"
+              x-text="_historyTotal ? `${_historyTotal} restore point${_historyTotal === 1 ? '' : 's'}` : ''"></span>
+      </h4>
+      <button @click="_showHistory=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <div x-show="_historyLoading" class="px-6 py-8 text-center text-xs text-gray-600">Loading&hellip;</div>
+
+      <template x-if="!_historyLoading && _snapshotHistory.length === 0">
+        <p class="px-6 py-8 text-center text-xs text-gray-600 italic">
+          No push history yet — save to gateway to create a restore point.
+        </p>
+      </template>
+
+      <template x-if="!_historyLoading && _snapshotHistory.length > 0">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-gray-900 border-b border-gray-800">
+            <tr class="text-[10px] font-black uppercase tracking-widest text-gray-500">
+              <th class="px-6 py-2.5">Saved</th>
+              <th class="px-3 py-2.5">Schedule</th>
+              <th class="px-3 py-2.5 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="snap in _snapshotHistory" :key="snap.id">
+              <tr class="border-b border-gray-800/60 hover:bg-gray-800/25 transition align-middle">
+                <td class="px-6 py-2.5 whitespace-nowrap">
+                  <p class="text-xs font-bold text-gray-200" x-text="snap.ts"></p>
+                  <p class="text-[10px] text-gray-600" x-text="snap.source"></p>
+                </td>
+                <td class="px-3 py-2.5">
+                  <p class="text-xs text-gray-300" x-text="snap.label"></p>
+                </td>
+                <td class="px-3 py-2.5 whitespace-nowrap text-right">
+                  <div class="inline-flex items-center gap-1.5">
+                    <button @click="restoreSnapshot(snap.id)"
+                            class="text-[10px] font-bold text-primary-light hover:text-primary border border-primary/30 hover:border-primary/60 px-2.5 py-1 rounded transition">
+                      Restore
+                    </button>
+                    <button @click="promptSnapshotPreset(snap.id, snap.label)"
+                            class="text-[10px] font-bold text-emerald-500/80 hover:text-emerald-400 border border-emerald-500/25 hover:border-emerald-500/60 px-2.5 py-1 rounded transition"
+                            title="Save this snapshot as a reusable preset">
+                      <i class="fas fa-bookmark mr-0.5"></i>Preset
+                    </button>
+                    <!-- Deleting a restore point is irreversible and nothing
+                         else keeps a copy, so it confirms. -->
+                    <button @click="deleteSnapshot(snap.id, snap.label)"
+                            class="text-[10px] font-bold text-red-500/70 hover:text-red-400 border border-red-500/20 hover:border-red-500/50 px-2 py-1 rounded transition"
+                            :title="'Delete ' + snap.label">
+                      <i class="fas fa-trash-alt"></i>
+                    </button>
+                  </div>
+                  <!-- Inline name entry; window.prompt is blocked under HA ingress. -->
+                  <div x-show="_presetFromSnapshotId === snap.id" x-transition
+                       class="flex items-center gap-2 mt-2 justify-end">
+                    <input id="snapPresetNameInput" type="text" x-model="_presetFromSnapshotName"
+                           @keydown.enter.prevent="saveSnapshotAsPreset()"
+                           @keydown.escape.prevent="cancelSnapshotPreset()"
+                           class="w-56 bg-gray-950 border border-gray-700 focus:border-emerald-500/60 rounded px-2 py-1 text-[11px] text-gray-200 outline-none"
+                           placeholder="Preset name">
+                    <button @click="saveSnapshotAsPreset()"
+                            class="text-[10px] font-bold text-emerald-400 border border-emerald-500/40 hover:border-emerald-500/80 px-2 py-1 rounded transition">Save</button>
+                    <button @click="cancelSnapshotPreset()"
+                            class="text-[10px] font-bold text-gray-500 hover:text-gray-300 px-2 py-1 transition">Cancel</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </template>
+    </div>
+
+    <div class="flex items-center justify-between gap-2 px-6 py-3 border-t border-gray-800 text-[10px] shrink-0">
+      <span class="text-gray-600 font-mono"
+            x-text="_historyTotal
+              ? `${_historyOffset + 1}\u2013${Math.min(_historyOffset + _historyPageSize, _historyTotal)} of ${_historyTotal}`
+              : 'No snapshots'"></span>
+      <div class="flex gap-1.5">
+        <button @click="historyPage(-1)" :disabled="_historyOffset === 0"
+                :class="_historyOffset === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:border-gray-600'"
+                class="px-2.5 py-1 rounded border border-gray-700 text-gray-400 font-semibold transition">Newer</button>
+        <button @click="historyPage(1)" :disabled="!_historyHasNext"
+                :class="!_historyHasNext ? 'opacity-30 cursor-not-allowed' : 'hover:border-gray-600'"
+                class="px-2.5 py-1 rounded border border-gray-700 text-gray-400 font-semibold transition">Older</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Optimiser result ──────────────────────────────────────────────────
+     The reasoning was delivered as ~900 characters of run-on text inside a
+     toast: block after block with no boundaries, and auto-dismissable. One
+     row per block, with the same Load action, makes it readable. -->
+<div x-show="showOptimiseModal" x-cloak x-transition.opacity
+     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
+     @click.self="showOptimiseModal=false" @keydown.escape.window="showOptimiseModal=false">
+  <div class="w-full max-w-5xl max-h-[88vh] flex flex-col rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
+      <div>
+        <h4 class="font-bold text-gray-100 flex items-center gap-2">
+          <i class="fas fa-wand-magic-sparkles text-primary-light"></i>
+          Suggested Schedule
+        </h4>
+        <p class="text-[11px] text-gray-500 mt-0.5">
+          Saved as preset <span class="font-mono text-gray-400" x-text="optimiseResult?.name"></span>
+          <template x-if="optimiseResult?.season">
+            <span> · active season <span class="text-gray-400" x-text="optimiseResult.season"></span></span>
+          </template>
+        </p>
+      </div>
+      <button @click="showOptimiseModal=false" class="text-gray-500 hover:text-gray-300 transition"><i class="fas fa-times"></i></button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <!-- A battery that cannot carry the peak is the one thing a user most
+           needs told, and no schedule fixes it, so it leads. -->
+      <template x-if="optimiseResult && !optimiseResult.socSufficient">
+        <div class="mx-6 mt-4 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3">
+          <p class="text-[11px] font-black uppercase tracking-widest text-amber-500 mb-1">
+            <i class="fas fa-triangle-exclamation mr-1"></i>Battery cannot cover the forecast peak
+          </p>
+          <p class="text-xs text-amber-200/80 leading-relaxed" x-text="optimiseResult.soc?.note"></p>
+        </div>
+      </template>
+
+      <div class="flex flex-wrap gap-x-8 gap-y-2 px-6 py-4 text-[11px]">
+        <div>
+          <span class="text-gray-600 uppercase tracking-wider font-bold">Solar</span>
+          <span class="ml-2 font-semibold"
+                :class="optimiseResult?.solarInformed ? 'text-emerald-400' : 'text-amber-400'"
+                x-text="optimiseResult?.solarInformed
+                  ? `from ${optimiseResult.solarSource}`
+                  : 'no forecast — it may charge through daylight'"></span>
+        </div>
+        <template x-if="optimiseResult?.batteryKwh">
+          <div>
+            <span class="text-gray-600 uppercase tracking-wider font-bold">Battery</span>
+            <span class="ml-2 text-gray-300 font-mono" x-text="optimiseResult.batteryKwh.toFixed(1) + ' kWh'"></span>
+          </div>
+        </template>
+        <template x-if="optimiseResult?.soc?.charge_target_soc">
+          <div>
+            <span class="text-gray-600 uppercase tracking-wider font-bold">Charge target</span>
+            <span class="ml-2 text-gray-300 font-mono" x-text="optimiseResult.soc.charge_target_soc + '%'"></span>
+          </div>
+        </template>
+      </div>
+
+      <template x-for="sn in (optimiseResult?.seasons || [])" :key="sn.name">
+        <div class="mb-2">
+          <div class="flex items-baseline gap-2 px-6 py-2 bg-gray-800/40 border-y border-gray-800">
+            <span class="text-[11px] font-black uppercase tracking-widest text-gray-400" x-text="sn.name"></span>
+            <span class="text-[10px] text-gray-600 font-mono" x-text="'months ' + sn.months"></span>
+          </div>
+          <table class="w-full text-left">
+            <thead>
+              <tr class="text-[10px] font-black uppercase tracking-widest text-gray-600">
+                <th class="px-6 py-2">Window</th>
+                <th class="px-3 py-2">Intent</th>
+                <th class="px-3 py-2 text-right">Import</th>
+                <th class="px-3 py-2 text-right">Export</th>
+                <th class="px-3 py-2">Why</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="b in sn.blocks" :key="b.start + b.end">
+                <tr class="border-b border-gray-800/50 align-top hover:bg-gray-800/20 transition">
+                  <td class="px-6 py-2 whitespace-nowrap font-mono text-xs text-primary-light"
+                      x-text="b.start + '–' + b.end"></td>
+                  <td class="px-3 py-2 whitespace-nowrap">
+                    <span class="text-xs font-bold text-gray-200" x-text="b.intent || b.dispatch"></span>
+                    <span class="block text-[10px] text-gray-600" x-text="b.dispatch"></span>
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-xs text-gray-400 whitespace-nowrap"
+                      x-text="b.import_c ? b.import_c.toFixed(1) + 'c' : '—'"></td>
+                  <td class="px-3 py-2 text-right font-mono text-xs text-gray-400 whitespace-nowrap"
+                      x-text="b.export_c ? b.export_c.toFixed(1) + 'c' : '—'"></td>
+                  <td class="px-3 py-2 text-[11px] text-gray-500 leading-relaxed" x-text="b.reason"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <template x-if="sn.soc?.note">
+            <p class="px-6 py-2 text-[10px] text-gray-600 italic" x-text="sn.soc.note"></p>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <div class="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-800 shrink-0">
+      <p class="text-[10px] text-gray-600">
+        Loading only fills the editor — <span class="text-gray-500 font-semibold">Save to Gateway</span> is what reaches the battery.
+      </p>
+      <div class="flex gap-2">
+        <button @click="showOptimiseModal=false"
+                class="text-xs font-bold text-gray-400 hover:text-gray-200 px-4 py-2 rounded-lg border border-gray-700 hover:border-gray-600 transition">
+          Close
+        </button>
+        <button @click="loadOptimisedPreset()"
+                class="text-xs font-bold text-white bg-primary hover:bg-primary-light px-4 py-2 rounded-lg transition flex items-center gap-1.5">
+          <i class="fas fa-download text-[10px]"></i>Load into editor
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
